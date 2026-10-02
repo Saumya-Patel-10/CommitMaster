@@ -8,9 +8,10 @@
   "skip_sensitive_files": true,
   "sensitive_patterns": [".env", ".pem", ".key", "secret", "credential", ".p12", "id_rsa"],
   "github_desktop_path": "",
-  "lm_studio": {
+  "ai": {
     "base_url": "http://localhost:1234/v1",
-    "model": "",
-    "timeout_seconds": 60
+    "model": "gemma-3-12b-it",
+    "timeout_seconds": 90,
+    "provider": "bionic"
   }
 }
