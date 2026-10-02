@@ -1,0 +1,16 @@
+{
+  "watched_apps": ["Code.exe", "Cursor.exe", "Antigravity.exe", "Bionic.exe", "LM Studio.exe"],
+  "projects_dirs": ["C:/Path/To/Your/Projects"],
+  "poll_interval_seconds": 2,
+  "repo_scan_interval_seconds": 60,
+  "session_end_grace_seconds": 120,
+  "auto_commit": false,
+  "skip_sensitive_files": true,
+  "sensitive_patterns": [".env", ".pem", ".key", "secret", "credential", ".p12", "id_rsa"],
+  "github_desktop_path": "",
+  "lm_studio": {
+    "base_url": "http://localhost:1234/v1",
+    "model": "",
+    "timeout_seconds": 60
+  }
+}

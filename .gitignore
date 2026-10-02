@@ -1,0 +1,14 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+build/
+dist/
+*.spec
+
+# Local settings (contains personal paths; app regenerates it with defaults)
+config.json
+
+# Environments
+.venv/
+venv/
