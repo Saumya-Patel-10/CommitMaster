@@ -3,3 +3,7 @@ pystray>=0.19
 Pillow>=10.0
 requests>=2.31
 plyer>=2.1
+# GUI & database
+customtkinter>=6.0
+bcrypt>=4.0
+matplotlib>=3.7
