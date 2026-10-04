@@ -133,6 +133,45 @@ def _do_commits(repo: str, groups: dict, messages: Dict[str, str]) -> None:
 
 
 def _after_commit(cfg: dict, repo: str, name: str, auto: bool) -> None:
+    # ── Check if a linked GitHub account is configured for push ───────────────
+    try:
+        import json
+        import os
+        from commitmaster import database as db
+        token_file = os.path.join(db.APP_DIR, ".session_token")
+        if not os.path.exists(token_file):
+            token_file = os.path.join(db.APP_DIR, ".admin_session")
+
+        if os.path.exists(token_file):
+            with open(token_file) as f:
+                token = json.load(f).get("token", "")
+            user = db.validate_session_token(token)
+            if user:
+                account = db.get_repo_account(user["id"], repo)
+                prefs = db.get_preferences(user["id"]) or {}
+                if account:
+                    should_ask = bool(prefs.get("ask_before_push", 1))
+                    auto_push = bool(prefs.get("auto_push", 0) or cfg.get("auto_push", False))
+                    unpushed = commit_engine.get_unpushed_commits(repo)
+                    branch = commit_engine.current_branch(repo)
+                    if (auto_push and not should_ask) or ui.ask_push_confirmation(name, branch, account, unpushed):
+                        ok, push_msg = commit_engine.push_repo_with_account(repo, account)
+                        if ok:
+                            ui.notify(f"Committed & Pushed: {name}",
+                                      f"Pushed to GitHub via @{account['github_username']} ({account['account_name']})")
+                            log.info("Pushed %s via @%s", name, account["github_username"])
+                            return
+                        else:
+                            ui.notify(f"Committed: {name}", f"Committed, but push failed: {push_msg}")
+                            log.warning("Push failed after commit for %s: %s", name, push_msg)
+                            return
+                    else:
+                        ui.notify(f"Committed: {name}", "Commits kept locally. You can push when ready.")
+                        log.info("Push declined by user for %s — commits remain local.", name)
+                        return
+    except Exception as exc:
+        log.debug("Auto-push lookup failed: %s", exc)
+
     gd_path = cfg.get("github_desktop_path") or None
     opened = commit_engine.open_in_github_desktop(repo, gd_path=gd_path)
     where = "GitHub Desktop is open — review and push when ready." if opened \
