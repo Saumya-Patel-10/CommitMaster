@@ -159,7 +159,10 @@ def generate_messages(cfg: dict, repo_path: str, groups: Dict[str, List[str]]) -
                 timeout=cfg["ai"]["timeout_seconds"],
             )
             resp.raise_for_status()
-            raw = resp.json()["choices"][0]["message"]["content"]
+            msg_obj = resp.json()["choices"][0]["message"]
+            raw = (msg_obj.get("content") or "").strip()
+            if not raw and "reasoning_content" in msg_obj:
+                raw = (msg_obj.get("reasoning_content") or "").strip()
             log.debug("Raw AI response: %s", raw[:500])
             parsed = _parse_json(raw)
             _apply_parsed(parsed, groups, result)
@@ -299,19 +302,23 @@ def generate_file_comments(
             {"role": "user",   "content": prompt},
         ],
         "temperature": 0.2,
-        "max_tokens": 800,
+        "max_tokens": 1500,
         "stream": False,
     }
 
     try:
         log.info("Calling local AI '%s' for per-file comments...", model)
+        timeout = cfg.get("ai", {}).get("timeout_seconds", 120)
         resp = requests.post(
             f"{base}/chat/completions",
             json=payload,
-            timeout=cfg.get("ai", {}).get("timeout_seconds", 60),
+            timeout=timeout,
         )
         resp.raise_for_status()
-        raw = resp.json()["choices"][0]["message"]["content"]
+        msg_obj = resp.json()["choices"][0]["message"]
+        raw = (msg_obj.get("content") or "").strip()
+        if not raw and "reasoning_content" in msg_obj:
+            raw = (msg_obj.get("reasoning_content") or "").strip()
         log.debug("Raw per-file AI response: %s", raw[:300])
         parsed = _parse_file_comments_json(raw, files)
         return parsed
