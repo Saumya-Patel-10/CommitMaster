@@ -29,7 +29,7 @@ from commitmaster.app_styles import (
     apply_customization, get_active_customization
 )
 from commitmaster.github_service import mask_token, verify_github_token
-from commitmaster.github_account_dialog import GitHubAccountDialog
+from commitmaster.github_account_dialog import GitHubAccountDialog, SelectGitHubReposDialog
 from commitmaster.login_window import LoginWindow
 
 _TOKEN_FILE = os.path.join(APP_DIR, ".admin_session")
@@ -191,11 +191,25 @@ class AdminApp:
         self._cf.bind("<Configure>",
                       lambda e: self._canvas.configure(
                           scrollregion=self._canvas.bbox("all")))
-        self._canvas.bind("<Configure>",
-                          lambda e: self._canvas.itemconfig(self._cw, width=e.width))
-        self._canvas.bind_all("<MouseWheel>",
-                              lambda e: self._canvas.yview_scroll(
-                                  -1 * (e.delta // 120), "units"))
+        self.root.bind_all("<MouseWheel>", self._on_mousewheel)
+
+    def _on_mousewheel(self, event):
+        try:
+            if event.delta:
+                raw = -1.0 * (event.delta / 120.0) * 4.0
+                if 0 < raw < 1:
+                    steps = 1
+                elif -1 < raw < 0:
+                    steps = -1
+                else:
+                    steps = int(raw)
+                self._canvas.yview_scroll(steps, "units")
+        except Exception:
+            pass
+
+    def _add_hover(self, widget, hover_bg, normal_bg):
+        widget.bind("<Enter>", lambda e: widget.config(bg=hover_bg))
+        widget.bind("<Leave>", lambda e: widget.config(bg=normal_bg))
 
     # ── Sidebar ───────────────────────────────────────────────────────────────
 
@@ -390,6 +404,9 @@ class AdminApp:
         }
         if key in pages:
             pages[key]()
+        self._canvas.yview_moveto(0)
+        self.root.update_idletasks()
+        self._canvas.configure(scrollregion=self._canvas.bbox("all"))
 
     # ── Shared widget helpers ─────────────────────────────────────────────────
 
@@ -521,6 +538,9 @@ class AdminApp:
         self._stat_card(row2, "System Commits",str(stats["total_commits"]),     COLORS["accent"],"📊")
         self._stat_card(row2, "This Week",     str(stats["commits_this_week"]), COLORS["admin"], "📈")
 
+        # ── Local Repository Scanner & AI Push Preview ─────────────────────────
+        self._build_repo_scanner_card(p)
+
         # My 30-day chart
         self._section_hdr(p, "MY COMMIT ACTIVITY — LAST 30 DAYS", (0, 8))
         self._bar_chart(p, usage, width=760, height=150)
@@ -534,6 +554,415 @@ class AdminApp:
         else:
             for entry in activity[:6]:
                 self._commit_row(p, entry)
+
+    def _build_repo_scanner_card(self, parent):
+        card = self._card(parent, padx=18, pady=16)
+        card.pack(fill="x", pady=(0, 20))
+
+        cfg = load_config()
+
+        # ── Card Header ──────────────────────────────────────────────────────────
+        hdr_row = tk.Frame(card, bg=COLORS["bg_card"])
+        hdr_row.pack(fill="x", pady=(0, 4))
+
+        tk.Label(
+            hdr_row, text="⚡ Local Repository Scanner & AI Push Preview",
+            font=FONTS["heading_sm"], fg=COLORS["accent"], bg=COLORS["bg_card"]
+        ).pack(side="left")
+
+        ai_url = cfg.get("ai", {}).get("base_url", "http://localhost:1234/v1")
+        ai_model = cfg.get("ai", {}).get("model") or ai_messages.detect_model(cfg)
+        status_text = f"⚡ Local AI: {ai_model or 'Online'} ({ai_url})" if ai_model else f"⚡ Local AI Server: {ai_url}"
+        tk.Label(
+            hdr_row, text=status_text, font=FONTS["caption"],
+            fg=COLORS["accent"] if ai_model else COLORS["text_muted"], bg=COLORS["bg_card"]
+        ).pack(side="right")
+
+        tk.Label(
+            card,
+            text="Scan your local repository for uncommitted files, inspect AI-generated commit comments, edit them as you see fit, and approve to push to GitHub.",
+            font=FONTS["body_sm"], fg=COLORS["text_secondary"], bg=COLORS["bg_card"]
+        ).pack(anchor="w", pady=(0, 12))
+
+        # ── Repository Selection Row ─────────────────────────────────────────────
+        watched_repos = db.get_watched_repos(self.user["id"])
+        available_repos = []
+        for wr in watched_repos:
+            lp = wr.get("local_path", "").strip()
+            if lp and os.path.isdir(lp) and commit_engine.is_git_repo(lp):
+                if lp not in available_repos:
+                    available_repos.append(lp)
+
+        if not self._gd_selected_repo or self._gd_selected_repo not in available_repos:
+            self._gd_selected_repo = available_repos[0] if available_repos else None
+
+        sel_bar = tk.Frame(card, bg=COLORS["bg_card"])
+        sel_bar.pack(fill="x", pady=(0, 10))
+
+        tk.Label(sel_bar, text="Repository:", font=FONTS["label_bold"],
+                 fg=COLORS["text_secondary"], bg=COLORS["bg_card"]).pack(side="left", padx=(0, 8))
+
+        repo_options = [f"📁 {commit_engine.repo_name(r)} ({r})" for r in available_repos] or ["(No local git repos added)"]
+        repo_map = {f"📁 {commit_engine.repo_name(r)} ({r})": r for r in available_repos}
+
+        curr_label = repo_options[0]
+        for opt, path in repo_map.items():
+            if path == self._gd_selected_repo:
+                curr_label = opt
+                break
+
+        repo_var = tk.StringVar(value=curr_label)
+
+        content_container = tk.Frame(card, bg=COLORS["bg_card"])
+        content_container.pack(fill="x")
+
+        def on_repo_changed(val):
+            target = repo_map.get(val)
+            if target:
+                self._gd_selected_repo = target
+                render_scanner_content()
+
+        repo_menu = tk.OptionMenu(sel_bar, repo_var, *repo_options, command=on_repo_changed)
+        repo_menu.config(font=FONTS["body_sm"], bg=COLORS["bg_medium"], fg=COLORS["text_primary"],
+                         activebackground=COLORS["bg_card_hover"], activeforeground=COLORS["text_primary"],
+                         relief="flat", bd=0, highlightthickness=0)
+        repo_menu["menu"].config(bg=COLORS["bg_card"], fg=COLORS["text_primary"], font=FONTS["body_sm"])
+        repo_menu.pack(side="left", padx=(0, 10))
+
+        def add_local_folder():
+            d = filedialog.askdirectory(title="Select Local Git Repository Folder", parent=self.root)
+            if d:
+                norm = os.path.normpath(d)
+                if commit_engine.is_git_repo(norm):
+                    db.add_watched_repo(
+                        user_id=self.user["id"],
+                        repo_name=commit_engine.repo_name(norm),
+                        local_path=norm,
+                        is_active_watch=1,
+                    )
+                    self._gd_selected_repo = norm
+                    self._nav_to("overview")
+                else:
+                    messagebox.showerror("Not a Git Repository", f"'{norm}' does not contain a .git directory.", parent=self.root)
+
+        add_btn = tk.Button(
+            sel_bar, text="＋ Add Local Repo", font=FONTS["caption"],
+            fg=COLORS["text_primary"], bg=COLORS["bg_medium"],
+            activebackground=COLORS["bg_card_hover"], activeforeground=COLORS["text_primary"],
+            relief="flat", bd=0, cursor="hand2", padx=8, pady=4,
+            command=add_local_folder
+        )
+        add_btn.pack(side="left", padx=(0, 8))
+        self._add_hover(add_btn, COLORS["bg_card_hover"], COLORS["bg_medium"])
+
+        scan_btn = tk.Button(
+            sel_bar, text="⚡ Scan for Changes Now", font=FONTS["label_bold"],
+            fg="white", bg=COLORS["accent"],
+            activebackground=COLORS["accent_hover"], activeforeground="white",
+            relief="flat", bd=0, cursor="hand2", padx=12, pady=4,
+            command=lambda: render_scanner_content()
+        )
+        scan_btn.pack(side="left", padx=(0, 12))
+        self._add_hover(scan_btn, COLORS["accent_hover"], COLORS["accent"])
+
+        branch_lbl = tk.Label(sel_bar, text="", font=FONTS["label_bold"], bg=COLORS["bg_card"])
+        branch_lbl.pack(side="left", padx=(0, 8))
+
+        account_lbl = tk.Label(sel_bar, text="", font=FONTS["caption"], bg=COLORS["bg_card"])
+        account_lbl.pack(side="left")
+
+        # ── Renderer for Changes & AI Preview ─────────────────────────────────
+        def render_scanner_content():
+            for w in content_container.winfo_children():
+                w.destroy()
+
+            if not self._gd_selected_repo or not os.path.isdir(self._gd_selected_repo):
+                empty_box = tk.Frame(content_container, bg=COLORS["bg_medium"], padx=16, pady=20)
+                empty_box.pack(fill="x")
+                tk.Label(empty_box, text="📂 No Local Repository Selected",
+                         font=FONTS["label_bold"], fg=COLORS["text_primary"], bg=COLORS["bg_medium"]).pack(anchor="w")
+                tk.Label(empty_box,
+                         text="Click '＋ Add Local Repo' above to choose a Git repository folder on your PC.",
+                         font=FONTS["body_sm"], fg=COLORS["text_secondary"], bg=COLORS["bg_medium"]).pack(anchor="w", pady=(4, 10))
+                tk.Button(empty_box, text="📁 Choose Local Repository Folder", font=FONTS["label_bold"],
+                          fg="white", bg=COLORS["accent"], relief="flat", bd=0, padx=14, pady=6,
+                          command=add_local_folder).pack(anchor="w")
+                branch_lbl.config(text="")
+                account_lbl.config(text="")
+                return
+
+            branch = commit_engine.current_branch(self._gd_selected_repo)
+            branch_lbl.config(text=f"🌿 {branch}", fg=COLORS["accent"])
+            acc = db.get_repo_account(self.user["id"], self._gd_selected_repo)
+            if acc:
+                account_lbl.config(text=f"🐙 @{acc['github_username']}", fg=COLORS["info"])
+            else:
+                account_lbl.config(text="🐙 Default Git Push", fg=COLORS["text_muted"])
+
+            # Scan for uncommitted changes
+            changes = commit_engine.uncommitted_changes(self._gd_selected_repo)
+            self._gd_changes = changes
+
+            sensitive_patterns = cfg.get("sensitive_patterns", [])
+            for status, path in changes:
+                if path not in self._gd_staged_vars:
+                    is_sens = any(s in path.lower() for s in sensitive_patterns)
+                    self._gd_staged_vars[path] = tk.BooleanVar(value=not is_sens)
+
+            if not changes:
+                clean_f = tk.Frame(content_container, bg=COLORS["bg_card"], padx=14, pady=16,
+                                   highlightthickness=1, highlightbackground=COLORS["border"])
+                clean_f.pack(fill="x")
+                tk.Label(clean_f, text=f"✔ Working Tree Clean ({commit_engine.repo_name(self._gd_selected_repo)})",
+                         font=FONTS["label_bold"], fg=COLORS["success"], bg=COLORS["bg_card"]).pack(anchor="w")
+                tk.Label(clean_f,
+                         text="No uncommitted changes detected. All files are up to date and clean.\n"
+                              "Make edits to any file in your project, then click '⚡ Scan for Changes Now' to generate comments and push.",
+                         font=FONTS["body_sm"], fg=COLORS["text_secondary"], bg=COLORS["bg_card"]).pack(anchor="w", pady=(4, 8))
+                btn_row = tk.Frame(clean_f, bg=COLORS["bg_card"])
+                btn_row.pack(anchor="w")
+                tk.Button(btn_row, text="🔄 Check Again", font=FONTS["caption"],
+                          fg=COLORS["text_primary"], bg=COLORS["bg_medium"], relief="flat", bd=0, padx=10, pady=4,
+                          command=render_scanner_content).pack(side="left", padx=(0, 8))
+                tk.Button(btn_row, text="🖥️ Open in Git Desktop", font=FONTS["caption"],
+                          fg=COLORS["accent"], bg=COLORS["bg_medium"], relief="flat", bd=0, padx=10, pady=4,
+                          command=lambda: self._nav_to("git_desktop")).pack(side="left")
+                return
+
+            # ── Uncommitted Changes Display ───────────────────────────────────
+            chg_hdr = tk.Frame(content_container, bg=COLORS["bg_card"])
+            chg_hdr.pack(fill="x", pady=(4, 6))
+
+            tk.Label(
+                chg_hdr, text=f"Detected Changes ({len(changes)} files in {commit_engine.repo_name(self._gd_selected_repo)}):",
+                font=FONTS["label_bold"], fg=COLORS["text_primary"], bg=COLORS["bg_card"]
+            ).pack(side="left")
+
+            def toggle_all():
+                all_staged = all(self._gd_staged_vars[p].get() for _, p in changes if p in self._gd_staged_vars)
+                for _, p in changes:
+                    if p in self._gd_staged_vars:
+                        self._gd_staged_vars[p].set(not all_staged)
+
+            tgl_btn = tk.Button(chg_hdr, text="Toggle All", font=FONTS["caption"],
+                                fg=COLORS["accent"], bg=COLORS["bg_card"], relief="flat", bd=0,
+                                cursor="hand2", command=toggle_all)
+            tgl_btn.pack(side="right")
+
+            # File list frame
+            files_box = tk.Frame(content_container, bg=COLORS["bg_input"], padx=8, pady=6,
+                                 highlightthickness=1, highlightbackground=COLORS["border"])
+            files_box.pack(fill="x", pady=(0, 10))
+
+            status_colors = {"M": ("Modified", "#f0883e"), "A": ("Added", "#3fb950"), "D": ("Deleted", "#f85149"), "??": ("Untracked", "#58a6ff")}
+            for st, path in changes[:12]:
+                row = tk.Frame(files_box, bg=COLORS["bg_input"])
+                row.pack(fill="x", pady=1)
+
+                var = self._gd_staged_vars.get(path)
+                if not var:
+                    var = tk.BooleanVar(value=True)
+                    self._gd_staged_vars[path] = var
+                cb = tk.Checkbutton(row, variable=var, bg=COLORS["bg_input"], selectcolor=COLORS["bg_card"],
+                                    activebackground=COLORS["bg_input"])
+                cb.pack(side="left")
+
+                label_txt, color_hex = status_colors.get(st, (st, "#8b949e"))
+                tk.Label(row, text=f"[{st}]", font=FONTS["mono_sm"], fg=color_hex, bg=COLORS["bg_input"]).pack(side="left", padx=(0, 6))
+                tk.Label(row, text=path, font=FONTS["body_sm"], fg=COLORS["text_primary"], bg=COLORS["bg_input"]).pack(side="left")
+
+            if len(changes) > 12:
+                tk.Label(files_box, text=f"... and {len(changes) - 12} more files (see Git Desktop for complete list)",
+                         font=FONTS["caption"], fg=COLORS["text_muted"], bg=COLORS["bg_input"]).pack(anchor="w", pady=(4, 0))
+
+            # ── AI Commentary & Edit Section ──────────────────────────────────
+            ai_box = tk.Frame(content_container, bg=COLORS["bg_card"], padx=14, pady=12,
+                              highlightthickness=1, highlightbackground=COLORS["accent"])
+            ai_box.pack(fill="x", pady=(0, 10))
+
+            ai_top = tk.Frame(ai_box, bg=COLORS["bg_card"])
+            ai_top.pack(fill="x", pady=(0, 6))
+
+            status_lbl = tk.Label(ai_top, text="💡 AI comments ready to generate or edit manually",
+                                  font=FONTS["caption"], fg=COLORS["text_secondary"], bg=COLORS["bg_card"])
+
+            def trigger_ai_gen():
+                selected_files = [p for p, v in self._gd_staged_vars.items() if v.get()]
+                if not selected_files:
+                    selected_files = [p for _, p in changes]
+                status_lbl.config(text="⏳ Native Local PC AI is reading diffs and crafting comments...", fg=COLORS["info"])
+                self.root.update_idletasks()
+
+                def do_call():
+                    res = ai_messages.generate_file_comments(cfg, self._gd_selected_repo, selected_files)
+                    def update_ui():
+                        self._gd_headline_var.set(res.get("headline", ""))
+                        desc_text.delete("1.0", "end")
+                        desc_text.insert("end", res.get("description", ""))
+                        status_lbl.config(text="✔ AI comments generated! You can edit them below before approving.", fg=COLORS["success"])
+                    self.root.after(0, update_ui)
+
+                threading.Thread(target=do_call, daemon=True).start()
+
+            ai_gen_btn = tk.Button(
+                ai_top, text="✨ Write AI Comments for Each File (Native Local AI)",
+                font=FONTS["label_bold"], fg="white", bg=COLORS["accent"],
+                activebackground=COLORS["accent_hover"], activeforeground="white",
+                relief="flat", bd=0, cursor="hand2", padx=12, pady=5,
+                command=trigger_ai_gen
+            )
+            ai_gen_btn.pack(side="left", padx=(0, 10))
+            self._add_hover(ai_gen_btn, COLORS["accent_hover"], COLORS["accent"])
+
+            status_lbl.pack(side="left")
+
+            # Commit headline
+            tk.Label(ai_box, text="Commit Headline (Editable):", font=FONTS["label_bold"],
+                     fg=COLORS["text_primary"], bg=COLORS["bg_card"]).pack(anchor="w", pady=(4, 2))
+
+            if not self._gd_headline_var.get():
+                self._gd_headline_var.set(f"refactor: update {len(changes)} files in {commit_engine.repo_name(self._gd_selected_repo)}")
+
+            headline_ent = tk.Entry(
+                ai_box, textvariable=self._gd_headline_var, font=FONTS["body_md"],
+                bg=COLORS["bg_input"], fg=COLORS["text_primary"], relief="flat",
+                highlightthickness=1, highlightbackground=COLORS["border"],
+            )
+            headline_ent.pack(fill="x", pady=(0, 8), ipady=4)
+
+            # Detailed comments
+            tk.Label(ai_box, text="Commit Description & Per-File Commentary (100% Editable):", font=FONTS["caption"],
+                     fg=COLORS["text_secondary"], bg=COLORS["bg_card"]).pack(anchor="w", pady=(0, 2))
+
+            desc_text = tk.Text(
+                ai_box, font=FONTS["body_sm"], height=4, bg=COLORS["bg_input"],
+                fg=COLORS["text_primary"], relief="flat", padx=8, pady=6,
+                highlightthickness=1, highlightbackground=COLORS["border"],
+            )
+            desc_text.pack(fill="x", pady=(0, 10))
+
+            # Initial description if empty
+            initial_desc = "\n".join(f"- {p}: Update file logic" for _, p in changes[:8])
+            desc_text.insert("end", initial_desc)
+
+            # ── Action Buttons Row ────────────────────────────────────────────
+            act_row = tk.Frame(ai_box, bg=COLORS["bg_card"])
+            act_row.pack(fill="x")
+
+            ask_cb = tk.Checkbutton(
+                act_row, text="Ask me before git pushing", variable=self._gd_ask_push_var,
+                font=FONTS["body_sm"], fg=COLORS["text_primary"], bg=COLORS["bg_card"],
+                selectcolor=COLORS["bg_input"], activebackground=COLORS["bg_card"],
+                activeforeground=COLORS["text_primary"],
+            )
+            ask_cb.pack(side="left", padx=(0, 12))
+
+            push_res_lbl = tk.Label(ai_box, text="", font=FONTS["label_bold"], bg=COLORS["bg_card"])
+            push_res_lbl.pack(anchor="w", pady=(6, 0))
+
+            def execute_approve_and_push(push_remote: bool):
+                staged = [p for p, v in self._gd_staged_vars.items() if v.get()]
+                if not staged:
+                    messagebox.showwarning("No Files Selected", "Please check at least one file to include in the commit.", parent=self.root)
+                    return
+
+                headline = self._gd_headline_var.get().strip() or "chore: update repository files"
+                desc = desc_text.get("1.0", "end").strip()
+                full_msg = f"{headline}\n\n{desc}" if desc else headline
+
+                acc = db.get_repo_account(self.user["id"], self._gd_selected_repo)
+                repo_name = commit_engine.repo_name(self._gd_selected_repo)
+                cur_branch = commit_engine.current_branch(self._gd_selected_repo)
+
+                if push_remote and self._gd_ask_push_var.get():
+                    unpushed = commit_engine.get_unpushed_commits(self._gd_selected_repo)
+                    confirmed = ui.ask_push_confirmation(repo_name, cur_branch, acc, unpushed)
+                    if not confirmed:
+                        push_res_lbl.config(text="ℹ Push cancelled by user. Changes remain uncommitted.", fg=COLORS["warning"])
+                        return
+
+                push_res_lbl.config(text="⏳ Committing and pushing to GitHub...", fg=COLORS["info"])
+                self.root.update_idletasks()
+
+                def do_commit_and_push_worker():
+                    try:
+                        summary = commit_engine.stage_and_commit(self._gd_selected_repo, staged, full_msg)
+                        commit_hash = summary.split()[0] if summary else ""
+                        db.log_commit(
+                            user_id=self.user["id"],
+                            repo_path=self._gd_selected_repo,
+                            commit_msg=headline,
+                            files_count=len(staged),
+                            commit_hash=commit_hash,
+                        )
+
+                        if push_remote:
+                            if acc:
+                                ok, pmsg = commit_engine.push_repo_with_account(self._gd_selected_repo, acc)
+                            else:
+                                accounts = db.get_github_accounts(self.user["id"])
+                                if accounts:
+                                    ok, pmsg = commit_engine.push_repo_with_account(self._gd_selected_repo, accounts[0])
+                                else:
+                                    ok, pmsg = commit_engine.push(self._gd_selected_repo)
+
+                            def on_push_done():
+                                if ok:
+                                    push_res_lbl.config(text=f"🎉 Successfully committed and pushed to GitHub! ({commit_hash})", fg=COLORS["success"])
+                                    messagebox.showinfo("Push Succeeded", f"✔ Successfully committed and pushed to GitHub!\n\nHeadline: {headline}\nFiles: {len(staged)} files\nSummary: {summary}", parent=self.root)
+                                    render_scanner_content()
+                                else:
+                                    push_res_lbl.config(text=f"❌ Push error: {pmsg}", fg=COLORS["danger"])
+                                    messagebox.showerror("Push Error", f"Commit succeeded locally, but git push failed:\n\n{pmsg}", parent=self.root)
+                            self.root.after(0, on_push_done)
+                        else:
+                            def on_commit_done():
+                                push_res_lbl.config(text=f"✔ Committed locally: {summary}", fg=COLORS["success"])
+                                messagebox.showinfo("Committed Locally", f"Commit saved locally:\n{summary}", parent=self.root)
+                                render_scanner_content()
+                            self.root.after(0, on_commit_done)
+
+                    except Exception as err:
+                        def on_err():
+                            push_res_lbl.config(text=f"❌ Commit failed: {err}", fg=COLORS["danger"])
+                            messagebox.showerror("Commit Failed", f"Could not create commit:\n\n{err}", parent=self.root)
+                        self.root.after(0, on_err)
+
+                threading.Thread(target=do_commit_and_push_worker, daemon=True).start()
+
+            # Push button
+            push_btn = tk.Button(
+                act_row, text="🚀 Approve & Git Push to GitHub", font=FONTS["label_bold"],
+                fg="white", bg=COLORS["accent"], activebackground=COLORS["accent_hover"],
+                activeforeground="white", relief="flat", bd=0, cursor="hand2", padx=16, pady=7,
+                command=lambda: execute_approve_and_push(push_remote=True)
+            )
+            push_btn.pack(side="left", padx=(0, 8))
+            self._add_hover(push_btn, COLORS["accent_hover"], COLORS["accent"])
+
+            # Commit locally button
+            commit_btn = tk.Button(
+                act_row, text="💾 Commit Locally Only", font=FONTS["label_bold"],
+                fg=COLORS["text_primary"], bg=COLORS["bg_medium"],
+                activebackground=COLORS["bg_card_hover"], activeforeground=COLORS["text_primary"],
+                relief="flat", bd=0, cursor="hand2", padx=12, pady=7,
+                command=lambda: execute_approve_and_push(push_remote=False)
+            )
+            commit_btn.pack(side="left", padx=(0, 8))
+            self._add_hover(commit_btn, COLORS["bg_card_hover"], COLORS["bg_medium"])
+
+            # Open in Git Desktop button
+            open_gd_btn = tk.Button(
+                act_row, text="🖥️ Open Full Diff in Git Desktop", font=FONTS["label"],
+                fg=COLORS["text_secondary"], bg=COLORS["bg_card"],
+                activebackground=COLORS["bg_medium"], activeforeground=COLORS["text_primary"],
+                relief="flat", bd=0, cursor="hand2", padx=10, pady=7,
+                command=lambda: self._nav_to("git_desktop")
+            )
+            open_gd_btn.pack(side="left")
+            self._add_hover(open_gd_btn, COLORS["bg_medium"], COLORS["bg_card"])
+
+        render_scanner_content()
 
     def _commit_row(self, parent, entry: dict):
         row = tk.Frame(parent, bg=COLORS["bg_card"],
@@ -618,15 +1047,8 @@ class AdminApp:
         add_btn.pack(side="right", padx=(10, 0))
 
         accounts = db.get_github_accounts(self.user["id"])
-        prefs = db.get_preferences(self.user["id"]) or {}
-        dirs_raw = prefs.get("projects_dirs", "[]")
-        try:
-            proj_dirs = json.loads(dirs_raw)
-        except Exception:
-            proj_dirs = []
-        if not proj_dirs:
-            proj_dirs = [db.APP_DIR]
-        repos = commit_engine.list_repos(proj_dirs)
+        watched_repos = db.get_watched_repos(self.user["id"])
+        repos = [r["local_path"] for r in watched_repos if r.get("local_path") and os.path.isdir(r["local_path"])]
 
         default_acc = db.get_default_github_account(self.user["id"])
         default_name = default_acc["account_name"] if default_acc else "None set"
@@ -636,7 +1058,7 @@ class AdminApp:
         stats_row.pack(fill="x", pady=(0, 16))
         self._stat_card(stats_row, "Linked Accounts", str(len(accounts)), COLORS["accent"], "🐙")
         self._stat_card(stats_row, "Default Push Account", default_name, COLORS["info"], "★")
-        self._stat_card(stats_row, "Detected Repos", str(len(repos)), COLORS["warning"], "📁")
+        self._stat_card(stats_row, "Authorized Repos", str(len(repos)), COLORS["warning"], "📁")
 
         # ── Section 1: Linked Accounts ───────────────────────────────────────
         self._section_hdr(p, "Connected Accounts", pady=(8, 10))
@@ -877,17 +1299,38 @@ class AdminApp:
                 if lp not in available_repos:
                     available_repos.append(lp)
 
-        for d in commit_engine.list_repos(cfg.get("projects_dirs", [])):
-            if d not in available_repos:
-                available_repos.append(d)
-
-        curr_dir = os.path.abspath(os.path.dirname(__file__))
-        if commit_engine.is_git_repo(curr_dir) and curr_dir not in available_repos:
-            available_repos.append(curr_dir)
-
         if not self._gd_selected_repo or self._gd_selected_repo not in available_repos:
             if available_repos:
                 self._gd_selected_repo = available_repos[0]
+            else:
+                self._gd_selected_repo = None
+
+        if not available_repos:
+            empty_card = self._card(pad, padx=24, pady=32)
+            empty_card.pack(fill="both", expand=True)
+            tk.Label(empty_card, text="🖥️ No Repositories Authorized in Git Desktop",
+                     font=FONTS["heading_md"], fg=COLORS["text_primary"], bg=COLORS["bg_card"]).pack(anchor="w", pady=(0, 6))
+            tk.Label(empty_card,
+                     text="CommitMaster respects your privacy and only accesses repositories you explicitly authorize.\n"
+                          "Add a local git folder or select from your linked GitHub accounts below to start using Git Desktop.",
+                     font=FONTS["body_sm"], fg=COLORS["text_secondary"], bg=COLORS["bg_card"], justify="left").pack(anchor="w", pady=(0, 16))
+
+            btn_f = tk.Frame(empty_card, bg=COLORS["bg_card"])
+            btn_f.pack(anchor="w")
+
+            add_loc_btn = tk.Button(btn_f, text="📁 Add Local Repository", font=FONTS["label_bold"],
+                                    fg="white", bg=COLORS["accent"], activebackground=COLORS["accent_hover"],
+                                    activeforeground="white", relief="flat", bd=0, cursor="hand2",
+                                    padx=16, pady=8, command=self._gd_add_local_repo)
+            add_loc_btn.pack(side="left", padx=(0, 10))
+
+            sel_gh_btn = tk.Button(btn_f, text="🐙 Select from GitHub Account", font=FONTS["label_bold"],
+                                   fg=COLORS["text_primary"], bg=COLORS["bg_medium"],
+                                   activebackground=COLORS["bg_card_hover"], activeforeground=COLORS["text_primary"],
+                                   relief="flat", bd=0, cursor="hand2",
+                                   padx=16, pady=8, command=self._wr_select_github_repos)
+            sel_gh_btn.pack(side="left")
+            return
 
         # ── Top Toolbar ───────────────────────────────────────────────────────
         tb = self._card(pad, padx=14, pady=10)
@@ -1063,14 +1506,23 @@ class AdminApp:
         self._gd_build_commit_dock(pad, cfg)
 
     def _gd_add_local_repo(self):
-        d = filedialog.askdirectory(title="Select Local Git Repository")
+        d = filedialog.askdirectory(title="Select Local Git Repository Folder", parent=self.root)
         if d:
             if commit_engine.is_git_repo(d):
-                self._gd_selected_repo = os.path.normpath(d)
+                norm = os.path.normpath(d)
+                rname = commit_engine.repo_name(norm)
+                db.add_or_update_watched_repo(
+                    user_id=self.user["id"],
+                    repo_name=rname,
+                    repo_full_name=rname,
+                    local_path=norm,
+                    is_active_watch=1,
+                )
+                self._gd_selected_repo = norm
                 self._gd_active_file = None
                 self._nav_to("git_desktop")
             else:
-                messagebox.showerror("Not a Git Repository", f"'{d}' is not a valid git repository.", parent=self.root)
+                messagebox.showerror("Not a Git Repository", f"'{d}' is not a valid git repository (.git folder not found).", parent=self.root)
 
     def _gd_toggle_all_files(self):
         if not self._gd_staged_vars:
@@ -1377,12 +1829,20 @@ class AdminApp:
         ctrl_f = tk.Frame(ctrl_card, bg=COLORS["bg_card"])
         ctrl_f.pack(fill="x")
 
-        sync_btn = tk.Button(ctrl_f, text="🔄 Sync All Repos from GitHub", font=FONTS["label_bold"],
-                             fg="white", bg=COLORS["accent"], activebackground=COLORS["accent_hover"],
-                             activeforeground="white", relief="flat", bd=0, cursor="hand2",
-                             padx=14, pady=6, command=self._wr_sync_github)
-        sync_btn.pack(side="left", padx=(0, 14))
-        self._add_hover(sync_btn, COLORS["accent_hover"], COLORS["accent"])
+        add_local_btn = tk.Button(ctrl_f, text="📁 Add Local Repository", font=FONTS["label_bold"],
+                                  fg="white", bg=COLORS["accent"], activebackground=COLORS["accent_hover"],
+                                  activeforeground="white", relief="flat", bd=0, cursor="hand2",
+                                  padx=12, pady=6, command=self._wr_add_local_repo)
+        add_local_btn.pack(side="left", padx=(0, 8))
+        self._add_hover(add_local_btn, COLORS["accent_hover"], COLORS["accent"])
+
+        sel_gh_btn = tk.Button(ctrl_f, text="🐙 Select GitHub Repos", font=FONTS["label_bold"],
+                               fg=COLORS["text_primary"], bg=COLORS["bg_medium"],
+                               activebackground=COLORS["bg_card_hover"], activeforeground=COLORS["text_primary"],
+                               relief="flat", bd=0, cursor="hand2",
+                               padx=12, pady=6, command=self._wr_select_github_repos)
+        sel_gh_btn.pack(side="left", padx=(0, 14))
+        self._add_hover(sel_gh_btn, COLORS["bg_card_hover"], COLORS["bg_medium"])
 
         tk.Label(ctrl_f, text="Search:", font=FONTS["body_sm"],
                  fg=COLORS["text_secondary"], bg=COLORS["bg_card"]).pack(side="left", padx=(0, 4))
@@ -1417,9 +1877,9 @@ class AdminApp:
         if not filtered:
             empty_box = self._card(pad, padx=24, pady=30)
             empty_box.pack(fill="x", pady=(0, 10))
-            tk.Label(empty_box, text="No repositories match the current filter.", font=FONTS["heading_sm"],
+            tk.Label(empty_box, text="No repositories authorized yet.", font=FONTS["heading_sm"],
                      fg=COLORS["text_secondary"], bg=COLORS["bg_card"]).pack(anchor="w")
-            tk.Label(empty_box, text="Click '🔄 Sync All Repos from GitHub' above to discover your repositories from your linked GitHub accounts.",
+            tk.Label(empty_box, text="CommitMaster only accesses repositories you explicitly add. Click '📁 Add Local Repository' or '🐙 Select GitHub Repos' above to choose which projects to work on.",
                      font=FONTS["caption"], fg=COLORS["text_muted"], bg=COLORS["bg_card"]).pack(anchor="w", pady=(4, 0))
         else:
             for repo_item in filtered:
@@ -1429,30 +1889,47 @@ class AdminApp:
         self._wr_filter_mode = mode
         self._nav_to("watched_repos")
 
-    def _wr_sync_github(self):
+    def _wr_select_github_repos(self):
         accounts = db.get_github_accounts(self.user["id"])
         if not accounts:
-            messagebox.showwarning(
+            if messagebox.askyesno(
                 "No GitHub Accounts",
-                "Please link a GitHub account under 'GitHub Accounts' first.",
+                "No GitHub accounts linked yet. Would you like to link a GitHub account now?",
                 parent=self.root,
-            )
+            ):
+                self._open_add_github_dialog()
+            return
+        SelectGitHubReposDialog(self.root, self.user["id"], on_selected=lambda: self._nav_to("watched_repos"))
+
+    def _wr_add_local_repo(self):
+        folder = filedialog.askdirectory(title="Select Local Git Repository Folder", parent=self.root)
+        if not folder:
+            return
+        if not commit_engine.is_git_repo(folder):
+            messagebox.showerror("Not a Git Repository", f"The folder '{folder}' does not contain a .git repository.", parent=self.root)
             return
 
-        def do_sync():
-            total_synced = 0
-            for acc in accounts:
-                ok, repos, _ = github_service.fetch_user_repositories(acc.get("github_token", ""))
-                if ok and repos:
-                    total_synced += db.sync_github_repos(self.user["id"], acc["id"], repos)
+        rname = commit_engine.repo_name(folder)
+        db.add_or_update_watched_repo(
+            user_id=self.user["id"],
+            repo_name=rname,
+            repo_full_name=rname,
+            local_path=folder,
+            is_active_watch=1,
+        )
+        self._gd_selected_repo = folder
+        messagebox.showinfo("Repository Added", f"Repository '{rname}' added and authorized in CommitMaster!", parent=self.root)
+        self._nav_to("watched_repos")
 
-            def done():
-                messagebox.showinfo("Sync Complete", f"Successfully synced {total_synced} repositories from GitHub!", parent=self.root)
-                self._nav_to("watched_repos")
+    def _wr_remove_repo(self, repo: Dict):
+        if messagebox.askyesno("Remove Access", f"Remove '{repo['repo_full_name']}' from CommitMaster?\n\nCommitMaster will no longer access, track, or auto-commit to this repository.", parent=self.root):
+            db.delete_watched_repo(repo["id"], self.user["id"])
+            if self._gd_selected_repo == repo.get("local_path"):
+                self._gd_selected_repo = None
+            self._nav_to("watched_repos")
 
-            self.root.after(0, done)
-
-        threading.Thread(target=do_sync, daemon=True).start()
+    def _wr_sync_github(self):
+        self._wr_select_github_repos()
 
     def _wr_build_repo_card(self, parent, repo: Dict):
         card = self._card(parent, padx=16, pady=12)
@@ -1496,9 +1973,9 @@ class AdminApp:
         right_ctrl.pack(side="right")
 
         is_watched = bool(repo.get("is_active_watch"))
-        watch_btn_text = "👀 Actively Watching" if is_watched else "○ Keep eye on repo"
-        watch_btn_bg = COLORS["accent"] if is_watched else COLORS["bg_medium"]
-        watch_btn_fg = "white" if is_watched else COLORS["text_primary"]
+        watch_btn_text = "🟢 Actively Watched (Auto-Commit)" if is_watched else "⚪ Manual Only (No Auto-Commit)"
+        watch_btn_bg = COLORS["success"] if is_watched else COLORS["bg_medium"]
+        watch_btn_fg = "white" if is_watched else COLORS["text_secondary"]
 
         def toggle_watch():
             db.toggle_watched_repo(repo["id"], self.user["id"])
@@ -1536,7 +2013,15 @@ class AdminApp:
                 padx=10, pady=5,
                 command=lambda p=lp: self._wr_open_in_desktop(p)
             )
-            open_gd_btn.pack(side="left")
+            open_gd_btn.pack(side="left", padx=(0, 6))
+
+        del_btn = tk.Button(
+            right_ctrl, text="🗑️ Remove Access", font=FONTS["caption"],
+            fg=COLORS["error"], bg=COLORS["bg_medium"], relief="flat", bd=0,
+            cursor="hand2", padx=8, pady=5,
+            command=lambda r=repo: self._wr_remove_repo(r)
+        )
+        del_btn.pack(side="left")
 
     def _wr_link_local_folder(self, repo: Dict):
         d = filedialog.askdirectory(title=f"Select local clone folder for {repo['repo_name']}")
