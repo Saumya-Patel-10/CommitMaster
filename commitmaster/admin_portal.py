@@ -1,0 +1,1076 @@
+"""
+CommitMaster — Admin Management Portal.
+Full admin dashboard with user management, activity logs, and usage charts.
+"""
+import json
+import tkinter as tk
+from tkinter import messagebox, simpledialog
+from datetime import datetime
+from typing import Dict, Callable
+
+from commitmaster.app_styles import COLORS, FONTS, SIZES, AVATAR_COLORS
+from commitmaster import database as db
+
+
+class AdminPortal:
+    """
+    Admin portal — opened from the user dashboard if the logged-in user is an admin.
+    """
+
+    def __init__(self, admin_user: Dict, on_close: Callable):
+        self.admin_user = admin_user
+        self.on_close = on_close
+        self.root = tk.Tk()
+        self._setup_window()
+        self._build_layout()
+        self._nav_to("dashboard")
+
+    # ── Window setup ──────────────────────────────────────────────────────────
+
+    def _setup_window(self):
+        self.root.title("CommitMaster — Admin Portal")
+        self.root.geometry("1200x750")
+        self.root.minsize(1000, 640)
+        self.root.configure(bg=COLORS["bg_darkest"])
+        self.root.update_idletasks()
+        w, h = 1200, 750
+        sw = self.root.winfo_screenwidth()
+        sh = self.root.winfo_screenheight()
+        self.root.geometry(f"{w}x{h}+{(sw - w)//2}+{(sh - h)//2}")
+
+    # ── Layout ────────────────────────────────────────────────────────────────
+
+    def _build_layout(self):
+        # Sidebar
+        self._sidebar = tk.Frame(self.root, bg=COLORS["bg_sidebar"],
+                                 width=SIZES["sidebar_width"])
+        self._sidebar.pack(side="left", fill="y")
+        self._sidebar.pack_propagate(False)
+
+        # Main
+        self._main = tk.Frame(self.root, bg=COLORS["bg_dark"])
+        self._main.pack(side="left", fill="both", expand=True)
+
+        self._build_sidebar()
+        self._build_header()
+
+        # Scrollable content
+        self._content_outer = tk.Frame(self._main, bg=COLORS["bg_dark"])
+        self._content_outer.pack(fill="both", expand=True)
+        self._canvas = tk.Canvas(self._content_outer, bg=COLORS["bg_dark"],
+                                 highlightthickness=0)
+        self._scrollbar = tk.Scrollbar(self._content_outer, orient="vertical",
+                                       command=self._canvas.yview)
+        self._canvas.configure(yscrollcommand=self._scrollbar.set)
+        self._scrollbar.pack(side="right", fill="y")
+        self._canvas.pack(side="left", fill="both", expand=True)
+        self._content_frame = tk.Frame(self._canvas, bg=COLORS["bg_dark"])
+        self._cw = self._canvas.create_window((0, 0), window=self._content_frame, anchor="nw")
+        self._content_frame.bind("<Configure>",
+                                 lambda e: self._canvas.configure(
+                                     scrollregion=self._canvas.bbox("all")))
+        self._canvas.bind("<Configure>",
+                          lambda e: self._canvas.itemconfig(self._cw, width=e.width))
+        self._canvas.bind_all("<MouseWheel>",
+                              lambda e: self._canvas.yview_scroll(
+                                  -1 * (e.delta // 120), "units"))
+
+    # ── Sidebar ───────────────────────────────────────────────────────────────
+
+    def _build_sidebar(self):
+        sb = self._sidebar
+        logo_f = tk.Frame(sb, bg=COLORS["bg_sidebar"], height=70)
+        logo_f.pack(fill="x")
+        logo_f.pack_propagate(False)
+        tk.Label(logo_f, text="🛡 Admin Portal", font=FONTS["heading_sm"],
+                 fg=COLORS["admin"], bg=COLORS["bg_sidebar"]).pack(
+            side="left", padx=16, pady=20)
+
+        tk.Frame(sb, height=1, bg=COLORS["border"]).pack(fill="x")
+
+        # Admin avatar
+        av_f = tk.Frame(sb, bg=COLORS["bg_sidebar"], pady=12)
+        av_f.pack(fill="x", padx=16)
+        color = self.admin_user.get("avatar_color", AVATAR_COLORS[0])
+        initials = self._get_initials()
+        tk.Label(av_f, text=initials, font=FONTS["heading_sm"],
+                 bg=color, fg="white", width=4, height=2).pack(anchor="w")
+        tk.Label(av_f, text=self.admin_user.get("full_name") or self.admin_user["username"],
+                 font=FONTS["label_bold"], fg=COLORS["text_primary"],
+                 bg=COLORS["bg_sidebar"]).pack(anchor="w", pady=(4, 0))
+        tk.Label(av_f, text="● Administrator", font=FONTS["caption"],
+                 fg=COLORS["admin"], bg=COLORS["bg_sidebar"]).pack(anchor="w")
+
+        tk.Frame(sb, height=1, bg=COLORS["border"]).pack(fill="x", pady=(8, 4))
+
+        # ── Admin Control section ─────────────────────────────────────────────
+        tk.Label(sb, text="  ADMIN CONTROL", font=("Segoe UI", 9, "bold"),
+                 fg=COLORS["text_muted"], bg=COLORS["bg_sidebar"]).pack(
+            anchor="w", pady=(4, 2))
+        admin_nav = [
+            ("📊", "Dashboard",      "dashboard"),
+            ("👥", "Users",          "users"),
+            ("📝", "Activity Log",   "activity"),
+            ("📈", "Usage Charts",   "charts"),
+            ("⚙️",  "Global Settings","global_settings"),
+        ]
+        tk.Frame(sb, height=1, bg=COLORS["border"]).pack(fill="x", pady=(4, 4))
+        # ── My Account section ────────────────────────────────────────────────
+        tk.Label(sb, text="  MY ACCOUNT", font=("Segoe UI", 9, "bold"),
+                 fg=COLORS["text_muted"], bg=COLORS["bg_sidebar"]).pack(
+            anchor="w", pady=(4, 2))
+        my_nav = [
+            ("👤", "My Settings",   "my_settings"),
+        ]
+        all_nav = admin_nav + my_nav
+        self._nav_buttons = {}
+        for icon, label, key in all_nav:
+            btn = tk.Button(sb, text=f"  {icon}  {label}",
+                            font=FONTS["label"], fg=COLORS["text_secondary"],
+                            bg=COLORS["bg_sidebar"], relief="flat", bd=0,
+                            cursor="hand2", anchor="w", padx=16, pady=10,
+                            command=lambda k=key: self._nav_to(k))
+            btn.pack(fill="x")
+            self._nav_buttons[key] = btn
+
+        tk.Frame(sb, bg=COLORS["bg_sidebar"]).pack(fill="both", expand=True)
+        tk.Frame(sb, height=1, bg=COLORS["border"]).pack(fill="x")
+        back_btn = tk.Button(sb, text="  ← Back to App",
+                             font=FONTS["label"], fg=COLORS["text_secondary"],
+                             bg=COLORS["bg_sidebar"], relief="flat", bd=0,
+                             cursor="hand2", anchor="w", padx=16, pady=12,
+                             command=self._go_back)
+        back_btn.pack(fill="x")
+
+    def _build_header(self):
+        header = tk.Frame(self._main, bg=COLORS["bg_dark"], height=56)
+        header.pack(fill="x")
+        header.pack_propagate(False)
+        tk.Frame(self._main, height=2, bg=COLORS["admin"]).pack(fill="x")
+        self._header_title = tk.Label(header, text="Dashboard",
+                                      font=FONTS["heading_md"],
+                                      fg=COLORS["text_primary"], bg=COLORS["bg_dark"])
+        self._header_title.pack(side="left", padx=24, pady=12)
+        # Admin badge
+        badge = tk.Label(header, text="  ADMIN  ",
+                         font=("Segoe UI", 9, "bold"),
+                         fg=COLORS["bg_darkest"], bg=COLORS["admin"])
+        badge.pack(side="right", padx=16, pady=18)
+
+    def _nav_to(self, key: str):
+        for k, btn in self._nav_buttons.items():
+            if k == key:
+                btn.config(bg=COLORS["bg_medium"], fg=COLORS["admin"])
+            else:
+                btn.config(bg=COLORS["bg_sidebar"], fg=COLORS["text_secondary"])
+        for w in self._content_frame.winfo_children():
+            w.destroy()
+        self._header_title.config(text={
+            "dashboard":       "Dashboard",
+            "users":           "User Management",
+            "activity":        "Activity Log",
+            "charts":          "Usage Charts",
+            "global_settings": "Global Settings",
+            "my_settings":     "My Settings",
+        }.get(key, key))
+
+        pages = {
+            "dashboard":       self._page_dashboard,
+            "users":           self._page_users,
+            "activity":        self._page_activity,
+            "charts":          self._page_charts,
+            "global_settings": self._page_global_settings,
+            "my_settings":     self._page_my_settings,
+        }
+        if key in pages:
+            pages[key]()
+
+    # ── My Settings page (admin edits their own account) ──────────────────────
+
+    def _page_my_settings(self):
+        p = self._content_frame
+        pad = tk.Frame(p, bg=COLORS["bg_dark"], padx=24, pady=20)
+        pad.pack(fill="both", expand=True)
+
+        # Header
+        tk.Label(pad, text="My Settings", font=FONTS["heading_lg"],
+                 fg=COLORS["text_primary"], bg=COLORS["bg_dark"]).pack(anchor="w")
+        tk.Label(pad,
+                 text="Manage your admin account. Changes apply immediately.",
+                 font=FONTS["body_sm"], fg=COLORS["text_secondary"],
+                 bg=COLORS["bg_dark"]).pack(anchor="w", pady=(2, 20))
+
+        # ── Avatar colour picker ────────────────────────────────────────────────
+        av_card = self._card(pad, padx=20, pady=16)
+        av_card.pack(fill="x", pady=(0, 12))
+
+        av_top = tk.Frame(av_card, bg=COLORS["bg_card"])
+        av_top.pack(fill="x")
+        self._my_color_var = tk.StringVar(
+            value=self.admin_user.get("avatar_color", AVATAR_COLORS[0]))
+
+        # Live preview avatar
+        self._av_preview = tk.Label(av_top,
+                                    text=self._get_initials(),
+                                    font=FONTS["heading_lg"],
+                                    bg=self._my_color_var.get(),
+                                    fg="white", width=4, height=2)
+        self._av_preview.pack(side="left", padx=(0, 16))
+
+        color_col = tk.Frame(av_top, bg=COLORS["bg_card"])
+        color_col.pack(side="left")
+        tk.Label(color_col, text="Avatar Color",
+                 font=FONTS["label_bold"], fg=COLORS["text_secondary"],
+                 bg=COLORS["bg_card"]).pack(anchor="w")
+        swatch_row = tk.Frame(color_col, bg=COLORS["bg_card"])
+        swatch_row.pack(anchor="w", pady=(6, 0))
+        for color in AVATAR_COLORS:
+            swatch = tk.Label(swatch_row, text="  ", bg=color, width=3,
+                              cursor="hand2", highlightthickness=2,
+                              highlightbackground=COLORS["border"])
+            swatch.pack(side="left", padx=3)
+            swatch.bind("<Button-1>", lambda e, c=color: self._pick_my_color(c))
+
+        # ── Profile fields ──────────────────────────────────────────────────────
+        prof_card = self._card(pad, padx=20, pady=16)
+        prof_card.pack(fill="x", pady=(0, 12))
+        tk.Label(prof_card, text="Profile Information",
+                 font=FONTS["heading_sm"], fg=COLORS["text_primary"],
+                 bg=COLORS["bg_card"]).pack(anchor="w", pady=(0, 12))
+
+        self._my_vars = {}
+        fields = [
+            ("Full Name",  "full_name", self.admin_user.get("full_name", ""), False),
+            ("Email",      "email",     self.admin_user.get("email", ""),     False),
+        ]
+        for label, key, default, _ in fields:
+            rf = tk.Frame(prof_card, bg=COLORS["bg_card"])
+            rf.pack(fill="x", pady=(0, 10))
+            tk.Label(rf, text=label, font=FONTS["label_bold"],
+                     fg=COLORS["text_secondary"], bg=COLORS["bg_card"],
+                     width=14, anchor="w").pack(side="left")
+            var = tk.StringVar(value=default)
+            self._my_vars[key] = var
+            e = tk.Entry(rf, textvariable=var, font=FONTS["body_md"],
+                         bg=COLORS["bg_input"], fg=COLORS["text_primary"],
+                         relief="flat", highlightthickness=1,
+                         highlightbackground=COLORS["border"],
+                         insertbackground=COLORS["text_primary"])
+            e.pack(side="left", fill="x", expand=True, ipady=7)
+
+        # Bio
+        bio_f = tk.Frame(prof_card, bg=COLORS["bg_card"])
+        bio_f.pack(fill="x", pady=(0, 10))
+        tk.Label(bio_f, text="Bio", font=FONTS["label_bold"],
+                 fg=COLORS["text_secondary"], bg=COLORS["bg_card"],
+                 width=14, anchor="w").pack(side="left", anchor="n")
+        self._my_bio = tk.Text(bio_f, font=FONTS["body_md"],
+                               bg=COLORS["bg_input"], fg=COLORS["text_primary"],
+                               relief="flat", height=3, bd=0,
+                               highlightthickness=1,
+                               highlightbackground=COLORS["border"],
+                               insertbackground=COLORS["text_primary"])
+        self._my_bio.insert("1.0", self.admin_user.get("bio") or "")
+        self._my_bio.pack(side="left", fill="x", expand=True)
+
+        save_profile_btn = tk.Button(
+            pad, text="  💾  Save Profile",
+            font=FONTS["heading_sm"], fg="white",
+            bg=COLORS["admin"], activebackground=COLORS["admin_dark"],
+            activeforeground="white", relief="flat", bd=0, cursor="hand2",
+            padx=20, pady=10, command=self._save_my_profile)
+        save_profile_btn.pack(anchor="w", pady=(0, 20))
+        save_profile_btn.bind("<Enter>",
+                              lambda e: save_profile_btn.config(bg=COLORS["admin_dark"]))
+        save_profile_btn.bind("<Leave>",
+                              lambda e: save_profile_btn.config(bg=COLORS["admin"]))
+
+        # ── Change Username ─────────────────────────────────────────────────────
+        user_card = self._card(pad, padx=20, pady=16)
+        user_card.pack(fill="x", pady=(0, 12))
+        tk.Label(user_card, text="Change Username",
+                 font=FONTS["heading_sm"], fg=COLORS["text_primary"],
+                 bg=COLORS["bg_card"]).pack(anchor="w", pady=(0, 4))
+        tk.Label(user_card,
+                 text="Username is used to log in. Choose carefully.",
+                 font=FONTS["caption"], fg=COLORS["text_muted"],
+                 bg=COLORS["bg_card"]).pack(anchor="w", pady=(0, 10))
+
+        uf = tk.Frame(user_card, bg=COLORS["bg_card"])
+        uf.pack(fill="x", pady=(0, 8))
+        tk.Label(uf, text="Current username:", font=FONTS["label"],
+                 fg=COLORS["text_secondary"], bg=COLORS["bg_card"]).pack(side="left")
+        tk.Label(uf, text=f"  @{self.admin_user['username']}",
+                 font=FONTS["label_bold"], fg=COLORS["accent"],
+                 bg=COLORS["bg_card"]).pack(side="left")
+
+        nuf = tk.Frame(user_card, bg=COLORS["bg_card"])
+        nuf.pack(fill="x", pady=(0, 8))
+        tk.Label(nuf, text="New username:", font=FONTS["label_bold"],
+                 fg=COLORS["text_secondary"], bg=COLORS["bg_card"],
+                 width=18, anchor="w").pack(side="left")
+        self._new_username_var = tk.StringVar()
+        nue = tk.Entry(nuf, textvariable=self._new_username_var,
+                       font=FONTS["body_md"], bg=COLORS["bg_input"],
+                       fg=COLORS["text_primary"], relief="flat",
+                       highlightthickness=1, highlightbackground=COLORS["border"],
+                       insertbackground=COLORS["text_primary"])
+        nue.pack(side="left", fill="x", expand=True, ipady=7)
+
+        chg_user_btn = tk.Button(
+            user_card, text="  ✏  Change Username",
+            font=FONTS["label"], fg="white",
+            bg=COLORS["info"], activebackground="#3a7bd5",
+            activeforeground="white", relief="flat", bd=0, cursor="hand2",
+            padx=14, pady=6, command=self._change_my_username)
+        chg_user_btn.pack(anchor="w", pady=(4, 0))
+
+        # ── Change Password ─────────────────────────────────────────────────────
+        pw_card = self._card(pad, padx=20, pady=16)
+        pw_card.pack(fill="x", pady=(0, 12))
+        tk.Label(pw_card, text="Change Password",
+                 font=FONTS["heading_sm"], fg=COLORS["text_primary"],
+                 bg=COLORS["bg_card"]).pack(anchor="w", pady=(0, 10))
+
+        self._my_pw_vars = {}
+        pw_fields = [
+            ("New Password",     "new_pw",  "•"),
+            ("Confirm Password", "confirm", "•"),
+        ]
+        for label, key, show in pw_fields:
+            pf = tk.Frame(pw_card, bg=COLORS["bg_card"])
+            pf.pack(fill="x", pady=(0, 8))
+            tk.Label(pf, text=label, font=FONTS["label_bold"],
+                     fg=COLORS["text_secondary"], bg=COLORS["bg_card"],
+                     width=18, anchor="w").pack(side="left")
+            var = tk.StringVar()
+            self._my_pw_vars[key] = var
+            e = tk.Entry(pf, textvariable=var, font=FONTS["body_md"],
+                         bg=COLORS["bg_input"], fg=COLORS["text_primary"],
+                         relief="flat", highlightthickness=1,
+                         highlightbackground=COLORS["border"],
+                         show=show,
+                         insertbackground=COLORS["text_primary"])
+            e.pack(side="left", fill="x", expand=True, ipady=7)
+
+        pw_btn = tk.Button(
+            pw_card, text="  🔒  Change Password",
+            font=FONTS["label"], fg="white",
+            bg=COLORS["warning"], activebackground="#c4840e",
+            activeforeground="white", relief="flat", bd=0, cursor="hand2",
+            padx=14, pady=6, command=self._change_my_password)
+        pw_btn.pack(anchor="w", pady=(4, 0))
+
+    def _pick_my_color(self, color: str):
+        self._my_color_var.set(color)
+        self._av_preview.config(bg=color)
+
+    def _save_my_profile(self):
+        db.update_user(
+            self.admin_user["id"],
+            full_name=self._my_vars["full_name"].get().strip(),
+            email=self._my_vars["email"].get().strip(),
+            bio=self._my_bio.get("1.0", "end-1c"),
+            avatar_color=self._my_color_var.get(),
+        )
+        # Refresh in-memory user dict
+        updated = db.get_user(self.admin_user["id"])
+        if updated:
+            self.admin_user.update(updated)
+        from tkinter import messagebox
+        messagebox.showinfo("Saved", "Profile updated successfully!", parent=self.root)
+
+    def _change_my_username(self):
+        new_uname = self._new_username_var.get().strip()
+        if not new_uname:
+            from tkinter import messagebox
+            messagebox.showwarning("Error", "Please enter a new username.", parent=self.root)
+            return
+        if new_uname == self.admin_user["username"]:
+            from tkinter import messagebox
+            messagebox.showwarning("Error", "That is already your current username.", parent=self.root)
+            return
+        conn = db.get_conn()
+        try:
+            conn.execute("UPDATE users SET username = ? WHERE id = ?",
+                         (new_uname, self.admin_user["id"]))
+            conn.commit()
+            self.admin_user["username"] = new_uname
+            self._new_username_var.set("")
+            from tkinter import messagebox
+            messagebox.showinfo(
+                "Username Changed",
+                f"Username updated to @{new_uname}.\n"
+                "Use this to log in next time.",
+                parent=self.root)
+            self._nav_to("my_settings")   # refresh page to show new username
+        except Exception as exc:
+            from tkinter import messagebox
+            messagebox.showerror("Error", f"Username already taken: {exc}", parent=self.root)
+
+    def _change_my_password(self):
+        new_pw  = self._my_pw_vars["new_pw"].get()
+        confirm = self._my_pw_vars["confirm"].get()
+        from tkinter import messagebox
+        if not new_pw:
+            messagebox.showwarning("Error", "Please enter a new password.", parent=self.root)
+            return
+        if new_pw != confirm:
+            messagebox.showwarning("Error", "Passwords do not match.", parent=self.root)
+            return
+        if len(new_pw) < 6:
+            messagebox.showwarning("Error",
+                                   "Password must be at least 6 characters.",
+                                   parent=self.root)
+            return
+        db.change_password(self.admin_user["id"], new_pw)
+        for v in self._my_pw_vars.values():
+            v.set("")
+        messagebox.showinfo("Password Changed",
+                            "Password updated successfully!",
+                            parent=self.root)
+
+    # ── Helper widgets ─────────────────────────────────────────────────────────
+
+    def _card(self, parent, **kw) -> tk.Frame:
+        return tk.Frame(parent, bg=COLORS["bg_card"],
+                        highlightbackground=COLORS["border"],
+                        highlightthickness=1, **kw)
+
+    def _stat_card(self, parent, title: str, value: str,
+                   color: str, icon: str, subtitle: str = ""):
+        card = self._card(parent)
+        card.pack(side="left", fill="both", expand=True, padx=6, pady=6)
+        inner = tk.Frame(card, bg=COLORS["bg_card"], padx=20, pady=18)
+        inner.pack(fill="both", expand=True)
+        # Top accent bar
+        tk.Frame(card, height=3, bg=color).place(relx=0, rely=0, relwidth=1)
+        tk.Label(inner, text=icon, font=("Segoe UI Emoji", 22),
+                 fg=color, bg=COLORS["bg_card"]).pack(anchor="w")
+        tk.Label(inner, text=value, font=FONTS["heading_lg"],
+                 fg=color, bg=COLORS["bg_card"]).pack(anchor="w", pady=(4, 0))
+        tk.Label(inner, text=title, font=FONTS["label_bold"],
+                 fg=COLORS["text_primary"], bg=COLORS["bg_card"]).pack(anchor="w")
+        if subtitle:
+            tk.Label(inner, text=subtitle, font=FONTS["caption"],
+                     fg=COLORS["text_muted"], bg=COLORS["bg_card"]).pack(anchor="w")
+
+    def _action_btn(self, parent, text: str, cmd, color=None) -> tk.Button:
+        c = color or COLORS["bg_medium"]
+        btn = tk.Button(parent, text=text, font=FONTS["label"],
+                        fg=COLORS["text_primary"], bg=c,
+                        activebackground=COLORS["bg_card_hover"],
+                        activeforeground=COLORS["text_primary"],
+                        relief="flat", bd=0, cursor="hand2",
+                        padx=10, pady=4, command=cmd)
+        btn.bind("<Enter>", lambda e: btn.config(bg=COLORS["bg_card_hover"]))
+        btn.bind("<Leave>", lambda e: btn.config(bg=c))
+        return btn
+
+    # ── Pages ──────────────────────────────────────────────────────────────────
+
+    def _page_dashboard(self):
+        p = self._content_frame
+        pad = tk.Frame(p, bg=COLORS["bg_dark"], padx=24, pady=20)
+        pad.pack(fill="both", expand=True)
+
+        tk.Label(pad, text="System Dashboard", font=FONTS["heading_lg"],
+                 fg=COLORS["text_primary"], bg=COLORS["bg_dark"]).pack(anchor="w")
+        tk.Label(pad, text=f"CommitMaster Admin — {datetime.now().strftime('%A, %B %d %Y')}",
+                 font=FONTS["body_sm"], fg=COLORS["text_secondary"],
+                 bg=COLORS["bg_dark"]).pack(anchor="w", pady=(2, 20))
+
+        stats = db.get_dashboard_stats()
+
+        # Stats row 1
+        row1 = tk.Frame(pad, bg=COLORS["bg_dark"])
+        row1.pack(fill="x")
+        self._stat_card(row1, "Total Users", str(stats["total_users"]),
+                        COLORS["info"], "👥", f"{stats['total_admins']} admins")
+        self._stat_card(row1, "Active Today", str(stats["active_today"]),
+                        COLORS["success"], "🟢", "unique logins")
+        self._stat_card(row1, "Total Commits", str(stats["total_commits"]),
+                        COLORS["accent"], "📝", "all time")
+        self._stat_card(row1, "This Week", str(stats["commits_this_week"]),
+                        COLORS["admin"], "📈", "commits (7d)")
+
+        # Top committers
+        tk.Label(pad, text="TOP COMMITTERS", font=FONTS["label_bold"],
+                 fg=COLORS["text_secondary"], bg=COLORS["bg_dark"]).pack(
+            anchor="w", pady=(24, 8))
+
+        top_card = self._card(pad, padx=20, pady=16)
+        top_card.pack(fill="x", pady=(0, 20))
+
+        if not stats["top_committers"]:
+            tk.Label(top_card, text="No commit data yet.",
+                     font=FONTS["body_sm"], fg=COLORS["text_muted"],
+                     bg=COLORS["bg_card"]).pack(anchor="w")
+        for i, tc in enumerate(stats["top_committers"], 1):
+            row = tk.Frame(top_card, bg=COLORS["bg_card"])
+            row.pack(fill="x", pady=4)
+            color = [COLORS["admin"], COLORS["warning"], COLORS["info"],
+                     COLORS["text_secondary"], COLORS["text_muted"]][i - 1]
+            tk.Label(row, text=f"#{i}", font=FONTS["label_bold"],
+                     fg=color, bg=COLORS["bg_card"], width=3).pack(side="left")
+            tk.Label(row, text=tc["username"], font=FONTS["body_md"],
+                     fg=COLORS["text_primary"], bg=COLORS["bg_card"]).pack(side="left", padx=8)
+            tk.Label(row, text=f"{tc['commits']} commits", font=FONTS["body_sm"],
+                     fg=COLORS["text_secondary"], bg=COLORS["bg_card"]).pack(side="right")
+
+        # Mini chart
+        usage = db.get_usage_stats(days=14)
+        tk.Label(pad, text="SYSTEM ACTIVITY — LAST 14 DAYS", font=FONTS["label_bold"],
+                 fg=COLORS["text_secondary"], bg=COLORS["bg_dark"]).pack(anchor="w", pady=(0, 8))
+        self._draw_multi_chart(pad, usage, width=800, height=180)
+
+    def _draw_multi_chart(self, parent, usage_data: list,
+                          width=800, height=180, show_users=True):
+        canvas = tk.Canvas(parent, width=width, height=height,
+                           bg=COLORS["bg_card"], highlightthickness=0)
+        canvas.pack(anchor="w", pady=(0, 8))
+        if not usage_data:
+            canvas.create_text(width // 2, height // 2,
+                                text="No data available",
+                                fill=COLORS["text_muted"], font=FONTS["body_sm"])
+            return
+
+        n = len(usage_data)
+        pad_l, pad_b = 20, 30
+        avail_w = width - pad_l - 20
+        bar_grp = avail_w // max(n, 1)
+        bar_w = max(3, bar_grp // 3 - 2)
+
+        max_commits = max((r.get("commits_made", 0) for r in usage_data), default=1) or 1
+        max_sess = max((r.get("sessions", 0) for r in usage_data), default=1) or 1
+        max_val = max(max_commits, max_sess)
+
+        chart_h = height - pad_b - 10
+
+        for i, row in enumerate(usage_data):
+            x0 = pad_l + i * bar_grp
+
+            commits = row.get("commits_made", 0)
+            bh = int((commits / max_val) * chart_h)
+            y1 = height - pad_b
+            canvas.create_rectangle(x0, y1 - bh, x0 + bar_w, y1,
+                                    fill=COLORS["chart_commits"], outline="")
+
+            sess = row.get("sessions", 0)
+            bh2 = int((sess / max_val) * chart_h)
+            x1 = x0 + bar_w + 2
+            canvas.create_rectangle(x1, y1 - bh2, x1 + bar_w, y1,
+                                    fill=COLORS["chart_sessions"], outline="")
+
+            if show_users and "active_users" in row:
+                users = row.get("active_users", 0)
+                bh3 = int((users / max_val) * chart_h)
+                x2 = x1 + bar_w + 2
+                canvas.create_rectangle(x2, y1 - bh3, x2 + bar_w, y1,
+                                        fill=COLORS["chart_users"], outline="")
+
+            if n <= 14 or i % 2 == 0:
+                canvas.create_text(x0 + bar_grp // 2, height - 12,
+                                   text=row["date"][5:],
+                                   fill=COLORS["text_muted"], font=FONTS["caption"])
+
+        # Legend
+        lx = width - 200
+        for color, label in [
+            (COLORS["chart_commits"], "Commits"),
+            (COLORS["chart_sessions"], "Sessions"),
+        ]:
+            canvas.create_rectangle(lx, 8, lx + 12, 18, fill=color, outline="")
+            canvas.create_text(lx + 16, 13, text=label, fill=COLORS["text_secondary"],
+                                font=FONTS["caption"], anchor="w")
+            lx += 80
+
+    def _page_users(self):
+        p = self._content_frame
+        pad = tk.Frame(p, bg=COLORS["bg_dark"], padx=24, pady=20)
+        pad.pack(fill="both", expand=True)
+
+        # Header
+        top = tk.Frame(pad, bg=COLORS["bg_dark"])
+        top.pack(fill="x", pady=(0, 16))
+        tk.Label(top, text="User Management", font=FONTS["heading_lg"],
+                 fg=COLORS["text_primary"], bg=COLORS["bg_dark"]).pack(side="left")
+        add_btn = tk.Button(top, text="  ＋ Add User",
+                            font=FONTS["label_bold"], fg="white",
+                            bg=COLORS["accent"], activebackground=COLORS["accent_hover"],
+                            activeforeground="white", relief="flat", bd=0,
+                            cursor="hand2", padx=14, pady=6,
+                            command=self._add_user_dialog)
+        add_btn.pack(side="right")
+
+        # Search bar
+        sf = tk.Frame(pad, bg=COLORS["bg_dark"])
+        sf.pack(fill="x", pady=(0, 12))
+        tk.Label(sf, text="🔍", font=FONTS["body_md"],
+                 fg=COLORS["text_muted"], bg=COLORS["bg_dark"]).pack(side="left")
+        self._search_var = tk.StringVar()
+        self._search_var.trace("w", lambda *a: self._refresh_users(pad))
+        se = tk.Entry(sf, textvariable=self._search_var, font=FONTS["body_md"],
+                      bg=COLORS["bg_input"], fg=COLORS["text_primary"],
+                      relief="flat", highlightthickness=1,
+                      highlightbackground=COLORS["border"], width=30)
+        se.pack(side="left", padx=8, ipady=6)
+        tk.Label(sf, text="Search by name, username or email",
+                 font=FONTS["caption"], fg=COLORS["text_muted"],
+                 bg=COLORS["bg_dark"]).pack(side="left")
+
+        # Table header
+        hdr = tk.Frame(pad, bg=COLORS["bg_medium"])
+        hdr.pack(fill="x")
+        for col, width in [("User", 30), ("Email", 30), ("Role", 10),
+                           ("Status", 10), ("Commits", 10), ("Actions", 20)]:
+            tk.Label(hdr, text=col, font=FONTS["label_bold"],
+                     fg=COLORS["text_secondary"], bg=COLORS["bg_medium"],
+                     width=width, anchor="w", padx=8, pady=6).pack(side="left")
+
+        # User list container
+        self._users_container = tk.Frame(pad, bg=COLORS["bg_dark"])
+        self._users_container.pack(fill="x")
+        self._users_pad = pad
+        self._refresh_users(pad)
+
+    def _refresh_users(self, pad=None):
+        container = self._users_container
+        for w in container.winfo_children():
+            w.destroy()
+
+        query = self._search_var.get().lower() if hasattr(self, "_search_var") else ""
+        users = db.get_all_users()
+
+        for user in users:
+            if query and not any(
+                query in str(user.get(f, "")).lower()
+                for f in ["username", "email", "full_name"]
+            ):
+                continue
+            self._user_table_row(container, user)
+
+    def _user_table_row(self, parent, user: Dict):
+        row = tk.Frame(parent, bg=COLORS["bg_card"],
+                       highlightbackground=COLORS["border"], highlightthickness=0)
+        row.pack(fill="x")
+        tk.Frame(parent, height=1, bg=COLORS["border"]).pack(fill="x")
+
+        def on_enter(e): row.config(bg=COLORS["bg_card_hover"])
+        def on_leave(e): row.config(bg=COLORS["bg_card"])
+        row.bind("<Enter>", on_enter)
+        row.bind("<Leave>", on_leave)
+
+        color = user.get("avatar_color", AVATAR_COLORS[0])
+        initials = self._user_initials(user)
+        av = tk.Label(row, text=initials, font=("Segoe UI", 9, "bold"),
+                      bg=color, fg="white", width=3, padx=4, pady=4)
+        av.pack(side="left", padx=(8, 0), pady=6)
+
+        name_f = tk.Frame(row, bg=COLORS["bg_card"], width=180)
+        name_f.pack(side="left", padx=8, pady=6)
+        name_f.pack_propagate(False)
+        tk.Label(name_f, text=user.get("full_name") or user["username"],
+                 font=FONTS["label_bold"], fg=COLORS["text_primary"],
+                 bg=COLORS["bg_card"], anchor="w").pack(anchor="w")
+        tk.Label(name_f, text=f"@{user['username']}", font=FONTS["caption"],
+                 fg=COLORS["text_muted"], bg=COLORS["bg_card"], anchor="w").pack(anchor="w")
+
+        email_lbl = tk.Label(row, text=user.get("email", ""),
+                             font=FONTS["body_sm"], fg=COLORS["text_secondary"],
+                             bg=COLORS["bg_card"], width=28, anchor="w")
+        email_lbl.pack(side="left", padx=4)
+
+        role_color = COLORS["admin"] if user["role"] == "admin" else COLORS["info"]
+        tk.Label(row, text=user["role"].capitalize(), font=FONTS["label"],
+                 fg=role_color, bg=COLORS["bg_card"], width=10).pack(side="left")
+
+        status = "Active" if user["is_active"] else "Disabled"
+        sc = COLORS["success"] if user["is_active"] else COLORS["error"]
+        tk.Label(row, text=f"● {status}", font=FONTS["label"],
+                 fg=sc, bg=COLORS["bg_card"], width=10).pack(side="left")
+
+        commits = user.get("total_commits", 0)
+        tk.Label(row, text=str(commits), font=FONTS["body_sm"],
+                 fg=COLORS["text_primary"], bg=COLORS["bg_card"], width=10).pack(side="left")
+
+        # Action buttons
+        actions = tk.Frame(row, bg=COLORS["bg_card"])
+        actions.pack(side="left", padx=8)
+
+        # Protect admin from deleting themselves
+        can_edit = user["id"] != self.admin_user["id"]
+
+        self._action_btn(actions, "✏ Edit",
+                         lambda u=user: self._edit_user_dialog(u)).pack(side="left", padx=2)
+        if can_edit:
+            toggle_text = "🔒 Disable" if user["is_active"] else "🔓 Enable"
+            self._action_btn(actions, toggle_text,
+                             lambda u=user: self._toggle_user(u)).pack(side="left", padx=2)
+            self._action_btn(actions, "🗑 Delete",
+                             lambda u=user: self._delete_user(u),
+                             color="#3a1010").pack(side="left", padx=2)
+
+    def _add_user_dialog(self):
+        dialog = _UserDialog(self.root, "Add User")
+        if dialog.result:
+            d = dialog.result
+            uid = db.create_user(d["username"], d["email"], d["full_name"],
+                                 d["password"], d["role"])
+            if uid:
+                messagebox.showinfo("Success", f"User '{d['username']}' created.",
+                                    parent=self.root)
+                self._refresh_users()
+            else:
+                messagebox.showerror("Error",
+                                     "Username or email already exists.",
+                                     parent=self.root)
+
+    def _edit_user_dialog(self, user: Dict):
+        dialog = _UserDialog(self.root, "Edit User", user)
+        if dialog.result:
+            d = dialog.result
+            db.update_user(user["id"],
+                           full_name=d["full_name"],
+                           email=d["email"],
+                           role=d["role"])
+            if d.get("password"):
+                db.change_password(user["id"], d["password"])
+            messagebox.showinfo("Saved", "User updated.", parent=self.root)
+            self._refresh_users()
+
+    def _toggle_user(self, user: Dict):
+        new_state = 0 if user["is_active"] else 1
+        action = "disabled" if new_state == 0 else "enabled"
+        if messagebox.askyesno("Confirm",
+                               f"{'Disable' if new_state == 0 else 'Enable'} "
+                               f"user '{user['username']}'?", parent=self.root):
+            db.update_user(user["id"], is_active=new_state)
+            self._refresh_users()
+
+    def _delete_user(self, user: Dict):
+        if messagebox.askyesno(
+            "Confirm Delete",
+            f"Permanently delete user '{user['username']}' and all their data?\n"
+            "This cannot be undone.",
+            parent=self.root
+        ):
+            db.hard_delete_user(user["id"])
+            self._refresh_users()
+
+    def _page_activity(self):
+        p = self._content_frame
+        pad = tk.Frame(p, bg=COLORS["bg_dark"], padx=24, pady=20)
+        pad.pack(fill="both", expand=True)
+
+        tk.Label(pad, text="System Activity Log", font=FONTS["heading_lg"],
+                 fg=COLORS["text_primary"], bg=COLORS["bg_dark"]).pack(anchor="w")
+        tk.Label(pad, text="All commits made through CommitMaster across all users.",
+                 font=FONTS["body_sm"], fg=COLORS["text_secondary"],
+                 bg=COLORS["bg_dark"]).pack(anchor="w", pady=(2, 16))
+
+        activity = db.get_activity_log(limit=200)
+
+        # Table header
+        hdr = tk.Frame(pad, bg=COLORS["bg_medium"])
+        hdr.pack(fill="x")
+        for col, width in [("User", 16), ("Repository", 18),
+                           ("Commit Message", 40), ("Files", 7), ("Date", 16)]:
+            tk.Label(hdr, text=col, font=FONTS["label_bold"],
+                     fg=COLORS["text_secondary"], bg=COLORS["bg_medium"],
+                     width=width, anchor="w", padx=6, pady=6).pack(side="left")
+
+        if not activity:
+            tk.Label(pad, text="No activity yet.",
+                     font=FONTS["body_md"], fg=COLORS["text_muted"],
+                     bg=COLORS["bg_dark"]).pack(anchor="w", pady=20)
+            return
+
+        for entry in activity:
+            row = tk.Frame(pad, bg=COLORS["bg_card"],
+                           highlightbackground=COLORS["border"],
+                           highlightthickness=0)
+            row.pack(fill="x")
+            tk.Frame(pad, height=1, bg=COLORS["border"]).pack(fill="x")
+
+            def on_enter(e, r=row): r.config(bg=COLORS["bg_card_hover"])
+            def on_leave(e, r=row): r.config(bg=COLORS["bg_card"])
+            row.bind("<Enter>", on_enter)
+            row.bind("<Leave>", on_leave)
+
+            color = entry.get("avatar_color", AVATAR_COLORS[0])
+            av = tk.Label(row, text=(entry.get("username") or "?")[:2].upper(),
+                          bg=color, fg="white", font=FONTS["caption"],
+                          width=2, padx=3, pady=3)
+            av.pack(side="left", padx=(6, 0), pady=5)
+
+            fields = [
+                (entry.get("username", ""), 14, COLORS["text_primary"]),
+                (entry["repo_name"][:18], 18, COLORS["accent"]),
+                (entry["commit_msg"][:40], 40, COLORS["text_primary"]),
+                (str(entry.get("files_count", 0)), 7, COLORS["text_secondary"]),
+                (entry["committed_at"][:16], 16, COLORS["text_muted"]),
+            ]
+            for text, width, fcolor in fields:
+                tk.Label(row, text=text, font=FONTS["body_sm"],
+                         fg=fcolor, bg=COLORS["bg_card"],
+                         width=width, anchor="w", padx=4, pady=7).pack(side="left")
+
+    def _page_charts(self):
+        p = self._content_frame
+        pad = tk.Frame(p, bg=COLORS["bg_dark"], padx=24, pady=20)
+        pad.pack(fill="both", expand=True)
+
+        tk.Label(pad, text="Usage Analytics", font=FONTS["heading_lg"],
+                 fg=COLORS["text_primary"], bg=COLORS["bg_dark"]).pack(anchor="w")
+        tk.Label(pad,
+                 text="System-wide usage across all users. Charts update on page visit.",
+                 font=FONTS["body_sm"], fg=COLORS["text_secondary"],
+                 bg=COLORS["bg_dark"]).pack(anchor="w", pady=(2, 20))
+
+        # 30-day chart
+        tk.Label(pad, text="SYSTEM ACTIVITY — LAST 30 DAYS", font=FONTS["label_bold"],
+                 fg=COLORS["text_secondary"], bg=COLORS["bg_dark"]).pack(anchor="w", pady=(0, 8))
+        usage30 = db.get_usage_stats(days=30)
+        self._draw_multi_chart(pad, usage30, width=900, height=200)
+
+        # Per-user breakdown
+        tk.Label(pad, text="COMMITS PER USER", font=FONTS["label_bold"],
+                 fg=COLORS["text_secondary"], bg=COLORS["bg_dark"]).pack(anchor="w", pady=(16, 8))
+        users = db.get_all_users()
+        if users:
+            self._draw_user_bar_chart(pad, users)
+
+        # 7-day table
+        tk.Label(pad, text="DAILY BREAKDOWN — LAST 7 DAYS", font=FONTS["label_bold"],
+                 fg=COLORS["text_secondary"], bg=COLORS["bg_dark"]).pack(anchor="w", pady=(16, 8))
+        usage7 = db.get_usage_stats(days=7)
+        hdr = tk.Frame(pad, bg=COLORS["bg_medium"])
+        hdr.pack(fill="x")
+        for col, w in [("Date", 20), ("Sessions", 15), ("Commits", 15), ("Active Users", 15)]:
+            tk.Label(hdr, text=col, font=FONTS["label_bold"],
+                     fg=COLORS["text_secondary"], bg=COLORS["bg_medium"],
+                     width=w, anchor="w", padx=8, pady=6).pack(side="left")
+        for row_data in reversed(usage7):
+            row = tk.Frame(pad, bg=COLORS["bg_card"],
+                           highlightbackground=COLORS["border"], highlightthickness=0)
+            row.pack(fill="x")
+            tk.Frame(pad, height=1, bg=COLORS["border"]).pack(fill="x")
+            for val, w in [
+                (row_data["date"], 20),
+                (str(row_data.get("sessions", 0)), 15),
+                (str(row_data.get("commits_made", 0)), 15),
+                (str(row_data.get("active_users", 0)), 15),
+            ]:
+                tk.Label(row, text=val, font=FONTS["body_sm"],
+                         fg=COLORS["text_primary"], bg=COLORS["bg_card"],
+                         width=w, anchor="w", padx=8, pady=7).pack(side="left")
+
+    def _draw_user_bar_chart(self, parent, users: list):
+        canvas = tk.Canvas(parent, width=900, height=160,
+                           bg=COLORS["bg_card"], highlightthickness=0)
+        canvas.pack(anchor="w", pady=(0, 8))
+        data = [(u["username"][:12], u.get("total_commits", 0)) for u in users]
+        data.sort(key=lambda x: x[1], reverse=True)
+        data = data[:12]  # top 12
+        if not data:
+            canvas.create_text(450, 80, text="No data", fill=COLORS["text_muted"],
+                                font=FONTS["body_sm"])
+            return
+        max_val = max(c for _, c in data) or 1
+        n = len(data)
+        bar_w = min(50, (880 // n) - 4)
+        pad_l = 20
+        chart_h = 110
+        pad_b = 40
+        colors = AVATAR_COLORS * 3
+        for i, (name, val) in enumerate(data):
+            x0 = pad_l + i * (880 // n)
+            bh = int((val / max_val) * chart_h)
+            y1 = chart_h + 10
+            c = colors[i % len(colors)]
+            canvas.create_rectangle(x0, y1 - bh, x0 + bar_w, y1, fill=c, outline="")
+            if val > 0:
+                canvas.create_text(x0 + bar_w // 2, y1 - bh - 10,
+                                    text=str(val), fill=c, font=FONTS["caption"])
+            canvas.create_text(x0 + bar_w // 2, y1 + 12,
+                                text=name, fill=COLORS["text_muted"],
+                                font=FONTS["caption"], angle=0)
+
+    def _page_global_settings(self):
+        p = self._content_frame
+        pad = tk.Frame(p, bg=COLORS["bg_dark"], padx=24, pady=20)
+        pad.pack(fill="both", expand=True)
+
+        tk.Label(pad, text="Global Settings", font=FONTS["heading_lg"],
+                 fg=COLORS["text_primary"], bg=COLORS["bg_dark"]).pack(anchor="w")
+        tk.Label(pad, text="These defaults apply to all new users.",
+                 font=FONTS["body_sm"], fg=COLORS["text_secondary"],
+                 bg=COLORS["bg_dark"]).pack(anchor="w", pady=(2, 16))
+
+        card = tk.Frame(pad, bg=COLORS["bg_card"],
+                        highlightbackground=COLORS["border"],
+                        highlightthickness=1, padx=24, pady=20)
+        card.pack(fill="x")
+
+        self._global_vars = {}
+        settings_fields = [
+            ("default_grace_seconds", "Default Grace Period (seconds)", "120"),
+            ("default_ai_url", "Default AI Server URL", "http://localhost:1234/v1"),
+            ("max_users", "Max Users (0 = unlimited)", "0"),
+            ("app_name", "Application Name", "CommitMaster"),
+        ]
+
+        conn = db.get_conn()
+        for key, label, default in settings_fields:
+            cur = conn.execute("SELECT value FROM system_settings WHERE key = ?", (key,))
+            row = cur.fetchone()
+            val = row[0] if row else default
+
+            f = tk.Frame(card, bg=COLORS["bg_card"])
+            f.pack(fill="x", pady=(0, 12))
+            tk.Label(f, text=label, font=FONTS["label_bold"],
+                     fg=COLORS["text_secondary"], bg=COLORS["bg_card"],
+                     width=30, anchor="w").pack(side="left")
+            var = tk.StringVar(value=val)
+            self._global_vars[key] = var
+            e = tk.Entry(f, textvariable=var, font=FONTS["body_md"],
+                         bg=COLORS["bg_input"], fg=COLORS["text_primary"],
+                         relief="flat", highlightthickness=1,
+                         highlightbackground=COLORS["border"])
+            e.pack(side="left", fill="x", expand=True, ipady=6)
+
+        save_btn = tk.Button(pad, text="  💾  Save Global Settings",
+                             font=FONTS["heading_sm"], fg="white",
+                             bg=COLORS["admin"], activebackground=COLORS["admin_dark"],
+                             activeforeground="white", relief="flat", bd=0,
+                             cursor="hand2", padx=20, pady=10,
+                             command=self._save_global_settings)
+        save_btn.pack(anchor="w", pady=(16, 0))
+
+    def _save_global_settings(self):
+        conn = db.get_conn()
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        for key, var in self._global_vars.items():
+            conn.execute("""
+                INSERT INTO system_settings (key, value, updated_at, updated_by)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(key) DO UPDATE SET value = excluded.value,
+                    updated_at = excluded.updated_at, updated_by = excluded.updated_by
+            """, (key, var.get(), now, self.admin_user["id"]))
+        conn.commit()
+        messagebox.showinfo("Saved", "Global settings saved!", parent=self.root)
+
+    # ── Helpers ───────────────────────────────────────────────────────────────
+
+    def _get_initials(self) -> str:
+        name = self.admin_user.get("full_name") or self.admin_user["username"]
+        parts = name.strip().split()
+        return ((parts[0][0] + parts[-1][0]) if len(parts) >= 2 else name[:2]).upper()
+
+    def _user_initials(self, user: Dict) -> str:
+        name = user.get("full_name") or user["username"]
+        parts = name.strip().split()
+        return ((parts[0][0] + parts[-1][0]) if len(parts) >= 2 else name[:2]).upper()
+
+    def _go_back(self):
+        self.root.destroy()
+        self.on_close()
+
+    def run(self):
+        self.root.mainloop()
+
+
+# ── User Create/Edit Dialog ───────────────────────────────────────────────────
+
+class _UserDialog(tk.simpledialog.Dialog if hasattr(tk, "simpledialog") else object):
+    pass
+
+
+class _UserDialog:
+    """A modal dialog for creating or editing a user."""
+
+    def __init__(self, parent, title: str, user: Dict = None):
+        self.result = None
+        self.user = user
+        self._build(parent, title)
+
+    def _build(self, parent, title: str):
+        self.top = tk.Toplevel(parent)
+        self.top.title(title)
+        self.top.configure(bg=COLORS["bg_dark"])
+        self.top.geometry("420x520")
+        self.top.resizable(False, False)
+        self.top.grab_set()
+        self.top.focus_set()
+        self.top.transient(parent)
+
+        pad = tk.Frame(self.top, bg=COLORS["bg_dark"], padx=24, pady=20)
+        pad.pack(fill="both", expand=True)
+
+        tk.Label(pad, text=title, font=FONTS["heading_md"],
+                 fg=COLORS["text_primary"], bg=COLORS["bg_dark"]).pack(anchor="w", pady=(0, 16))
+
+        self._vars = {}
+        is_edit = self.user is not None
+
+        fields = [
+            ("Full Name",  "full_name", self.user.get("full_name", "") if is_edit else "", False),
+            ("Username",   "username",  self.user.get("username", "") if is_edit else "", False),
+            ("Email",      "email",     self.user.get("email", "") if is_edit else "", False),
+            ("Password",   "password",  "", True),
+        ]
+        if is_edit:
+            fields[-1] = ("New Password (leave blank to keep)", "password", "", True)
+
+        for label, key, default, is_pw in fields:
+            f = tk.Frame(pad, bg=COLORS["bg_dark"])
+            f.pack(fill="x", pady=(0, 10))
+            tk.Label(f, text=label, font=FONTS["label_bold"],
+                     fg=COLORS["text_secondary"], bg=COLORS["bg_dark"]).pack(anchor="w")
+            var = tk.StringVar(value=default)
+            self._vars[key] = var
+            e = tk.Entry(f, textvariable=var, font=FONTS["body_md"],
+                         bg=COLORS["bg_input"], fg=COLORS["text_primary"],
+                         relief="flat", highlightthickness=1,
+                         highlightbackground=COLORS["border"],
+                         show="•" if is_pw else "")
+            e.pack(fill="x", ipady=7)
+            if key == "username" and is_edit:
+                e.config(state="disabled")
+
+        # Role picker
+        rf = tk.Frame(pad, bg=COLORS["bg_dark"])
+        rf.pack(fill="x", pady=(0, 10))
+        tk.Label(rf, text="Role", font=FONTS["label_bold"],
+                 fg=COLORS["text_secondary"], bg=COLORS["bg_dark"]).pack(anchor="w")
+        self._role_var = tk.StringVar(value=self.user.get("role", "user") if is_edit else "user")
+        for r_val, r_label in [("user", "User"), ("admin", "Admin")]:
+            rb = tk.Radiobutton(rf, text=r_label, variable=self._role_var,
+                                value=r_val, font=FONTS["body_md"],
+                                fg=COLORS["text_primary"], bg=COLORS["bg_dark"],
+                                selectcolor=COLORS["bg_input"],
+                                activebackground=COLORS["bg_dark"])
+            rb.pack(side="left", padx=(0, 12))
+
+        # Buttons
+        btn_f = tk.Frame(pad, bg=COLORS["bg_dark"])
+        btn_f.pack(fill="x", pady=(12, 0))
+        tk.Button(btn_f, text="Cancel", font=FONTS["label"],
+                  fg=COLORS["text_secondary"], bg=COLORS["bg_medium"],
+                  relief="flat", bd=0, cursor="hand2", padx=16, pady=7,
+                  command=self.top.destroy).pack(side="right", padx=(6, 0))
+        tk.Button(btn_f, text="Save" if is_edit else "Create",
+                  font=FONTS["label_bold"], fg="white",
+                  bg=COLORS["accent"], activebackground=COLORS["accent_hover"],
+                  activeforeground="white", relief="flat", bd=0,
+                  cursor="hand2", padx=16, pady=7,
+                  command=self._submit).pack(side="right")
+
+        parent.wait_window(self.top)
+
+    def _submit(self):
+        data = {k: v.get().strip() for k, v in self._vars.items()}
+        data["role"] = self._role_var.get()
+        self.result = data
+        self.top.destroy()
