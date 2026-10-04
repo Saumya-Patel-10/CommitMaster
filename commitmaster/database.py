@@ -166,21 +166,7 @@ def _ensure_default_admin(conn: sqlite3.Connection) -> None:
         conn.commit()
 
 
-def check_user_exists(username: str, email: str) -> Optional[str]:
-    """Returns 'username' if username is taken, 'email' if email is taken, else None."""
-    conn = get_conn()
-    cur = conn.execute(
-        "SELECT username, email FROM users WHERE LOWER(username) = ? OR LOWER(email) = ?",
-        (username.strip().lower(), email.strip().lower())
-    )
-    row = cur.fetchone()
-    if row:
-        if row["username"].lower() == username.strip().lower():
-            return "username"
-        if row["email"].lower() == email.strip().lower():
-            return "email"
-    return None
-
+# ── User CRUD ──────────────────────────────────────────────────────────────────
 
 def create_user(username: str, email: str, full_name: str, password: str,
                 role: str = "user", avatar_color: str = "#3fb950") -> Optional[int]:
