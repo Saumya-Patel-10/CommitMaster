@@ -20,6 +20,15 @@ class LoginWindow:
 
     def __init__(self, on_success: Callable[[dict], None]):
         self.on_success = on_success
+
+        # Apply system default theme if configured
+        sys_theme = db.get_system_setting("default_theme")
+        sys_accent = db.get_system_setting("default_accent")
+        sys_font = db.get_system_setting("default_font_family")
+        if sys_theme or sys_accent or sys_font:
+            from commitmaster.app_styles import apply_customization
+            apply_customization(theme=sys_theme or None, accent=sys_accent or None, font_family=sys_font or None)
+
         self.root = tk.Tk()
         self._mode = "login"  # or "register"
         self._setup_window()
