@@ -109,8 +109,22 @@ class SessionMonitor(threading.Thread):
     @staticmethod
     def _scan_dirty_repos(cfg: dict) -> Set[str]:
         dirty: Set[str] = set()
-        sensitive = cfg.get("sensitive_patterns", [])
-        for repo in commit_engine.list_repos(cfg["projects_dirs"]):
+
+        # 1. Repos under configured root directories
+        repo_paths = set(commit_engine.list_repos(cfg.get("projects_dirs", [])))
+
+        # 2. Repos user has selected to actively keep an eye on
+        try:
+            from commitmaster import database as db
+            watched = db.get_watched_repos(active_only=True)
+            for w in watched:
+                lp = w.get("local_path", "").strip()
+                if lp and os.path.isdir(lp) and commit_engine.is_git_repo(lp):
+                    repo_paths.add(os.path.normpath(lp))
+        except Exception as exc:
+            log.debug("Could not query watched repos from db: %s", exc)
+
+        for repo in repo_paths:
             try:
                 if commit_engine.uncommitted_changes(repo):
                     dirty.add(repo)
