@@ -2,14 +2,22 @@
 CommitMaster — Admin Management Portal.
 Full admin dashboard with user management, activity logs, and usage charts.
 """
+import os
 import json
+import threading
 import tkinter as tk
-from tkinter import messagebox, simpledialog
+from tkinter import messagebox, simpledialog, ttk
 from datetime import datetime
 from typing import Dict, Callable
 
-from commitmaster.app_styles import COLORS, FONTS, SIZES, AVATAR_COLORS
+from commitmaster import commit_engine
+from commitmaster.app_styles import (
+    COLORS, FONTS, SIZES, AVATAR_COLORS, THEMES, ACCENTS, FONT_FAMILIES, FONT_SCALES,
+    apply_customization, get_active_customization
+)
 from commitmaster import database as db
+from commitmaster.github_service import mask_token, verify_github_token
+from commitmaster.github_account_dialog import GitHubAccountDialog
 
 
 class AdminPortal:
@@ -20,6 +28,17 @@ class AdminPortal:
     def __init__(self, admin_user: Dict, on_close: Callable):
         self.admin_user = admin_user
         self.on_close = on_close
+
+        # Apply saved customization
+        prefs = db.get_preferences(self.admin_user["id"]) or {}
+        apply_customization(
+            theme=prefs.get("theme"),
+            accent=prefs.get("accent_color"),
+            font_family=prefs.get("font_family"),
+            font_scale=prefs.get("font_scale"),
+            ui_density=prefs.get("ui_density"),
+        )
+
         self.root = tk.Tk()
         self._setup_window()
         self._build_layout()
@@ -120,7 +139,9 @@ class AdminPortal:
                  fg=COLORS["text_muted"], bg=COLORS["bg_sidebar"]).pack(
             anchor="w", pady=(4, 2))
         my_nav = [
-            ("👤", "My Settings",   "my_settings"),
+            ("🐙", "GitHub Accounts",     "github_accounts"),
+            ("🎨", "Customize Interface", "customize"),
+            ("👤", "My Settings",          "my_settings"),
         ]
         all_nav = admin_nav + my_nav
         self._nav_buttons = {}
@@ -157,6 +178,14 @@ class AdminPortal:
                          fg=COLORS["bg_darkest"], bg=COLORS["admin"])
         badge.pack(side="right", padx=16, pady=18)
 
+    def _rebuild_ui(self, nav_to: str = "customize"):
+        """Tear down and recreate UI with new theme/tokens."""
+        for w in self.root.winfo_children():
+            w.destroy()
+        self.root.configure(bg=COLORS["bg_darkest"])
+        self._build_layout()
+        self._nav_to(nav_to)
+
     def _nav_to(self, key: str):
         for k, btn in self._nav_buttons.items():
             if k == key:
@@ -171,6 +200,8 @@ class AdminPortal:
             "activity":        "Activity Log",
             "charts":          "Usage Charts",
             "global_settings": "Global Settings",
+            "github_accounts": "GitHub Accounts & Repositories",
+            "customize":       "Customize Interface",
             "my_settings":     "My Settings",
         }.get(key, key))
 
@@ -180,6 +211,8 @@ class AdminPortal:
             "activity":        self._page_activity,
             "charts":          self._page_charts,
             "global_settings": self._page_global_settings,
+            "github_accounts": self._page_github_accounts,
+            "customize":       self._page_customize,
             "my_settings":     self._page_my_settings,
         }
         if key in pages:
@@ -360,6 +393,38 @@ class AdminPortal:
             activeforeground="white", relief="flat", bd=0, cursor="hand2",
             padx=14, pady=6, command=self._change_my_password)
         pw_btn.pack(anchor="w", pady=(4, 0))
+
+        # ── Git Push Protection ───────────────────────────────────────────────
+        push_card = self._card(pad, padx=20, pady=16)
+        push_card.pack(fill="x", pady=(0, 12))
+        tk.Label(push_card, text="🛡️ Git Push Protection",
+                 font=FONTS["heading_sm"], fg=COLORS["text_primary"],
+                 bg=COLORS["bg_card"]).pack(anchor="w", pady=(0, 4))
+        tk.Label(push_card,
+                 text="Require interactive user review and confirmation modal before pushing commits to GitHub remotes.",
+                 font=FONTS["caption"], fg=COLORS["text_muted"],
+                 bg=COLORS["bg_card"]).pack(anchor="w", pady=(0, 10))
+
+        prefs = db.get_preferences(self.admin_user["id"]) or {}
+        self._my_ask_push_var = tk.IntVar(value=prefs.get("ask_before_push", 1))
+
+        def _toggle_push_pref():
+            db.update_preferences(self.admin_user["id"], ask_before_push=self._my_ask_push_var.get())
+
+        cb = tk.Checkbutton(
+            push_card,
+            text=" Always ask for confirmation before git pushing (protect remotes)",
+            variable=self._my_ask_push_var,
+            command=_toggle_push_pref,
+            font=FONTS["label"],
+            fg=COLORS["text_primary"],
+            bg=COLORS["bg_card"],
+            activebackground=COLORS["bg_card"],
+            activeforeground=COLORS["accent"],
+            selectcolor=COLORS["bg_input"],
+            cursor="hand2",
+        )
+        cb.pack(anchor="w", pady=4)
 
     def _pick_my_color(self, color: str):
         self._my_color_var.set(color)
@@ -919,6 +984,9 @@ class AdminPortal:
             ("default_ai_url", "Default AI Server URL", "http://localhost:1234/v1"),
             ("max_users", "Max Users (0 = unlimited)", "0"),
             ("app_name", "Application Name", "CommitMaster"),
+            ("default_theme", "Default System Theme", "github_dark"),
+            ("default_accent", "Default Accent Color", "#3fb950"),
+            ("default_font_family", "Default Font Family", "Segoe UI"),
         ]
 
         conn = db.get_conn()
@@ -960,6 +1028,508 @@ class AdminPortal:
             """, (key, var.get(), now, self.admin_user["id"]))
         conn.commit()
         messagebox.showinfo("Saved", "Global settings saved!", parent=self.root)
+
+    # ── GitHub Accounts Page ──────────────────────────────────────────────────
+
+    def _page_github_accounts(self):
+        p = self._content_frame
+        pad = tk.Frame(p, bg=COLORS["bg_dark"], padx=24, pady=20)
+        pad.pack(fill="both", expand=True)
+
+        top_f = tk.Frame(pad, bg=COLORS["bg_dark"])
+        top_f.pack(fill="x", pady=(0, 16))
+
+        titles_f = tk.Frame(top_f, bg=COLORS["bg_dark"])
+        titles_f.pack(side="left", fill="x", expand=True)
+        tk.Label(titles_f, text="Linked GitHub Accounts", font=FONTS["heading_lg"],
+                 fg=COLORS["text_primary"], bg=COLORS["bg_dark"]).pack(anchor="w")
+        tk.Label(titles_f,
+                 text="Manage multiple accounts and configure repository-to-account push assignments.",
+                 font=FONTS["body_sm"], fg=COLORS["text_secondary"],
+                 bg=COLORS["bg_dark"]).pack(anchor="w", pady=(2, 0))
+
+        add_btn = tk.Button(top_f, text="  + Link GitHub Account  ", font=FONTS["heading_sm"],
+                            fg="white", bg=COLORS["accent"], activebackground=COLORS["accent_hover"],
+                            activeforeground="white", relief="flat", bd=0, cursor="hand2",
+                            padx=14, pady=8, command=self._open_add_github_dialog)
+        add_btn.pack(side="right", padx=(10, 0))
+
+        accounts = db.get_github_accounts(self.admin_user["id"])
+        prefs = db.get_preferences(self.admin_user["id"]) or {}
+        dirs_raw = prefs.get("projects_dirs", "[]")
+        try:
+            proj_dirs = json.loads(dirs_raw)
+        except Exception:
+            proj_dirs = []
+        if not proj_dirs:
+            proj_dirs = [db.APP_DIR]
+        repos = commit_engine.list_repos(proj_dirs)
+
+        default_acc = db.get_default_github_account(self.admin_user["id"])
+        default_name = default_acc["account_name"] if default_acc else "None set"
+
+        # Summary Row
+        stats_row = tk.Frame(pad, bg=COLORS["bg_dark"])
+        stats_row.pack(fill="x", pady=(0, 16))
+        self._stat_card(stats_row, "Linked Accounts", str(len(accounts)), COLORS["accent"], "🐙")
+        self._stat_card(stats_row, "Default Push Account", default_name, COLORS["info"], "★")
+        self._stat_card(stats_row, "Detected Repos", str(len(repos)), COLORS["warning"], "📁")
+
+        # Section 1: Connected Accounts
+        tk.Label(pad, text="Connected Accounts", font=FONTS["label_bold"],
+                 fg=COLORS["text_secondary"], bg=COLORS["bg_dark"]).pack(anchor="w", pady=(8, 10))
+
+        if not accounts:
+            empty_card = self._card(pad, padx=24, pady=24)
+            empty_card.pack(fill="x", pady=(0, 16))
+            tk.Label(empty_card, text="🐙  No GitHub accounts linked yet", font=FONTS["heading_sm"],
+                     fg=COLORS["text_secondary"], bg=COLORS["bg_card"]).pack(anchor="w")
+            tk.Label(empty_card,
+                     text="Click the '+ Link GitHub Account' button above to connect your first account using a GitHub Personal Access Token (PAT).",
+                     font=FONTS["body_sm"], fg=COLORS["text_muted"], bg=COLORS["bg_card"]).pack(anchor="w", pady=(4, 0))
+        else:
+            for acc in accounts:
+                self._build_account_card(pad, acc)
+
+        # Section 2: Repository Account Assignment
+        tk.Label(pad, text="Repository Account Assignment & Direct Push", font=FONTS["label_bold"],
+                 fg=COLORS["text_secondary"], bg=COLORS["bg_dark"]).pack(anchor="w", pady=(18, 6))
+        tk.Label(pad,
+                 text="Select which GitHub account pushes to each repository. Click 'Push Now' to immediately push the current branch.",
+                 font=FONTS["body_sm"], fg=COLORS["text_secondary"], bg=COLORS["bg_dark"]).pack(anchor="w", pady=(0, 12))
+
+        if not repos:
+            no_repo_card = self._card(pad, padx=20, pady=20)
+            no_repo_card.pack(fill="x", pady=(0, 16))
+            tk.Label(no_repo_card, text="No git repositories found in your configured project folders.",
+                     font=FONTS["body_md"], fg=COLORS["text_secondary"], bg=COLORS["bg_card"]).pack(anchor="w")
+        else:
+            bindings = db.get_all_repo_bindings(self.admin_user["id"])
+            for repo in repos:
+                self._build_repo_row(pad, repo, accounts, bindings)
+
+    def _build_account_card(self, parent, acc: Dict):
+        card = self._card(parent, padx=16, pady=14)
+        card.pack(fill="x", pady=(0, 8))
+
+        row = tk.Frame(card, bg=COLORS["bg_card"])
+        row.pack(fill="x")
+
+        av = tk.Label(row, text="🐙", font=("Segoe UI", 16),
+                      bg=COLORS["bg_medium"], fg=COLORS["accent"], width=3, height=2)
+        av.pack(side="left", padx=(0, 12))
+
+        info_f = tk.Frame(row, bg=COLORS["bg_card"])
+        info_f.pack(side="left", fill="x", expand=True)
+
+        name_row = tk.Frame(info_f, bg=COLORS["bg_card"])
+        name_row.pack(fill="x")
+
+        tk.Label(name_row, text=acc["account_name"], font=FONTS["label_bold"],
+                 fg=COLORS["text_primary"], bg=COLORS["bg_card"]).pack(side="left")
+
+        if acc.get("is_default"):
+            badge = tk.Label(name_row, text="  ★ DEFAULT PUSH ACCOUNT  ", font=("Segoe UI", 8, "bold"),
+                             fg=COLORS["bg_darkest"], bg=COLORS["accent"])
+            badge.pack(side="left", padx=(8, 0))
+
+        details_str = f"@{acc['github_username']}  •  Token: {mask_token(acc.get('github_token', ''))}"
+        if acc.get("author_name") or acc.get("author_email"):
+            author_info = f"{acc.get('author_name', '')} <{acc.get('author_email', '')}>".strip()
+            details_str += f"  •  Author: {author_info}"
+
+        tk.Label(info_f, text=details_str, font=FONTS["body_sm"],
+                 fg=COLORS["text_secondary"], bg=COLORS["bg_card"]).pack(anchor="w", pady=(2, 0))
+
+        status_lbl = tk.Label(info_f, text="", font=FONTS["caption"],
+                              fg=COLORS["text_muted"], bg=COLORS["bg_card"])
+        status_lbl.pack(anchor="w")
+
+        actions_f = tk.Frame(row, bg=COLORS["bg_card"])
+        actions_f.pack(side="right")
+
+        test_btn = tk.Button(actions_f, text="⚡ Test", font=FONTS["caption"],
+                             fg=COLORS["text_primary"], bg=COLORS["bg_medium"],
+                             relief="flat", bd=0, cursor="hand2", padx=8, pady=4,
+                             command=lambda a=acc, s=status_lbl: self._test_account_connection(a, s))
+        test_btn.pack(side="left", padx=4)
+
+        if not acc.get("is_default"):
+            def_btn = tk.Button(actions_f, text="★ Set Default", font=FONTS["caption"],
+                                fg=COLORS["text_primary"], bg=COLORS["bg_medium"],
+                                relief="flat", bd=0, cursor="hand2", padx=8, pady=4,
+                                command=lambda a=acc: self._set_account_default(a["id"]))
+            def_btn.pack(side="left", padx=4)
+
+        edit_btn = tk.Button(actions_f, text="✏ Edit", font=FONTS["caption"],
+                             fg=COLORS["text_primary"], bg=COLORS["bg_medium"],
+                             relief="flat", bd=0, cursor="hand2", padx=8, pady=4,
+                             command=lambda a=acc: self._open_edit_github_dialog(a))
+        edit_btn.pack(side="left", padx=4)
+
+        del_btn = tk.Button(actions_f, text="🗑 Delete", font=FONTS["caption"],
+                            fg=COLORS["error"], bg=COLORS["bg_medium"],
+                            relief="flat", bd=0, cursor="hand2", padx=8, pady=4,
+                            command=lambda a=acc: self._delete_github_account(a["id"], a["account_name"]))
+        del_btn.pack(side="left", padx=4)
+
+    def _build_repo_row(self, parent, repo_path: str, accounts: list, bindings: dict):
+        card = self._card(parent, padx=16, pady=12)
+        card.pack(fill="x", pady=(0, 8))
+
+        row = tk.Frame(card, bg=COLORS["bg_card"])
+        row.pack(fill="x")
+
+        info_f = tk.Frame(row, bg=COLORS["bg_card"])
+        info_f.pack(side="left", fill="x", expand=True)
+
+        name = commit_engine.repo_name(repo_path)
+        branch = commit_engine.current_branch(repo_path)
+        remote_url = commit_engine.get_remote_url(repo_path) or "(no remote configured)"
+
+        title_line = tk.Frame(info_f, bg=COLORS["bg_card"])
+        title_line.pack(fill="x")
+        tk.Label(title_line, text=f"📁 {name}", font=FONTS["label_bold"],
+                 fg=COLORS["text_primary"], bg=COLORS["bg_card"]).pack(side="left")
+        tk.Label(title_line, text=f"  [{branch}]", font=FONTS["mono_sm"],
+                 fg=COLORS["accent"], bg=COLORS["bg_card"]).pack(side="left")
+
+        tk.Label(info_f, text=f"{repo_path}  •  Remote: {remote_url}", font=FONTS["caption"],
+                 fg=COLORS["text_muted"], bg=COLORS["bg_card"]).pack(anchor="w", pady=(2, 0))
+
+        ctrl_f = tk.Frame(row, bg=COLORS["bg_card"])
+        ctrl_f.pack(side="right")
+
+        norm_repo = os.path.normpath(repo_path)
+        current_aid = bindings.get(norm_repo)
+
+        options = ["(Use Default Account)"]
+        id_map = {"(Use Default Account)": None}
+        selected_text = "(Use Default Account)"
+
+        for a in accounts:
+            label = f"{a['account_name']} (@{a['github_username']})"
+            options.append(label)
+            id_map[label] = a["id"]
+            if current_aid == a["id"]:
+                selected_text = label
+
+        var = tk.StringVar(value=selected_text)
+
+        def on_account_change(val):
+            aid = id_map.get(val)
+            if aid is None:
+                db.unbind_repo_account(self.admin_user["id"], repo_path)
+            else:
+                db.bind_repo_to_account(self.admin_user["id"], repo_path, aid)
+
+        om = tk.OptionMenu(ctrl_f, var, *options, command=on_account_change)
+        om.config(font=FONTS["caption"], bg=COLORS["bg_medium"], fg=COLORS["text_primary"],
+                  activebackground=COLORS["bg_card_hover"], activeforeground=COLORS["text_primary"],
+                  relief="flat", bd=0, highlightthickness=0)
+        om["menu"].config(bg=COLORS["bg_card"], fg=COLORS["text_primary"], font=FONTS["caption"], bd=0)
+        om.pack(side="left", padx=(0, 10))
+
+        push_btn = tk.Button(ctrl_f, text="🚀 Push Now", font=FONTS["label_bold"],
+                             fg="white", bg=COLORS["accent"], activebackground=COLORS["accent_hover"],
+                             activeforeground="white", relief="flat", bd=0, cursor="hand2",
+                             padx=12, pady=5, command=lambda r=repo_path: self._push_repo(r))
+        push_btn.pack(side="left")
+
+    def _open_add_github_dialog(self):
+        GitHubAccountDialog(self.root, self.admin_user["id"], on_saved=lambda: self._nav_to("github_accounts"))
+
+    def _open_edit_github_dialog(self, account: Dict):
+        GitHubAccountDialog(self.root, self.admin_user["id"], account=account, on_saved=lambda: self._nav_to("github_accounts"))
+
+    def _set_account_default(self, account_id: int):
+        db.set_default_github_account(account_id, self.admin_user["id"])
+        self._nav_to("github_accounts")
+
+    def _delete_github_account(self, account_id: int, name: str):
+        if messagebox.askyesno("Confirm Delete", f"Delete linked GitHub account '{name}'?", parent=self.root):
+            db.delete_github_account(account_id, self.admin_user["id"])
+            self._nav_to("github_accounts")
+
+    def _test_account_connection(self, account: Dict, status_label: tk.Label):
+        status_label.config(text="⏳ Testing connection...", fg=COLORS["info"])
+        self.root.update_idletasks()
+
+        def do_test():
+            ok, info, msg = verify_github_token(account.get("github_token", ""))
+            if ok:
+                status_label.config(text=f"✔ Connected: {msg}", fg=COLORS["success"])
+            else:
+                status_label.config(text=f"✖ {msg}", fg=COLORS["error"])
+
+        threading.Thread(target=do_test, daemon=True).start()
+
+    def _push_repo(self, repo_path: str):
+        account = db.get_repo_account(self.admin_user["id"], repo_path)
+        if not account:
+            messagebox.showwarning(
+                "No GitHub Account",
+                "Please link a GitHub account first so CommitMaster can push this repository.",
+                parent=self.root
+            )
+            return
+
+        name = commit_engine.repo_name(repo_path)
+        branch = commit_engine.current_branch(repo_path)
+        uname = account.get("github_username")
+
+        confirm = messagebox.askyesno(
+            "Confirm Push",
+            f"Push branch '{branch}' of '{name}' to GitHub\nusing account '{account['account_name']}' (@{uname})?",
+            parent=self.root
+        )
+        if not confirm:
+            return
+
+        def run_push():
+            success, msg = commit_engine.push_repo_with_account(repo_path, account)
+            if success:
+                messagebox.showinfo("Push Succeeded", msg, parent=self.root)
+            else:
+                messagebox.showerror("Push Failed", f"Could not push {name}:\n\n{msg}", parent=self.root)
+
+        threading.Thread(target=run_push, daemon=True).start()
+
+    # ── Customize Interface Page ──────────────────────────────────────────────
+
+    def _page_customize(self):
+        p = self._content_frame
+        pad = tk.Frame(p, bg=COLORS["bg_dark"], padx=24, pady=20)
+        pad.pack(fill="both", expand=True)
+
+        tk.Label(pad, text="Customize Interface", font=FONTS["heading_lg"],
+                 fg=COLORS["text_primary"], bg=COLORS["bg_dark"]).pack(anchor="w")
+        tk.Label(pad, text="Personalize themes, accent colors, typography, and density for your workspace.",
+                 font=FONTS["body_sm"], fg=COLORS["text_secondary"],
+                 bg=COLORS["bg_dark"]).pack(anchor="w", pady=(2, 16))
+
+        prefs = db.get_preferences(self.admin_user["id"]) or {}
+        curr = get_active_customization()
+
+        self._custom_theme = curr.get("theme", "github_dark")
+        self._custom_accent = curr.get("accent", "green")
+        self._custom_accent_hex = tk.StringVar(value=curr.get("accent_hex", "#3fb950"))
+        self._custom_font_family = tk.StringVar(value=curr.get("font_family", "Segoe UI"))
+        self._custom_font_scale = tk.StringVar(value=curr.get("font_scale", "standard"))
+        self._custom_density = tk.StringVar(value=curr.get("ui_density", "comfortable"))
+        self._custom_auto_push = tk.BooleanVar(value=bool(prefs.get("auto_push", 0)))
+
+        # Theme Presets Section
+        tk.Label(pad, text="Theme Presets", font=FONTS["label_bold"],
+                 fg=COLORS["text_secondary"], bg=COLORS["bg_dark"]).pack(anchor="w", pady=(4, 10))
+        themes_grid = tk.Frame(pad, bg=COLORS["bg_dark"])
+        themes_grid.pack(fill="x", pady=(0, 16))
+
+        self._theme_cards = {}
+        for col_idx, (t_key, t_info) in enumerate(THEMES.items()):
+            col = col_idx % 4
+            row = col_idx // 4
+            t_card = tk.Frame(themes_grid, bg=t_info["bg_card"],
+                              highlightthickness=2,
+                              highlightbackground=COLORS["accent"] if t_key == self._custom_theme else t_info["border"],
+                              padx=12, pady=10, cursor="hand2")
+            t_card.grid(row=row, column=col, padx=6, pady=6, sticky="nsew")
+            themes_grid.grid_columnconfigure(col, weight=1)
+
+            t_name = tk.Label(t_card, text=t_info["name"].split("(")[0].strip(),
+                              font=FONTS["label_bold"], fg=t_info["text_primary"],
+                              bg=t_info["bg_card"], cursor="hand2")
+            t_name.pack(anchor="w")
+
+            swatch_f = tk.Frame(t_card, bg=t_info["bg_card"], cursor="hand2")
+            swatch_f.pack(anchor="w", pady=(6, 0))
+            for color_val in [t_info["bg_darkest"], t_info["bg_card"], t_info["border"], t_info["text_primary"]]:
+                s = tk.Label(swatch_f, text="  ", bg=color_val, width=2, height=1, relief="flat")
+                s.pack(side="left", padx=2)
+
+            def make_handler(k=t_key):
+                return lambda e: self._select_theme_card(k)
+
+            t_card.bind("<Button-1>", make_handler())
+            t_name.bind("<Button-1>", make_handler())
+            swatch_f.bind("<Button-1>", make_handler())
+            self._theme_cards[t_key] = t_card
+
+        # Accent Colors Section
+        tk.Label(pad, text="Primary Accent Color", font=FONTS["label_bold"],
+                 fg=COLORS["text_secondary"], bg=COLORS["bg_dark"]).pack(anchor="w", pady=(8, 10))
+        accent_card = self._card(pad, padx=20, pady=16)
+        accent_card.pack(fill="x", pady=(0, 16))
+
+        acc_chips_f = tk.Frame(accent_card, bg=COLORS["bg_card"])
+        acc_chips_f.pack(fill="x", pady=(0, 10))
+
+        self._accent_chips = {}
+        for a_key, a_info in ACCENTS.items():
+            chip_f = tk.Frame(acc_chips_f, bg=COLORS["bg_card"], cursor="hand2")
+            chip_f.pack(side="left", padx=(0, 12))
+
+            dot = tk.Label(chip_f, text="  ", bg=a_info["accent"], width=3, height=1,
+                           highlightthickness=2,
+                           highlightbackground="white" if a_key == self._custom_accent else COLORS["border"],
+                           cursor="hand2")
+            dot.pack(anchor="center")
+            lbl = tk.Label(chip_f, text=a_info["name"].split("/")[0].strip(),
+                           font=FONTS["caption"], fg=COLORS["text_secondary"],
+                           bg=COLORS["bg_card"], cursor="hand2")
+            lbl.pack(anchor="center", pady=(2, 0))
+
+            def make_acc_handler(k=a_key, hexv=a_info["accent"]):
+                return lambda e: self._select_accent_chip(k, hexv)
+
+            dot.bind("<Button-1>", make_acc_handler())
+            lbl.bind("<Button-1>", make_acc_handler())
+            self._accent_chips[a_key] = dot
+
+        # Custom Hex row
+        hex_row = tk.Frame(accent_card, bg=COLORS["bg_card"])
+        hex_row.pack(fill="x", pady=(6, 0))
+        tk.Label(hex_row, text="Or Custom Hex: ", font=FONTS["label"],
+                 fg=COLORS["text_secondary"], bg=COLORS["bg_card"]).pack(side="left")
+        hex_entry = tk.Entry(hex_row, textvariable=self._custom_accent_hex, font=FONTS["mono_sm"],
+                             bg=COLORS["bg_input"], fg=COLORS["text_primary"],
+                             relief="flat", highlightthickness=1,
+                             highlightbackground=COLORS["border"], width=10)
+        hex_entry.pack(side="left", ipady=4, padx=6)
+        apply_hex_btn = tk.Button(hex_row, text="Set Hex", font=FONTS["caption"],
+                                  fg=COLORS["text_primary"], bg=COLORS["bg_medium"],
+                                  relief="flat", bd=0, padx=8, pady=3, command=self._apply_custom_hex)
+        apply_hex_btn.pack(side="left")
+
+        # Typography & Scaling
+        tk.Label(pad, text="Typography & Scaling", font=FONTS["label_bold"],
+                 fg=COLORS["text_secondary"], bg=COLORS["bg_dark"]).pack(anchor="w", pady=(8, 10))
+        type_card = self._card(pad, padx=20, pady=16)
+        type_card.pack(fill="x", pady=(0, 16))
+
+        # Font Family
+        ff_row = tk.Frame(type_card, bg=COLORS["bg_card"])
+        ff_row.pack(fill="x", pady=(0, 10))
+        tk.Label(ff_row, text="Font Family:", font=FONTS["label_bold"],
+                 fg=COLORS["text_secondary"], bg=COLORS["bg_card"], width=16, anchor="w").pack(side="left")
+
+        ff_menu = tk.OptionMenu(ff_row, self._custom_font_family, *FONT_FAMILIES)
+        ff_menu.config(font=FONTS["body_md"], bg=COLORS["bg_input"], fg=COLORS["text_primary"],
+                       relief="flat", bd=0, highlightthickness=0)
+        ff_menu["menu"].config(bg=COLORS["bg_card"], fg=COLORS["text_primary"], font=FONTS["body_md"])
+        ff_menu.pack(side="left", ipady=2)
+
+        # Font Scale
+        fs_row = tk.Frame(type_card, bg=COLORS["bg_card"])
+        fs_row.pack(fill="x", pady=(0, 10))
+        tk.Label(fs_row, text="Font Scale:", font=FONTS["label_bold"],
+                 fg=COLORS["text_secondary"], bg=COLORS["bg_card"], width=16, anchor="w").pack(side="left")
+        for scale_k, scale_lbl in [("compact", "Compact (90%)"), ("standard", "Standard (100%)"), ("large", "Comfortable (115%)")]:
+            rb = tk.Radiobutton(fs_row, text=scale_lbl, variable=self._custom_font_scale,
+                                value=scale_k, font=FONTS["body_md"], fg=COLORS["text_primary"],
+                                bg=COLORS["bg_card"], selectcolor=COLORS["bg_input"],
+                                activebackground=COLORS["bg_card"], activeforeground=COLORS["text_primary"])
+            rb.pack(side="left", padx=(0, 16))
+
+        # UI Density
+        den_row = tk.Frame(type_card, bg=COLORS["bg_card"])
+        den_row.pack(fill="x", pady=(0, 10))
+        tk.Label(den_row, text="UI Density:", font=FONTS["label_bold"],
+                 fg=COLORS["text_secondary"], bg=COLORS["bg_card"], width=16, anchor="w").pack(side="left")
+        for den_k, den_lbl in [("comfortable", "Comfortable"), ("compact", "Compact")]:
+            rb = tk.Radiobutton(den_row, text=den_lbl, variable=self._custom_density,
+                                value=den_k, font=FONTS["body_md"], fg=COLORS["text_primary"],
+                                bg=COLORS["bg_card"], selectcolor=COLORS["bg_input"],
+                                activebackground=COLORS["bg_card"], activeforeground=COLORS["text_primary"])
+            rb.pack(side="left", padx=(0, 16))
+
+        # Auto-Push Toggle
+        ap_cb = tk.Checkbutton(type_card, text="Automatically push commits to linked GitHub account when committing",
+                               variable=self._custom_auto_push, font=FONTS["body_md"],
+                               fg=COLORS["text_primary"], bg=COLORS["bg_card"], selectcolor=COLORS["bg_input"],
+                               activebackground=COLORS["bg_card"], activeforeground=COLORS["text_primary"])
+        ap_cb.pack(anchor="w", pady=(4, 0))
+
+        # Action Buttons
+        action_f = tk.Frame(pad, bg=COLORS["bg_dark"])
+        action_f.pack(fill="x", pady=(12, 10))
+
+        apply_btn = tk.Button(action_f, text="  ✨  Apply & Save Customization  ",
+                              font=FONTS["heading_sm"], fg="white",
+                              bg=COLORS["accent"], activebackground=COLORS["accent_hover"],
+                              activeforeground="white", relief="flat", bd=0, cursor="hand2",
+                              padx=18, pady=10, command=self._save_and_apply_customization)
+        apply_btn.pack(side="left", padx=(0, 12))
+
+        reset_btn = tk.Button(action_f, text="  ↺  Reset Defaults  ", font=FONTS["label"],
+                              fg=COLORS["text_secondary"], bg=COLORS["bg_medium"],
+                              activebackground=COLORS["bg_card_hover"],
+                              activeforeground=COLORS["text_primary"],
+                              relief="flat", bd=0, cursor="hand2",
+                              padx=14, pady=10, command=self._reset_customization)
+        reset_btn.pack(side="left")
+
+    def _select_theme_card(self, theme_key: str):
+        self._custom_theme = theme_key
+        for k, card in self._theme_cards.items():
+            border_c = COLORS["accent"] if k == theme_key else THEMES[k]["border"]
+            card.config(highlightbackground=border_c)
+
+    def _select_accent_chip(self, accent_key: str, hex_val: str):
+        self._custom_accent = accent_key
+        self._custom_accent_hex.set(hex_val)
+        for k, dot in self._accent_chips.items():
+            dot.config(highlightbackground="white" if k == accent_key else COLORS["border"])
+
+    def _apply_custom_hex(self):
+        val = self._custom_accent_hex.get().strip()
+        if not val.startswith("#") or len(val) not in (4, 7):
+            messagebox.showwarning("Invalid Hex", "Please enter a valid hex color like #3fb950", parent=self.root)
+            return
+        self._custom_accent = val
+        for dot in self._accent_chips.values():
+            dot.config(highlightbackground=COLORS["border"])
+
+    def _save_and_apply_customization(self):
+        theme = self._custom_theme
+        accent = self._custom_accent_hex.get().strip() or self._custom_accent
+        family = self._custom_font_family.get()
+        scale = self._custom_font_scale.get()
+        density = self._custom_density.get()
+        auto_push = 1 if self._custom_auto_push.get() else 0
+
+        db.update_preferences(
+            self.admin_user["id"],
+            theme=theme,
+            accent_color=accent,
+            font_family=family,
+            font_scale=scale,
+            ui_density=density,
+            auto_push=auto_push,
+        )
+
+        apply_customization(
+            theme=theme,
+            accent=accent,
+            font_family=family,
+            font_scale=scale,
+            ui_density=density,
+        )
+
+        messagebox.showinfo("Applied", "Interface customization applied successfully!", parent=self.root)
+        self._rebuild_ui("customize")
+
+    def _reset_customization(self):
+        db.update_preferences(
+            self.admin_user["id"],
+            theme="github_dark",
+            accent_color="#3fb950",
+            font_family="Segoe UI",
+            font_scale="standard",
+            ui_density="comfortable",
+        )
+        apply_customization("github_dark", "green", "Segoe UI", "standard", "comfortable")
+        self._rebuild_ui("customize")
 
     # ── Helpers ───────────────────────────────────────────────────────────────
 
