@@ -12,3 +12,9 @@ config.json
 # Environments
 .venv/
 venv/
+
+# Database & Sessions
+*.db
+*.log
+.admin_session
+.session_token
