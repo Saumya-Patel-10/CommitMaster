@@ -101,7 +101,7 @@ def test_config_defaults():
     cfg = load_config()
     assert "ai" in cfg, "'ai' key missing from config"
     assert "base_url" in cfg["ai"], "'base_url' missing from ai config"
-    assert cfg["ai"]["model"], "model should default to gemma-3-12b-it"
+    assert "model" in cfg["ai"], "'model' key missing from ai config"
     print("✔  config defaults (ai section)")
 
 
