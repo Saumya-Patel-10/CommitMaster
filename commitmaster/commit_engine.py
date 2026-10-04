@@ -286,6 +286,16 @@ def push_repo_with_account(
         return False, err_msg
 
 
+def push(repo_path: str, remote: str = "origin", branch: Optional[str] = None) -> Tuple[bool, str]:
+    """Push branch to remote using standard git CLI (supports SSH/Git Credential Manager)."""
+    b = branch or current_branch(repo_path)
+    try:
+        out = git(repo_path, "push", remote, b)
+        return True, out or f"Pushed successfully to {remote} ({b})"
+    except GitError as exc:
+        return False, str(exc)
+
+
 # ── File classification ───────────────────────────────────────────────────────
 
 # Passed in at call-time so we don't read config.json per file.
