@@ -544,3 +544,98 @@ def _modern_dialog(root: tk.Tk, title: str, message: str, accent_color: str) -> 
     _button(outer, "OK", _close).pack(anchor="e")
     win.protocol("WM_DELETE_WINDOW", _close)
     _center(win)
+
+
+def ask_push_confirmation(
+    repo_name: str,
+    branch: str,
+    account_info: Optional[Dict] = None,
+    commits: Optional[List[Dict]] = None,
+) -> bool:
+    """Prompt user with explicit confirmation before pushing commits to GitHub."""
+    result = {"confirmed": False}
+    done_evt = threading.Event()
+
+    def _show():
+        root = _make_root()
+        win = tk.Toplevel(root)
+        win.title("CommitMaster — Confirm GitHub Push")
+        _style_window(win)
+        win.geometry("540x440")
+        win.minsize(480, 360)
+        win.attributes("-topmost", True)
+
+        outer = tk.Frame(win, bg=C["bg"], padx=20, pady=16)
+        outer.pack(fill="both", expand=True)
+
+        tk.Label(outer, text="🚀  Push to GitHub?", fg=C["accent"],
+                 bg=C["bg"], font=("Segoe UI", 13, "bold")).pack(anchor="w")
+        tk.Frame(outer, bg=C["border"], height=1).pack(fill="x", pady=(6, 12))
+
+        # Details Card
+        card = tk.Frame(outer, bg=C["bg2"], bd=0, highlightthickness=1,
+                        highlightbackground=C["border"], padx=14, pady=10)
+        card.pack(fill="x", pady=(0, 10))
+
+        tk.Label(card, text=f"Repository:  {repo_name}", fg=C["text"],
+                 bg=C["bg2"], font=("Segoe UI", 10, "bold")).pack(anchor="w")
+        tk.Label(card, text=f"Branch:        {branch}", fg=C["text2"],
+                 bg=C["bg2"], font=("Segoe UI", 9)).pack(anchor="w", pady=(2, 0))
+
+        if account_info:
+            uname = account_info.get("github_username", "")
+            aname = account_info.get("account_name", "")
+            tk.Label(card, text=f"GitHub Account: @{uname} ({aname})", fg=C["accent"],
+                     bg=C["bg2"], font=("Segoe UI", 9, "bold")).pack(anchor="w", pady=(2, 0))
+
+        # Commits preview
+        tk.Label(outer, text="Commits ready to push:", fg=C["text2"],
+                 bg=C["bg"], font=("Segoe UI", 9, "bold")).pack(anchor="w", pady=(2, 4))
+
+        commits_frame = tk.Frame(outer, bg=C["bg2"], highlightthickness=1,
+                                 highlightbackground=C["border"], padx=8, pady=8)
+        commits_frame.pack(fill="both", expand=True, pady=(0, 12))
+
+        if commits:
+            for c in commits[:5]:
+                h = c.get("hash", "")
+                m = c.get("message", "")
+                row = tk.Frame(commits_frame, bg=C["bg2"])
+                row.pack(fill="x", pady=1)
+                tk.Label(row, text=f"● {h}", fg=C["accent"], bg=C["bg2"],
+                         font=("Consolas", 9, "bold")).pack(side="left")
+                tk.Label(row, text=f"  {m}", fg=C["text"], bg=C["bg2"],
+                         font=("Segoe UI", 9), anchor="w").pack(side="left", fill="x", expand=True)
+            if len(commits) > 5:
+                tk.Label(commits_frame, text=f"  ... and {len(commits) - 5} more commit(s)",
+                         fg=C["text2"], bg=C["bg2"], font=("Segoe UI", 8, "italic")).pack(anchor="w")
+        else:
+            tk.Label(commits_frame, text="Recent commits will be published to remote repository.",
+                     fg=C["text2"], bg=C["bg2"], font=("Segoe UI", 9)).pack(anchor="w")
+
+        # Buttons
+        btn_row = tk.Frame(outer, bg=C["bg"])
+        btn_row.pack(fill="x")
+
+        def _yes():
+            result["confirmed"] = True
+            win.destroy()
+            root.destroy()
+            done_evt.set()
+
+        def _no():
+            result["confirmed"] = False
+            win.destroy()
+            root.destroy()
+            done_evt.set()
+
+        _button(btn_row, "🚀  Yes, Push to GitHub", _yes).pack(side="left", padx=(0, 8))
+        _button(btn_row, "❌  Keep Local (Don't Push)", _no, accent=False).pack(side="left")
+
+        win.protocol("WM_DELETE_WINDOW", _no)
+        _center(win)
+        root.mainloop()
+
+    run_in_ui_thread(_show)
+    done_evt.wait()
+    return result["confirmed"]
