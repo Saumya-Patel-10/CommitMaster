@@ -29,11 +29,13 @@ CommitMaster inspects git changes, generates intelligent commit comments for **e
 
 ## 🌟 Highlights of v2.0
 
+- ⚡ **Local Repo Scanner & AI Push Preview**: Real-time repository scanning directly on the Overview dashboard. View modified/added file badges, generate AI commit comments, edit the headline and per-file descriptions to your liking, and approve before pushing to GitHub.
 - 🖥️ **Integrated Git Desktop View**: A full-featured desktop client with branch switching, visual file status indicators (`M`, `A`, `D`, `?`), side-by-side colorized diff viewing, and one-click commit & push.
-- 🤖 **Native Local PC AI Per-File Comments**: Uses your local LLM (Gemma 3, Qwen 2.5, Mistral) via `localhost:1234` or `localhost:11434` to generate meaningful explanations for **each individual file** and formats them into a clean conventional commit.
+- 🤖 **Native Local PC AI Per-File Comments**: Uses your local LLM (Gemma, Qwen, Llama, Mistral) via `localhost:1234` or `localhost:11434` with support for reasoning models, custom prompts, and heuristic fallbacks.
+- 📜 **Smooth Scrolling & Precision Touchpad Engine**: Natural, high-performance scrolling across User and Admin apps for both traditional mouse wheels and modern laptop touchpads.
 - 🛡️ **Interactive Push Protection**: Protects your remotes by prompting with an explicit confirmation dialog showing repo, branch, account, and commit list before pushing.
 - 🌐 **Web-Based GitHub Sign-In**: Click to launch GitHub's web token generator with pre-filled scopes (`repo`, `user:email`, `read:org`, `workflow`) and paste directly from clipboard.
-- 📁 **Repository Discovery & Active Watch**: Automatically pulls all your repositories from GitHub, lets you pick which repos to actively monitor, and links them to local folders.
+- 📁 **Selective Repository Authorization & Active Watch**: Full control over what is watched—only explicitly authorized local folders and selected GitHub repos are tracked.
 - 🐙 **Multi-Account Linking**: Manage personal, work, and open-source GitHub accounts with per-repository push bindings.
 - 🎨 **Interface Customization**: 7 color themes (Midnight, Slate Dark, Obsidian, Nord, Dracula, Cyberpunk, Light Mode), custom accent colors, font scaling, and density control.
 
@@ -106,12 +108,35 @@ python main.py
 3. Bind your local folder paths using **"Link Local Folder"**.
 4. Click **`[ ○ Keep eye on repo ]`** to toggle it to **`[ 👀 Actively Watching ]`**.
 
-### 6. Use the Git Desktop View
-1. Open **🖥️ Git Desktop**.
-2. Select your repository and branch.
-3. Click **"✨ Write AI Comments for Each File (Native Local PC AI)"**.
-4. Inspect per-file AI explanations, tweak the commit headline, and click **Commit & Push**.
-5. Approve the push in the confirmation modal.
+### 6. Scan Local Repos & Preview AI Push
+1. On the **Overview** dashboard (or in **🖥️ Git Desktop**), locate the **⚡ Local Repository Scanner & AI Push Preview** card.
+2. Select your repository from the dropdown, or click **"＋ Add Local Repo"** to select any local Git folder on your PC.
+3. Click **"⚡ Scan for Changes Now"** to view detected modified, added, deleted, or untracked files with status badges.
+4. Click **"✨ Write AI Comments for Each File"** — your local PC AI will analyze diffs and pre-populate the **Commit Headline** and **Per-File Commentary**.
+5. **Freely edit** the headline or commentary text box to your liking.
+6. Click **"🚀 Approve & Git Push to GitHub"** (or **"💾 Commit Locally Only"**). The push protection modal will display a summary for your approval before pushing.
+
+---
+
+## 🤖 Local PC AI Server Setup
+
+CommitMaster communicates with your local PC AI using standard OpenAI-compatible API specifications.
+
+### Using LM Studio (Recommended)
+1. Download and install [LM Studio](https://lmstudio.ai/).
+2. Download any coding or instruction model (e.g. `google/gemma-4-12b-qat`, `qwen2.5-coder-7b-instruct`, or `llama-3.2-3b-instruct`).
+3. Click the **Developer / Local Model API** tab (`<->` on the sidebar).
+4. Select your model to load it into memory.
+5. Ensure **Server Status** is **Running** on port `1234` (`http://localhost:1234/v1`).
+6. Turn **CORS** to **ON** in LM Studio settings.
+7. In CommitMaster **Settings**, confirm Server URL is `http://localhost:1234/v1`. Model name can be left blank for automatic detection!
+
+### Using Ollama
+1. Run `ollama run qwen2.5-coder:7b` in your terminal.
+2. In CommitMaster **Settings**, set Server URL to `http://localhost:11434/v1`.
+
+### Global Cloud Deployment Transition
+When transitioning from local testing to global deployment, simply update `ai.base_url` in `config.json` (or via Global Settings in the Admin Portal) to your cloud HTTPS endpoint. No application code changes are required.
 
 ---
 
