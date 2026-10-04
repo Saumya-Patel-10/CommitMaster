@@ -109,11 +109,9 @@ class SessionMonitor(threading.Thread):
     @staticmethod
     def _scan_dirty_repos(cfg: dict) -> Set[str]:
         dirty: Set[str] = set()
+        repo_paths: Set[str] = set()
 
-        # 1. Repos under configured root directories
-        repo_paths = set(commit_engine.list_repos(cfg.get("projects_dirs", [])))
-
-        # 2. Repos user has selected to actively keep an eye on
+        # ONLY scan repositories the user has explicitly authorized and selected to actively watch
         try:
             from commitmaster import database as db
             watched = db.get_watched_repos(active_only=True)
