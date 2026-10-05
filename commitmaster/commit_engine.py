@@ -322,11 +322,20 @@ def stage_and_commit_individual(
         pass
 
     results: List[Dict[str, str]] = []
+    failures: List[str] = []
     for file_path, msg in file_comments:
         clean_msg = (msg or "").strip() or f"chore: update {os.path.basename(file_path)}"
-        # Stage only this specific file (handles additions, modifications, and deletions)
-        git(repo_path, "add", "-A", "--", file_path)
-        git(repo_path, "commit", "-m", clean_msg)
+        try:
+            # Stage only this specific file (handles additions, modifications, and deletions)
+            git(repo_path, "add", "-A", "--", file_path)
+            git(repo_path, "commit", "-m", clean_msg)
+        except GitError as exc:
+            failures.append(f"{file_path}: {exc}")
+            try:
+                git(repo_path, "reset", "-q", "--", file_path)   # leave nothing half-staged
+            except GitError:
+                pass
+            continue
         summary = git(repo_path, "log", "-1", "--oneline").strip()
         commit_hash = summary.split()[0] if summary else ""
         results.append({
@@ -337,6 +346,10 @@ def stage_and_commit_individual(
         })
         log.info("Committed individually in %s [%s]: %s", repo_name(repo_path), file_path, summary)
 
+    if failures:
+        err = GitError(f"{len(results)} of {len(file_comments)} commits succeeded. Failed: " + "; ".join(failures))
+        err.results = results          # type: ignore[attr-defined]
+        raise err
     return results
 
 
@@ -546,18 +559,14 @@ def file_diff(repo_path: str, file_path: str, max_chars: int = 5000) -> str:
     """Get the diff for a single file (staged, unstaged, or untracked)."""
     norm_file = file_path.replace("\\", "/")
     try:
-        # First try staged diff
-        staged = git(repo_path, "diff", "--cached", "--", norm_file)
-        if staged.strip():
-            return staged[:max_chars]
-        
-        # Next try unstaged diff
-        unstaged = git(repo_path, "diff", "--", norm_file)
-        if unstaged.strip():
-            return unstaged[:max_chars]
-            
-        # Try diff HEAD
-        head_diff = git(repo_path, "diff", "HEAD", "--", norm_file)
+        # Everything that changed in this one file relative to the last commit
+        # (staged + unstaged combined), scoped strictly to this path.
+        try:
+            head_diff = git(repo_path, "diff", "HEAD", "--unified=3", "--", norm_file)
+        except GitError:
+            # Repository without any commit yet: fall back to index / working tree
+            head_diff = git(repo_path, "diff", "--cached", "--unified=3", "--", norm_file)
+            head_diff += git(repo_path, "diff", "--unified=3", "--", norm_file)
         if head_diff.strip():
             return head_diff[:max_chars]
 
