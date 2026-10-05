@@ -22,7 +22,7 @@ if APP_DIR not in sys.path:
     sys.path.insert(0, APP_DIR)
 
 from commitmaster import database as db
-from commitmaster import commit_engine, ai_messages, ui, github_service
+from commitmaster import commit_engine, ai_messages, ui, github_service, file_inspector
 from commitmaster.config import load_config
 from commitmaster.app_styles import (
     COLORS, FONTS, SIZES, AVATAR_COLORS, THEMES, ACCENTS, FONT_FAMILIES, FONT_SCALES,
@@ -133,6 +133,8 @@ class AdminApp:
         self._gd_changes: list = []
         self._gd_staged_vars: dict = {}
         self._gd_file_comments: dict = {}
+        self._gd_file_comment_vars: dict = {}
+        self._gd_commit_mode_var: tk.StringVar = tk.StringVar(value="all")
         self._gd_active_file: Optional[str] = None
         self._gd_headline_var: tk.StringVar = tk.StringVar()
         self._gd_ask_push_var: tk.BooleanVar = tk.BooleanVar(value=bool(prefs.get("ask_before_push", 1)))
@@ -749,6 +751,18 @@ class AdminApp:
                                 cursor="hand2", command=toggle_all)
             tgl_btn.pack(side="right")
 
+            # Pre-commit inspection on all pending changes
+            detected_issues = file_inspector.inspect_files(self._gd_selected_repo, [p for _, p in changes])
+            if detected_issues:
+                issue_count = sum(len(v) for v in detected_issues.values())
+                warn_card = tk.Frame(content_container, bg="#3d2f00", padx=12, pady=8,
+                                     highlightthickness=1, highlightbackground="#d29922")
+                warn_card.pack(fill="x", pady=(0, 8))
+                tk.Label(warn_card, text=f"⚠️  Pre-Commit Notice: {issue_count} issue(s) detected in changed files (syntax / secrets / conflicts).",
+                         font=FONTS["label_bold"], fg="#f0a62e", bg="#3d2f00").pack(side="left")
+                tk.Label(warn_card, text="CommitMaster will verify before committing.",
+                         font=FONTS["caption"], fg="#e6edf3", bg="#3d2f00").pack(side="left", padx=(8, 0))
+
             # File list frame
             files_box = tk.Frame(content_container, bg=COLORS["bg_input"], padx=8, pady=6,
                                  highlightthickness=1, highlightbackground=COLORS["border"])
@@ -771,6 +785,23 @@ class AdminApp:
                 tk.Label(row, text=f"[{st}]", font=FONTS["mono_sm"], fg=color_hex, bg=COLORS["bg_input"]).pack(side="left", padx=(0, 6))
                 tk.Label(row, text=path, font=FONTS["body_sm"], fg=COLORS["text_primary"], bg=COLORS["bg_input"]).pack(side="left")
 
+                # If issues exist for this file, show inline warning badge
+                if path in detected_issues:
+                    file_iss = detected_issues[path]
+                    top_iss = file_iss[0]
+                    sev = top_iss.get("severity")
+                    l_no = top_iss.get("line", 1)
+                    if sev == "error":
+                        b_text = f"❌ Error (L{l_no})"
+                        b_fg, b_bg = "#ffffff", "#da3633"
+                    elif sev == "security":
+                        b_text = f"🛡️ Secret (L{l_no})"
+                        b_fg, b_bg = "#ffffff", "#d29922"
+                    else:
+                        b_text = f"⚠️ Warning (L{l_no})"
+                        b_fg, b_bg = "#ffffff", "#9e6a03"
+                    tk.Label(row, text=f" {b_text} ", font=FONTS["caption"], fg=b_fg, bg=b_bg).pack(side="left", padx=(8, 0))
+
             if len(changes) > 12:
                 tk.Label(files_box, text=f"... and {len(changes) - 12} more files (see Git Desktop for complete list)",
                          font=FONTS["caption"], fg=COLORS["text_muted"], bg=COLORS["bg_input"]).pack(anchor="w", pady=(4, 0))
@@ -781,7 +812,7 @@ class AdminApp:
             ai_box.pack(fill="x", pady=(0, 10))
 
             ai_top = tk.Frame(ai_box, bg=COLORS["bg_card"])
-            ai_top.pack(fill="x", pady=(0, 6))
+            ai_top.pack(fill="x", pady=(0, 8))
 
             status_lbl = tk.Label(ai_top, text="💡 AI comments ready to generate or edit manually",
                                   font=FONTS["caption"], fg=COLORS["text_secondary"], bg=COLORS["bg_card"])
@@ -797,8 +828,17 @@ class AdminApp:
                     res = ai_messages.generate_file_comments(cfg, self._gd_selected_repo, selected_files)
                     def update_ui():
                         self._gd_headline_var.set(res.get("headline", ""))
+                        self._gd_file_comments = res.get("file_comments", {})
                         desc_text.delete("1.0", "end")
                         desc_text.insert("end", res.get("description", ""))
+
+                        # Update all per-file comment input variables
+                        for p, comment_text in self._gd_file_comments.items():
+                            if p in self._gd_file_comment_vars:
+                                self._gd_file_comment_vars[p].set(comment_text)
+
+                        # Refresh individual view rows if visible
+                        refresh_indiv_rows()
                         status_lbl.config(text="✔ AI comments generated! You can edit them below before approving.", fg=COLORS["success"])
                     self.root.after(0, update_ui)
 
@@ -816,34 +856,119 @@ class AdminApp:
 
             status_lbl.pack(side="left")
 
-            # Commit headline
-            tk.Label(ai_box, text="Commit Headline (Editable):", font=FONTS["label_bold"],
-                     fg=COLORS["text_primary"], bg=COLORS["bg_card"]).pack(anchor="w", pady=(4, 2))
+            # ── Commit Strategy Mode Selector (All-in-one vs Individual) ──────
+            strategy_frame = tk.Frame(ai_box, bg=COLORS["bg_card"])
+            strategy_frame.pack(fill="x", pady=(0, 10))
+
+            tk.Label(strategy_frame, text="Commit Strategy:", font=FONTS["label_bold"],
+                     fg=COLORS["text_primary"], bg=COLORS["bg_card"]).pack(side="left", padx=(0, 12))
+
+            rb_all = tk.Radiobutton(
+                strategy_frame, text="📦 Commit All in One (Single Commit)",
+                variable=self._gd_commit_mode_var, value="all",
+                font=FONTS["body_sm"], fg=COLORS["text_primary"], bg=COLORS["bg_card"],
+                selectcolor=COLORS["bg_input"], activebackground=COLORS["bg_card"],
+                activeforeground=COLORS["text_primary"], command=lambda: update_mode_visibility()
+            )
+            rb_all.pack(side="left", padx=(0, 12))
+
+            rb_indiv = tk.Radiobutton(
+                strategy_frame, text="📝 Commit Individually (Dedicated Comment per File)",
+                variable=self._gd_commit_mode_var, value="individual",
+                font=FONTS["body_sm"], fg=COLORS["text_primary"], bg=COLORS["bg_card"],
+                selectcolor=COLORS["bg_input"], activebackground=COLORS["bg_card"],
+                activeforeground=COLORS["text_primary"], command=lambda: update_mode_visibility()
+            )
+            rb_indiv.pack(side="left")
+
+            # Container 1: All-in-one commit inputs
+            all_container = tk.Frame(ai_box, bg=COLORS["bg_card"])
+
+            tk.Label(all_container, text="Unified Commit Headline (Editable):", font=FONTS["label_bold"],
+                     fg=COLORS["text_primary"], bg=COLORS["bg_card"]).pack(anchor="w", pady=(0, 2))
 
             if not self._gd_headline_var.get():
                 self._gd_headline_var.set(f"refactor: update {len(changes)} files in {commit_engine.repo_name(self._gd_selected_repo)}")
 
             headline_ent = tk.Entry(
-                ai_box, textvariable=self._gd_headline_var, font=FONTS["body_md"],
+                all_container, textvariable=self._gd_headline_var, font=FONTS["body_md"],
                 bg=COLORS["bg_input"], fg=COLORS["text_primary"], relief="flat",
                 highlightthickness=1, highlightbackground=COLORS["border"],
             )
             headline_ent.pack(fill="x", pady=(0, 8), ipady=4)
 
-            # Detailed comments
-            tk.Label(ai_box, text="Commit Description & Per-File Commentary (100% Editable):", font=FONTS["caption"],
+            tk.Label(all_container, text="Commit Description & Per-File Commentary (100% Editable):", font=FONTS["caption"],
                      fg=COLORS["text_secondary"], bg=COLORS["bg_card"]).pack(anchor="w", pady=(0, 2))
 
             desc_text = tk.Text(
-                ai_box, font=FONTS["body_sm"], height=4, bg=COLORS["bg_input"],
+                all_container, font=FONTS["body_sm"], height=4, bg=COLORS["bg_input"],
                 fg=COLORS["text_primary"], relief="flat", padx=8, pady=6,
                 highlightthickness=1, highlightbackground=COLORS["border"],
             )
             desc_text.pack(fill="x", pady=(0, 10))
 
-            # Initial description if empty
             initial_desc = "\n".join(f"- {p}: Update file logic" for _, p in changes[:8])
             desc_text.insert("end", initial_desc)
+
+            # Container 2: Individual file commit comments inputs
+            indiv_container = tk.Frame(ai_box, bg=COLORS["bg_card"])
+
+            tk.Label(indiv_container, text="Dedicated Commit Comment for Each File (Individual Git Commits):",
+                     font=FONTS["label_bold"], fg=COLORS["text_primary"], bg=COLORS["bg_card"]).pack(anchor="w", pady=(0, 4))
+            tk.Label(indiv_container, text="Each selected file below will receive its own separate commit in Git history.",
+                     font=FONTS["caption"], fg=COLORS["text_secondary"], bg=COLORS["bg_card"]).pack(anchor="w", pady=(0, 6))
+
+            indiv_scroll_frame = tk.Frame(indiv_container, bg=COLORS["bg_input"], padx=8, pady=6,
+                                          highlightthickness=1, highlightbackground=COLORS["border"])
+            indiv_scroll_frame.pack(fill="x", pady=(0, 10))
+
+            def refresh_indiv_rows():
+                for widget in indiv_scroll_frame.winfo_children():
+                    widget.destroy()
+
+                selected_paths = [p for p, v in self._gd_staged_vars.items() if v.get()]
+                if not selected_paths:
+                    selected_paths = [p for _, p in changes[:12]]
+
+                for p in selected_paths[:12]:
+                    f_row = tk.Frame(indiv_scroll_frame, bg=COLORS["bg_input"])
+                    f_row.pack(fill="x", pady=3)
+
+                    tk.Label(f_row, text=f"📄 {p}:", font=FONTS["mono_sm"], fg=COLORS["text_primary"],
+                             bg=COLORS["bg_input"], width=32, anchor="w").pack(side="left", padx=(0, 8))
+
+                    if p not in self._gd_file_comment_vars:
+                        initial_comm = self._gd_file_comments.get(p) or f"chore: update {os.path.basename(p)}"
+                        self._gd_file_comment_vars[p] = tk.StringVar(value=initial_comm)
+
+                    f_ent = tk.Entry(
+                        f_row, textvariable=self._gd_file_comment_vars[p], font=FONTS["body_sm"],
+                        bg=COLORS["bg_card"], fg=COLORS["text_primary"], relief="flat",
+                        highlightthickness=1, highlightbackground=COLORS["border"],
+                    )
+                    f_ent.pack(side="left", fill="x", expand=True, ipady=3)
+
+                    def make_tracker(path_key, var):
+                        def on_type(*_):
+                            self._gd_file_comments[path_key] = var.get()
+                        var.trace_add("write", on_type)
+                    make_tracker(p, self._gd_file_comment_vars[p])
+
+                if len(selected_paths) > 12:
+                    tk.Label(indiv_scroll_frame, text=f"... and {len(selected_paths) - 12} more files",
+                             font=FONTS["caption"], fg=COLORS["text_muted"], bg=COLORS["bg_input"]).pack(anchor="w", pady=(4, 0))
+
+            def update_mode_visibility():
+                if self._gd_commit_mode_var.get() == "all":
+                    indiv_container.pack_forget()
+                    all_container.pack(fill="x", pady=(0, 4))
+                else:
+                    all_container.pack_forget()
+                    refresh_indiv_rows()
+                    indiv_container.pack(fill="x", pady=(0, 4))
+
+            # Initial view configuration
+            update_mode_visibility()
 
             # ── Action Buttons Row ────────────────────────────────────────────
             act_row = tk.Frame(ai_box, bg=COLORS["bg_card"])
@@ -866,13 +991,23 @@ class AdminApp:
                     messagebox.showwarning("No Files Selected", "Please check at least one file to include in the commit.", parent=self.root)
                     return
 
+                repo_name = commit_engine.repo_name(self._gd_selected_repo)
+                cur_branch = commit_engine.current_branch(self._gd_selected_repo)
+
+                # ── Pre-Commit Health & Issue Check ───────────────────────────
+                staged_issues = file_inspector.inspect_files(self._gd_selected_repo, staged)
+                if staged_issues:
+                    proceed = ui.ask_pre_commit_issues_warning(staged_issues, repo_name=repo_name, parent=self.root)
+                    if not proceed:
+                        push_res_lbl.config(text="ℹ Commit cancelled to allow resolving file issues.", fg=COLORS["warning"])
+                        return
+
                 headline = self._gd_headline_var.get().strip() or "chore: update repository files"
                 desc = desc_text.get("1.0", "end").strip()
                 full_msg = f"{headline}\n\n{desc}" if desc else headline
+                mode = self._gd_commit_mode_var.get()
 
                 acc = db.get_repo_account(self.user["id"], self._gd_selected_repo)
-                repo_name = commit_engine.repo_name(self._gd_selected_repo)
-                cur_branch = commit_engine.current_branch(self._gd_selected_repo)
 
                 if push_remote and self._gd_ask_push_var.get():
                     unpushed = commit_engine.get_unpushed_commits(self._gd_selected_repo)
@@ -881,20 +1016,46 @@ class AdminApp:
                         push_res_lbl.config(text="ℹ Push cancelled by user. Changes remain uncommitted.", fg=COLORS["warning"])
                         return
 
-                push_res_lbl.config(text="⏳ Committing and pushing to GitHub...", fg=COLORS["info"])
+                push_res_lbl.config(text="⏳ Committing and processing Git operations...", fg=COLORS["info"])
                 self.root.update_idletasks()
 
                 def do_commit_and_push_worker():
                     try:
-                        summary = commit_engine.stage_and_commit(self._gd_selected_repo, staged, full_msg)
-                        commit_hash = summary.split()[0] if summary else ""
-                        db.log_commit(
-                            user_id=self.user["id"],
-                            repo_path=self._gd_selected_repo,
-                            commit_msg=headline,
-                            files_count=len(staged),
-                            commit_hash=commit_hash,
-                        )
+                        if mode == "individual":
+                            # Commit each file individually with its dedicated comment
+                            file_comment_pairs = []
+                            for p in staged:
+                                if p in self._gd_file_comment_vars:
+                                    comm = self._gd_file_comment_vars[p].get().strip()
+                                else:
+                                    comm = self._gd_file_comments.get(p, "").strip()
+                                if not comm:
+                                    comm = f"chore: update {os.path.basename(p)}"
+                                file_comment_pairs.append((p, comm))
+
+                            commit_results = commit_engine.stage_and_commit_individual(self._gd_selected_repo, file_comment_pairs)
+                            for item in commit_results:
+                                db.log_commit(
+                                    user_id=self.user["id"],
+                                    repo_path=self._gd_selected_repo,
+                                    commit_msg=item["message"],
+                                    files_count=1,
+                                    commit_hash=item["hash"],
+                                )
+                            summary_display = f"{len(commit_results)} individual commits created"
+                            commit_hash = commit_results[-1]["hash"] if commit_results else ""
+                        else:
+                            # Commit all in one single commit
+                            summary = commit_engine.stage_and_commit(self._gd_selected_repo, staged, full_msg)
+                            commit_hash = summary.split()[0] if summary else ""
+                            db.log_commit(
+                                user_id=self.user["id"],
+                                repo_path=self._gd_selected_repo,
+                                commit_msg=headline,
+                                files_count=len(staged),
+                                commit_hash=commit_hash,
+                            )
+                            summary_display = summary
 
                         if push_remote:
                             if acc:
@@ -908,8 +1069,8 @@ class AdminApp:
 
                             def on_push_done():
                                 if ok:
-                                    push_res_lbl.config(text=f"🎉 Successfully committed and pushed to GitHub! ({commit_hash})", fg=COLORS["success"])
-                                    messagebox.showinfo("Push Succeeded", f"✔ Successfully committed and pushed to GitHub!\n\nHeadline: {headline}\nFiles: {len(staged)} files\nSummary: {summary}", parent=self.root)
+                                    push_res_lbl.config(text=f"🎉 Successfully committed ({summary_display}) and pushed to GitHub!", fg=COLORS["success"])
+                                    messagebox.showinfo("Push Succeeded", f"✔ Successfully committed and pushed to GitHub!\n\nSummary: {summary_display}\nFiles: {len(staged)} files", parent=self.root)
                                     render_scanner_content()
                                 else:
                                     push_res_lbl.config(text=f"❌ Push error: {pmsg}", fg=COLORS["danger"])
@@ -917,8 +1078,8 @@ class AdminApp:
                             self.root.after(0, on_push_done)
                         else:
                             def on_commit_done():
-                                push_res_lbl.config(text=f"✔ Committed locally: {summary}", fg=COLORS["success"])
-                                messagebox.showinfo("Committed Locally", f"Commit saved locally:\n{summary}", parent=self.root)
+                                push_res_lbl.config(text=f"✔ Committed locally: {summary_display}", fg=COLORS["success"])
+                                messagebox.showinfo("Committed Locally", f"Saved to Git locally:\n\n{summary_display}", parent=self.root)
                                 render_scanner_content()
                             self.root.after(0, on_commit_done)
 
@@ -1561,6 +1722,17 @@ class AdminApp:
                        bg=COLORS["bg_card"], anchor="w", cursor="hand2")
         lbl.pack(side="left", fill="x", expand=True)
 
+        # Inline issue badge if problems detected in this file
+        if self._gd_selected_repo:
+            file_issues = file_inspector.inspect_file(self._gd_selected_repo, path)
+            if file_issues:
+                top_iss = file_issues[0]
+                sev = top_iss.get("severity")
+                l_no = top_iss.get("line", 1)
+                b_text = f"❌ Error (L{l_no})" if sev == "error" else (f"🛡️ Secret (L{l_no})" if sev == "security" else f"⚠️ Warning (L{l_no})")
+                b_bg = "#da3633" if sev == "error" else ("#d29922" if sev == "security" else "#9e6a03")
+                tk.Label(row, text=f" {b_text} ", font=FONTS["caption"], fg="#ffffff", bg=b_bg).pack(side="right", padx=(4, 2))
+
         def on_click(e):
             self._gd_select_file(path)
         lbl.bind("<Button-1>", on_click)
@@ -1641,7 +1813,26 @@ class AdminApp:
                                           fg=COLORS["text_secondary"], bg=COLORS["bg_card"])
         self._gd_ai_status_lbl.pack(side="left")
 
-        tk.Label(dock, text="Commit Headline:", font=FONTS["label_bold"],
+        # Commit strategy selector
+        strat_row = tk.Frame(dock, bg=COLORS["bg_card"])
+        strat_row.pack(fill="x", pady=(2, 6))
+        tk.Label(strat_row, text="Commit Strategy:", font=FONTS["label_bold"],
+                 fg=COLORS["text_primary"], bg=COLORS["bg_card"]).pack(side="left", padx=(0, 10))
+        tk.Radiobutton(
+            strat_row, text="📦 Commit All in One", variable=self._gd_commit_mode_var, value="all",
+            font=FONTS["body_sm"], fg=COLORS["text_primary"], bg=COLORS["bg_card"],
+            selectcolor=COLORS["bg_input"], activebackground=COLORS["bg_card"],
+            activeforeground=COLORS["text_primary"]
+        ).pack(side="left", padx=(0, 10))
+        tk.Radiobutton(
+            strat_row, text="📝 Dedicated Comment per File", variable=self._gd_commit_mode_var, value="individual",
+            font=FONTS["body_sm"], fg=COLORS["text_primary"], bg=COLORS["bg_card"],
+            selectcolor=COLORS["bg_input"], activebackground=COLORS["bg_card"],
+            activeforeground=COLORS["text_primary"]
+        ).pack(side="left")
+
+        # Headline Input
+        tk.Label(dock, text="Commit Headline (for All in One):", font=FONTS["label_bold"],
                  fg=COLORS["text_primary"], bg=COLORS["bg_card"]).pack(anchor="w")
 
         headline_e = tk.Entry(
@@ -1651,6 +1842,7 @@ class AdminApp:
         )
         headline_e.pack(fill="x", pady=(2, 6), ipady=4)
 
+        # Full Description Text
         tk.Label(dock, text="Description & Per-File Commentary:", font=FONTS["caption"],
                  fg=COLORS["text_secondary"], bg=COLORS["bg_card"]).pack(anchor="w")
 
@@ -1661,6 +1853,7 @@ class AdminApp:
         )
         self._gd_desc_text.pack(fill="x", pady=(2, 8))
 
+        # Push Confirmation & Action Buttons Row
         action_row = tk.Frame(dock, bg=COLORS["bg_card"])
         action_row.pack(fill="x")
 
@@ -1725,6 +1918,9 @@ class AdminApp:
             def apply():
                 self._gd_headline_var.set(res.get("headline", ""))
                 self._gd_file_comments = res.get("file_comments", {})
+                for p, c in self._gd_file_comments.items():
+                    if p in self._gd_file_comment_vars:
+                        self._gd_file_comment_vars[p].set(c)
                 if self._gd_desc_text:
                     self._gd_desc_text.delete("1.0", "end")
                     self._gd_desc_text.insert("end", res.get("description", ""))
@@ -1747,19 +1943,48 @@ class AdminApp:
             messagebox.showwarning("Nothing Staged", "Please select at least one changed file to commit.", parent=self.root)
             return
 
+        repo_name = commit_engine.repo_name(self._gd_selected_repo)
+
+        # ── Pre-Commit Health & Issue Check ───────────────────────────────────
+        staged_issues = file_inspector.inspect_files(self._gd_selected_repo, staged_files)
+        if staged_issues:
+            proceed = ui.ask_pre_commit_issues_warning(staged_issues, repo_name=repo_name, parent=self.root)
+            if not proceed:
+                return
+
         headline = self._gd_headline_var.get().strip() or "chore: update repository files"
         desc = self._gd_desc_text.get("1.0", "end").strip() if self._gd_desc_text else ""
         full_msg = f"{headline}\n\n{desc}" if desc else headline
+        mode = self._gd_commit_mode_var.get()
 
         try:
-            summary = commit_engine.stage_and_commit(self._gd_selected_repo, staged_files, full_msg)
-            db.log_commit(
-                user_id=self.user["id"],
-                repo_path=self._gd_selected_repo,
-                commit_msg=headline,
-                files_count=len(staged_files),
-                commit_hash=summary.split()[0] if summary else "",
-            )
+            if mode == "individual":
+                file_comment_pairs = []
+                for p in staged_files:
+                    comm = (self._gd_file_comment_vars.get(p).get() if p in self._gd_file_comment_vars else self._gd_file_comments.get(p, "")).strip()
+                    if not comm:
+                        comm = f"chore: update {os.path.basename(p)}"
+                    file_comment_pairs.append((p, comm))
+
+                commit_results = commit_engine.stage_and_commit_individual(self._gd_selected_repo, file_comment_pairs)
+                for item in commit_results:
+                    db.log_commit(
+                        user_id=self.user["id"],
+                        repo_path=self._gd_selected_repo,
+                        commit_msg=item["message"],
+                        files_count=1,
+                        commit_hash=item["hash"],
+                    )
+                summary = f"Created {len(commit_results)} individual commits in Git history"
+            else:
+                summary = commit_engine.stage_and_commit(self._gd_selected_repo, staged_files, full_msg)
+                db.log_commit(
+                    user_id=self.user["id"],
+                    repo_path=self._gd_selected_repo,
+                    commit_msg=headline,
+                    files_count=len(staged_files),
+                    commit_hash=summary.split()[0] if summary else "",
+                )
 
             if push:
                 self._gd_push_commits()
