@@ -206,6 +206,7 @@ COLORS: Dict[str, str] = {
     "success":       "#3fb950",
     "warning":       "#d29922",
     "error":         "#f85149",
+    "danger":        "#f85149",
     "info":          "#58a6ff",
 
     # Borders
