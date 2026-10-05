@@ -161,19 +161,39 @@ def init_db() -> None:
         )
     """)
 
+    # ── Application events (scans, failures, pushes, AI usage) for analytics ──
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS app_events (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id     INTEGER REFERENCES users(id) ON DELETE CASCADE,
+            kind        TEXT    NOT NULL,
+            repo_name   TEXT    NOT NULL DEFAULT '',
+            files       INTEGER NOT NULL DEFAULT 0,
+            errors      INTEGER NOT NULL DEFAULT 0,
+            security    INTEGER NOT NULL DEFAULT 0,
+            warnings    INTEGER NOT NULL DEFAULT 0,
+            detail      TEXT    NOT NULL DEFAULT '',
+            created_at  TEXT    NOT NULL DEFAULT (datetime('now'))
+        )
+    """)
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_app_events_kind_time ON app_events(kind, created_at)")
+
     # ── Migrations for existing user_preferences ──────────────────────────────
-    for col_name, col_type in [
-        ("accent_color", "TEXT DEFAULT '#3fb950'"),
-        ("font_family", "TEXT DEFAULT 'Segoe UI'"),
-        ("font_scale", "TEXT DEFAULT 'standard'"),
-        ("ui_density", "TEXT DEFAULT 'comfortable'"),
-        ("auto_push", "INTEGER DEFAULT 0"),
-        ("ask_before_push", "INTEGER DEFAULT 1"),
-    ]:
-        try:
-            cur.execute(f"ALTER TABLE user_preferences ADD COLUMN {col_name} {col_type}")
-        except Exception:
-            pass
+    try:
+        existing_cols = {row[1] for row in cur.execute("PRAGMA table_info(user_preferences)")}
+        migration_ddls = {
+            "accent_color": "ALTER TABLE user_preferences ADD COLUMN accent_color TEXT DEFAULT '#3fb950'",
+            "font_family": "ALTER TABLE user_preferences ADD COLUMN font_family TEXT DEFAULT 'Segoe UI'",
+            "font_scale": "ALTER TABLE user_preferences ADD COLUMN font_scale TEXT DEFAULT 'standard'",
+            "ui_density": "ALTER TABLE user_preferences ADD COLUMN ui_density TEXT DEFAULT 'comfortable'",
+            "auto_push": "ALTER TABLE user_preferences ADD COLUMN auto_push INTEGER DEFAULT 0",
+            "ask_before_push": "ALTER TABLE user_preferences ADD COLUMN ask_before_push INTEGER DEFAULT 1",
+        }
+        for col_name, ddl in migration_ddls.items():
+            if col_name not in existing_cols:
+                cur.execute(ddl)
+    except Exception:
+        pass
 
     conn.commit()
 
@@ -365,7 +385,139 @@ def log_commit(user_id: int, repo_path: str, commit_msg: str,
         VALUES (?, ?, ?, ?, ?, ?, ?)
     """, (user_id, repo_path, repo_name, commit_hash, commit_msg, files_count, status))
     conn.commit()
-    _increment_daily_commits(user_id)
+    if status == "committed":
+        _increment_daily_commits(user_id)
+    else:
+        log_event(user_id, "commit_failed", repo_name=repo_name, detail=commit_msg[:200])
+
+
+# ── Analytics events ──────────────────────────────────────────────────────────
+
+def log_event(user_id: Optional[int], kind: str, repo_name: str = "", files: int = 0,
+              errors: int = 0, security: int = 0, warnings: int = 0, detail: str = "") -> None:
+    """
+    Record an analytics event.  kind is one of:
+    'scan' (pre-commit inspection), 'commit_failed', 'push_ok', 'push_failed', 'ai_generate'.
+    Never raises - analytics must not break the app.
+    """
+    try:
+        conn = get_conn()
+        conn.execute("""
+            INSERT INTO app_events (user_id, kind, repo_name, files, errors, security, warnings, detail)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """, (user_id, kind, repo_name, files, errors, security, warnings, detail[:300]))
+        conn.commit()
+    except Exception:
+        pass
+
+
+def log_scan(user_id: Optional[int], repo_path: str, files: int, issues_summary: Dict[str, int]) -> None:
+    """Record a pre-commit inspection result (vulnerability / error / warning counts)."""
+    log_event(user_id, "scan", repo_name=os.path.basename(repo_path.rstrip("/\\")), files=files,
+              errors=issues_summary.get("errors", 0), security=issues_summary.get("security", 0),
+              warnings=issues_summary.get("warnings", 0))
+
+
+def _day_range(days: int) -> List[str]:
+    today = datetime.now().date()
+    return [(today - timedelta(days=d)).strftime("%Y-%m-%d") for d in range(days - 1, -1, -1)]
+
+
+def get_metrics_timeseries(days: int = 30, user_id: Optional[int] = None) -> Dict[str, Any]:
+    """
+    Daily time series (zero-filled) for charts.  Returns:
+    {"dates": [...], "series": {name: [int, ...]}} with series:
+    sessions, active_users, commits, files_committed, pushes, scans,
+    vulnerabilities, errors, warnings, commit_failures, push_failures, ai_generations
+    """
+    dates = _day_range(days)
+    idx = {d: i for i, d in enumerate(dates)}
+    names = ["sessions", "active_users", "commits", "files_committed", "pushes", "scans",
+             "vulnerabilities", "errors", "warnings", "commit_failures", "push_failures", "ai_generations"]
+    series = {n: [0] * len(dates) for n in names}
+    since = dates[0]
+    conn = get_conn()
+
+    if user_id:
+        usage_query = """
+            SELECT date, SUM(sessions) s, COUNT(DISTINCT user_id) u FROM app_usage
+            WHERE date >= ? AND user_id = ? GROUP BY date"""
+        commit_query = """
+            SELECT date(committed_at, 'localtime') d, COUNT(*) c, SUM(files_count) f FROM commit_activity
+            WHERE status = 'committed' AND date(committed_at, 'localtime') >= ? AND user_id = ? GROUP BY d"""
+        event_query = """
+            SELECT date(created_at, 'localtime') d, kind, COUNT(*) c,
+                   SUM(errors) e, SUM(security) s, SUM(warnings) w
+            FROM app_events WHERE date(created_at, 'localtime') >= ? AND user_id = ? GROUP BY d, kind"""
+        query_args: tuple = (since, user_id)
+    else:
+        usage_query = """
+            SELECT date, SUM(sessions) s, COUNT(DISTINCT user_id) u FROM app_usage
+            WHERE date >= ? GROUP BY date"""
+        commit_query = """
+            SELECT date(committed_at, 'localtime') d, COUNT(*) c, SUM(files_count) f FROM commit_activity
+            WHERE status = 'committed' AND date(committed_at, 'localtime') >= ? GROUP BY d"""
+        event_query = """
+            SELECT date(created_at, 'localtime') d, kind, COUNT(*) c,
+                   SUM(errors) e, SUM(security) s, SUM(warnings) w
+            FROM app_events WHERE date(created_at, 'localtime') >= ? GROUP BY d, kind"""
+        query_args = (since,)
+
+    for r in conn.execute(usage_query, query_args):
+        if r["date"] in idx:
+            series["sessions"][idx[r["date"]]] = r["s"] or 0
+            series["active_users"][idx[r["date"]]] = r["u"] or 0
+
+    for r in conn.execute(commit_query, query_args):
+        if r["d"] in idx:
+            series["commits"][idx[r["d"]]] = r["c"] or 0
+            series["files_committed"][idx[r["d"]]] = r["f"] or 0
+
+    kind_map = {"push_ok": "pushes", "scan": "scans", "commit_failed": "commit_failures",
+                "push_failed": "push_failures", "ai_generate": "ai_generations"}
+    for r in conn.execute(event_query, query_args):
+        i = idx.get(r["d"])
+        if i is None:
+            continue
+        key = kind_map.get(r["kind"])
+        if key:
+            series[key][i] += r["c"] or 0
+        if r["kind"] == "scan":
+            series["vulnerabilities"][i] += r["s"] or 0
+            series["errors"][i] += r["e"] or 0
+            series["warnings"][i] += r["w"] or 0
+    return {"dates": dates, "series": series}
+
+
+def get_user_commit_series(days: int = 30, limit: int = 5) -> Dict[str, Any]:
+    """Daily commit counts for the `limit` most active users (for multi-line charts)."""
+    dates = _day_range(days)
+    idx = {d: i for i, d in enumerate(dates)}
+    conn = get_conn()
+    rows = conn.execute("""
+        SELECT u.username, date(ca.committed_at, 'localtime') d, COUNT(*) c
+        FROM commit_activity ca JOIN users u ON u.id = ca.user_id
+        WHERE ca.status = 'committed' AND date(ca.committed_at, 'localtime') >= ?
+        GROUP BY u.id, d""", (dates[0],)).fetchall()
+    totals: Dict[str, int] = {}
+    per_user: Dict[str, List[int]] = {}
+    for r in rows:
+        if r["d"] not in idx:
+            continue
+        per_user.setdefault(r["username"], [0] * len(dates))[idx[r["d"]]] = r["c"]
+        totals[r["username"]] = totals.get(r["username"], 0) + r["c"]
+    top = sorted(totals, key=totals.get, reverse=True)[:limit]
+    return {"dates": dates, "series": {u: per_user[u] for u in top}}
+
+
+def get_recent_security_events(limit: int = 8) -> List[Dict]:
+    """Latest scans that found security problems or errors (for the admin dashboard)."""
+    conn = get_conn()
+    cur = conn.execute("""
+        SELECT e.*, u.username FROM app_events e LEFT JOIN users u ON u.id = e.user_id
+        WHERE e.kind = 'scan' AND (e.security > 0 OR e.errors > 0)
+        ORDER BY e.created_at DESC LIMIT ?""", (limit,))
+    return [dict(r) for r in cur.fetchall()]
 
 
 def get_activity_log(user_id: Optional[int] = None, limit: int = 100) -> List[Dict]:
