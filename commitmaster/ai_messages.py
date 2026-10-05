@@ -263,8 +263,7 @@ def generate_file_comments(
     # Gather target files
     if not files:
         changes = commit_engine.uncommitted_changes(repo_path)
-        sensitive = cfg.get("sensitive_patterns", [])
-        files = [p for _, p in changes if not any(s in p.lower() for s in sensitive)]
+        files = [p for _, p in changes]
 
     if not files:
         return {
@@ -281,9 +280,14 @@ def generate_file_comments(
 
     # Build per-file diff snippets (cap at 12 files to avoid prompt bloat)
     diff_blocks = []
+    sensitive = cfg.get("sensitive_patterns", [])
     for f in files[:12]:
-        fdiff = commit_engine.file_diff(repo_path, f, max_chars=1_000)
-        diff_blocks.append(f"--- File: {f} ---\n{fdiff}\n")
+        is_sensitive = any(s in f.lower() for s in sensitive)
+        if is_sensitive:
+            diff_blocks.append(f"--- File: {f} ---\n[Sensitive file content omitted for security]\n")
+        else:
+            fdiff = commit_engine.file_diff(repo_path, f, max_chars=1_000)
+            diff_blocks.append(f"--- File: {f} ---\n{fdiff}\n")
     if len(files) > 12:
         diff_blocks.append(f"... and {len(files) - 12} additional files.")
 
@@ -336,6 +340,9 @@ def _parse_file_comments_json(text: str, files: List[str]) -> Dict[str, Any]:
             data = json.loads(match.group(0))
             headline = data.get("headline", "").strip() or "chore: update files"
             file_comments = data.get("file_comments", {})
+            for f in files:
+                if f not in file_comments or not file_comments[f]:
+                    file_comments[f] = f"Update logic and content in {os.path.basename(f)}"
             desc = data.get("description", "").strip()
             if not desc and file_comments:
                 desc = "\n".join(f"- {f}: {c}" for f, c in file_comments.items())
