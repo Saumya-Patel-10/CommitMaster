@@ -60,3 +60,424 @@
 2026-10-02 05:58:57 [INFO    ] commitmaster.main — Main event loop started.
 2026-10-02 05:58:59 [DEBUG   ] commitmaster.commit_engine — list_repos found 0 repos under []
 2026-10-02 05:59:19 [INFO    ] commitmaster.config — config.json changed on disk — reloading.
+2026-10-04 03:29:25 [DEBUG   ] commitmaster.ai_messages — Auto-detected model: google/gemma-4-12b-qat
+2026-10-04 03:29:25 [DEBUG   ] commitmaster.commit_engine — git rev-parse --abbrev-ref HEAD
+2026-10-04 03:29:25 [DEBUG   ] commitmaster.commit_engine — git status --porcelain -uall
+2026-10-04 04:28:19 [DEBUG   ] commitmaster.ai_messages — Auto-detected model: google/gemma-4-12b-qat
+2026-10-04 04:28:19 [DEBUG   ] commitmaster.commit_engine — git diff --cached -- commitmaster/database.py
+2026-10-04 04:28:19 [DEBUG   ] commitmaster.commit_engine — git diff -- commitmaster/database.py
+2026-10-04 04:28:19 [DEBUG   ] commitmaster.commit_engine — git diff HEAD -- commitmaster/database.py
+2026-10-04 04:28:19 [DEBUG   ] commitmaster.commit_engine — git diff --cached -- commitmaster/github_service.py
+2026-10-04 04:28:20 [DEBUG   ] commitmaster.commit_engine — git diff -- commitmaster/github_service.py
+2026-10-04 04:28:20 [DEBUG   ] commitmaster.commit_engine — git diff HEAD -- commitmaster/github_service.py
+2026-10-04 04:28:20 [DEBUG   ] commitmaster.commit_engine — git diff --cached -- README.md
+2026-10-04 04:28:20 [DEBUG   ] commitmaster.commit_engine — git diff -- README.md
+2026-10-04 04:28:20 [DEBUG   ] commitmaster.commit_engine — git diff HEAD -- README.md
+2026-10-04 04:28:20 [DEBUG   ] commitmaster.commit_engine — git rev-parse --abbrev-ref HEAD
+2026-10-04 04:28:20 [INFO    ] commitmaster.ai_messages — Calling local AI 'google/gemma-4-12b-qat' for per-file comments...
+2026-10-04 04:28:22 [WARNING ] commitmaster.ai_messages — Local AI per-file comment generation failed: HTTPConnectionPool(host='localhost', port=1234): Read timed out. (read timeout=1) — using heuristics.
+2026-10-04 04:28:33 [DEBUG   ] commitmaster.commit_engine — git init
+2026-10-04 04:28:33 [DEBUG   ] commitmaster.commit_engine — git config user.name Test User
+2026-10-04 04:28:33 [DEBUG   ] commitmaster.commit_engine — git config user.email test@commitmaster.local
+2026-10-04 04:28:33 [DEBUG   ] commitmaster.commit_engine — git reset
+2026-10-04 04:28:33 [DEBUG   ] commitmaster.commit_engine — git add -- file1.txt file2.txt
+2026-10-04 04:28:33 [DEBUG   ] commitmaster.commit_engine — git commit -m feat: add both files
+2026-10-04 04:28:33 [DEBUG   ] commitmaster.commit_engine — git log -1 --oneline
+2026-10-04 04:28:33 [INFO    ] commitmaster.commit_engine — Committed in cm_test_e8nb47i3: 6fa49f8 feat: add both files
+2026-10-04 04:28:33 [DEBUG   ] commitmaster.commit_engine — git log --oneline
+2026-10-04 04:28:33 [DEBUG   ] commitmaster.commit_engine — git init
+2026-10-04 04:28:33 [DEBUG   ] commitmaster.commit_engine — git config user.name Test User
+2026-10-04 04:28:33 [DEBUG   ] commitmaster.commit_engine — git config user.email test@commitmaster.local
+2026-10-04 04:28:33 [DEBUG   ] commitmaster.commit_engine — git init
+2026-10-04 04:28:33 [DEBUG   ] commitmaster.commit_engine — git config user.name Test User
+2026-10-04 04:28:34 [DEBUG   ] commitmaster.commit_engine — git config user.email test@commitmaster.local
+2026-10-04 04:28:34 [DEBUG   ] commitmaster.commit_engine — git init
+2026-10-04 04:28:34 [DEBUG   ] commitmaster.commit_engine — git config user.name Test User
+2026-10-04 04:28:34 [DEBUG   ] commitmaster.commit_engine — git config user.email test@commitmaster.local
+2026-10-04 04:28:34 [DEBUG   ] commitmaster.commit_engine — git init
+2026-10-04 04:28:34 [DEBUG   ] commitmaster.commit_engine — git config user.name Test User
+2026-10-04 04:28:34 [DEBUG   ] commitmaster.commit_engine — git config user.email test@commitmaster.local
+2026-10-04 04:28:34 [DEBUG   ] commitmaster.commit_engine — git init
+2026-10-04 04:28:34 [DEBUG   ] commitmaster.commit_engine — git config user.name Test User
+2026-10-04 04:28:34 [DEBUG   ] commitmaster.commit_engine — git config user.email test@commitmaster.local
+2026-10-04 04:28:34 [DEBUG   ] commitmaster.commit_engine — git init
+2026-10-04 04:28:34 [DEBUG   ] commitmaster.commit_engine — git config user.name Test User
+2026-10-04 04:28:34 [DEBUG   ] commitmaster.commit_engine — git config user.email test@commitmaster.local
+2026-10-04 04:28:34 [DEBUG   ] commitmaster.commit_engine — git reset
+2026-10-04 04:28:34 [DEBUG   ] commitmaster.commit_engine — git add -- alpha.py
+2026-10-04 04:28:34 [DEBUG   ] commitmaster.commit_engine — git commit -m feat(core): add alpha logic
+2026-10-04 04:28:34 [DEBUG   ] commitmaster.commit_engine — git log -1 --oneline
+2026-10-04 04:28:34 [INFO    ] commitmaster.commit_engine — Committed individually in cm_test_hnj07_3u [alpha.py]: 366a554 feat(core): add alpha logic
+2026-10-04 04:28:34 [DEBUG   ] commitmaster.commit_engine — git add -- beta.md
+2026-10-04 04:28:34 [DEBUG   ] commitmaster.commit_engine — git commit -m docs: update beta documentation
+2026-10-04 04:28:34 [DEBUG   ] commitmaster.commit_engine — git log -1 --oneline
+2026-10-04 04:28:34 [INFO    ] commitmaster.commit_engine — Committed individually in cm_test_hnj07_3u [beta.md]: b1470db docs: update beta documentation
+2026-10-04 04:28:34 [DEBUG   ] commitmaster.commit_engine — git add -- gamma.json
+2026-10-04 04:28:34 [DEBUG   ] commitmaster.commit_engine — git commit -m chore(config): initialize gamma schema
+2026-10-04 04:28:34 [DEBUG   ] commitmaster.commit_engine — git log -1 --oneline
+2026-10-04 04:28:34 [INFO    ] commitmaster.commit_engine — Committed individually in cm_test_hnj07_3u [gamma.json]: 7c62e9d chore(config): initialize gamma schema
+2026-10-04 04:28:34 [DEBUG   ] commitmaster.commit_engine — git log --oneline
+2026-10-04 04:29:07 [DEBUG   ] commitmaster.commit_engine — Cannot scan C:\Users\saumy\AppData\Local\Temp\WinSAT: [WinError 5] Access is denied: 'C:\\Users\\saumy\\AppData\\Local\\Temp\\WinSAT'
+2026-10-04 04:29:07 [DEBUG   ] commitmaster.commit_engine — list_repos found 3 repos under ['C:\\Users\\saumy\\AppData\\Local\\Temp']
+2026-10-04 04:29:07 [DEBUG   ] commitmaster.commit_engine — git status --porcelain -uall
+2026-10-04 04:29:07 [DEBUG   ] commitmaster.commit_engine — git status --porcelain -uall
+2026-10-04 04:29:07 [DEBUG   ] commitmaster.commit_engine — git status --porcelain -uall
+2026-10-04 04:29:07 [DEBUG   ] commitmaster.commit_engine — git reset
+2026-10-04 04:29:07 [DEBUG   ] commitmaster.commit_engine — git add -- src/app.py
+2026-10-04 04:29:07 [DEBUG   ] commitmaster.commit_engine — git commit -m refactor: update app output
+2026-10-04 04:29:08 [DEBUG   ] commitmaster.commit_engine — git log -1 --oneline
+2026-10-04 04:29:08 [INFO    ] commitmaster.commit_engine — Committed in commitmaster_test_repo: a072e2d refactor: update app output
+2026-10-04 04:29:08 [DEBUG   ] commitmaster.commit_engine — git log --oneline
+2026-10-04 04:29:08 [DEBUG   ] commitmaster.commit_engine — git status --porcelain -uall
+2026-10-04 04:29:08 [DEBUG   ] commitmaster.commit_engine — git diff --cached --unified=2
+2026-10-04 04:29:08 [DEBUG   ] commitmaster.commit_engine — git diff --unified=2
+2026-10-04 04:29:08 [DEBUG   ] commitmaster.commit_engine — git diff HEAD --stat
+2026-10-04 04:29:24 [DEBUG   ] commitmaster.commit_engine — Cannot scan C:\Users\saumy\AppData\Local\Temp\WinSAT: [WinError 5] Access is denied: 'C:\\Users\\saumy\\AppData\\Local\\Temp\\WinSAT'
+2026-10-04 04:29:24 [DEBUG   ] commitmaster.commit_engine — list_repos found 3 repos under ['C:\\Users\\saumy\\AppData\\Local\\Temp']
+2026-10-04 04:29:24 [DEBUG   ] commitmaster.commit_engine — git status --porcelain -uall
+2026-10-04 04:29:24 [DEBUG   ] commitmaster.commit_engine — git status --porcelain -uall
+2026-10-04 04:29:24 [DEBUG   ] commitmaster.commit_engine — git status --porcelain -uall
+2026-10-04 04:29:24 [DEBUG   ] commitmaster.commit_engine — git reset
+2026-10-04 04:29:24 [DEBUG   ] commitmaster.commit_engine — git add -- src/app.py
+2026-10-04 04:29:24 [DEBUG   ] commitmaster.commit_engine — git commit -m refactor: update app output
+2026-10-04 04:29:25 [DEBUG   ] commitmaster.commit_engine — git log -1 --oneline
+2026-10-04 04:29:25 [INFO    ] commitmaster.commit_engine — Committed in commitmaster_test_repo: 81dc1cb refactor: update app output
+2026-10-04 04:29:25 [DEBUG   ] commitmaster.commit_engine — git log --oneline
+2026-10-04 04:29:25 [DEBUG   ] commitmaster.commit_engine — git status --porcelain -uall
+2026-10-04 04:29:25 [DEBUG   ] commitmaster.commit_engine — git diff --cached --unified=2
+2026-10-04 04:29:25 [DEBUG   ] commitmaster.commit_engine — git diff --unified=2
+2026-10-04 04:29:25 [DEBUG   ] commitmaster.commit_engine — git diff HEAD --stat
+2026-10-04 04:29:25 [DEBUG   ] commitmaster.commit_engine — Found GitHub Desktop at: C:\Users\saumy\AppData\Local\GitHubDesktop\GitHubDesktop.exe
+2026-10-04 04:34:42 [DEBUG   ] commitmaster.commit_engine — git init
+2026-10-04 04:34:42 [DEBUG   ] commitmaster.commit_engine — git config user.name Test User
+2026-10-04 04:34:42 [DEBUG   ] commitmaster.commit_engine — git config user.email test@commitmaster.local
+2026-10-04 04:34:42 [DEBUG   ] commitmaster.commit_engine — git reset
+2026-10-04 04:34:42 [DEBUG   ] commitmaster.commit_engine — git add -A -- file1.txt file2.txt
+2026-10-04 04:34:42 [DEBUG   ] commitmaster.commit_engine — git commit -m feat: add both files
+2026-10-04 04:34:42 [DEBUG   ] commitmaster.commit_engine — git log -1 --oneline
+2026-10-04 04:34:42 [INFO    ] commitmaster.commit_engine — Committed in cm_test_k3ff8obe: d6893e8 feat: add both files
+2026-10-04 04:34:42 [DEBUG   ] commitmaster.commit_engine — git log --oneline
+2026-10-04 04:34:42 [DEBUG   ] commitmaster.commit_engine — git init
+2026-10-04 04:34:42 [DEBUG   ] commitmaster.commit_engine — git config user.name Test User
+2026-10-04 04:34:42 [DEBUG   ] commitmaster.commit_engine — git config user.email test@commitmaster.local
+2026-10-04 04:34:42 [DEBUG   ] commitmaster.commit_engine — git init
+2026-10-04 04:34:42 [DEBUG   ] commitmaster.commit_engine — git config user.name Test User
+2026-10-04 04:34:42 [DEBUG   ] commitmaster.commit_engine — git config user.email test@commitmaster.local
+2026-10-04 04:34:42 [DEBUG   ] commitmaster.commit_engine — git init
+2026-10-04 04:34:43 [DEBUG   ] commitmaster.commit_engine — git config user.name Test User
+2026-10-04 04:34:43 [DEBUG   ] commitmaster.commit_engine — git config user.email test@commitmaster.local
+2026-10-04 04:34:43 [DEBUG   ] commitmaster.commit_engine — git init
+2026-10-04 04:34:43 [DEBUG   ] commitmaster.commit_engine — git config user.name Test User
+2026-10-04 04:34:43 [DEBUG   ] commitmaster.commit_engine — git config user.email test@commitmaster.local
+2026-10-04 04:34:43 [DEBUG   ] commitmaster.commit_engine — git init
+2026-10-04 04:34:43 [DEBUG   ] commitmaster.commit_engine — git config user.name Test User
+2026-10-04 04:34:43 [DEBUG   ] commitmaster.commit_engine — git config user.email test@commitmaster.local
+2026-10-04 04:34:43 [DEBUG   ] commitmaster.commit_engine — git init
+2026-10-04 04:34:43 [DEBUG   ] commitmaster.commit_engine — git config user.name Test User
+2026-10-04 04:34:43 [DEBUG   ] commitmaster.commit_engine — git config user.email test@commitmaster.local
+2026-10-04 04:34:43 [DEBUG   ] commitmaster.commit_engine — git reset
+2026-10-04 04:34:43 [DEBUG   ] commitmaster.commit_engine — git add -A -- alpha.py
+2026-10-04 04:34:43 [DEBUG   ] commitmaster.commit_engine — git commit -m feat(core): add alpha logic
+2026-10-04 04:34:43 [DEBUG   ] commitmaster.commit_engine — git log -1 --oneline
+2026-10-04 04:34:43 [INFO    ] commitmaster.commit_engine — Committed individually in cm_test_68zyl0a5 [alpha.py]: 031c5e6 feat(core): add alpha logic
+2026-10-04 04:34:43 [DEBUG   ] commitmaster.commit_engine — git add -A -- beta.md
+2026-10-04 04:34:43 [DEBUG   ] commitmaster.commit_engine — git commit -m docs: update beta documentation
+2026-10-04 04:34:43 [DEBUG   ] commitmaster.commit_engine — git log -1 --oneline
+2026-10-04 04:34:43 [INFO    ] commitmaster.commit_engine — Committed individually in cm_test_68zyl0a5 [beta.md]: 98e8277 docs: update beta documentation
+2026-10-04 04:34:43 [DEBUG   ] commitmaster.commit_engine — git add -A -- gamma.json
+2026-10-04 04:34:43 [DEBUG   ] commitmaster.commit_engine — git commit -m chore(config): initialize gamma schema
+2026-10-04 04:34:43 [DEBUG   ] commitmaster.commit_engine — git log -1 --oneline
+2026-10-04 04:34:43 [INFO    ] commitmaster.commit_engine — Committed individually in cm_test_68zyl0a5 [gamma.json]: 0206657 chore(config): initialize gamma schema
+2026-10-04 04:34:43 [DEBUG   ] commitmaster.commit_engine — git log --oneline
+2026-10-04 04:34:47 [DEBUG   ] commitmaster.commit_engine — Cannot scan C:\Users\saumy\AppData\Local\Temp\WinSAT: [WinError 5] Access is denied: 'C:\\Users\\saumy\\AppData\\Local\\Temp\\WinSAT'
+2026-10-04 04:34:47 [DEBUG   ] commitmaster.commit_engine — list_repos found 8 repos under ['C:\\Users\\saumy\\AppData\\Local\\Temp']
+2026-10-04 04:34:47 [DEBUG   ] commitmaster.commit_engine — git update-index -q --refresh
+2026-10-04 04:34:47 [DEBUG   ] commitmaster.commit_engine — git -c core.quotepath=false status --porcelain=v2 --untracked-files=all --ignore-submodules=none
+2026-10-04 04:34:47 [DEBUG   ] commitmaster.commit_engine — uncommitted_changes (v2) found 5 files in C:\Users\saumy\AppData\Local\Temp\commitmaster_test_repo
+2026-10-04 04:34:47 [DEBUG   ] commitmaster.commit_engine — git update-index -q --refresh
+2026-10-04 04:34:47 [DEBUG   ] commitmaster.commit_engine — git -c core.quotepath=false status --porcelain=v2 --untracked-files=all --ignore-submodules=none
+2026-10-04 04:34:47 [DEBUG   ] commitmaster.commit_engine — uncommitted_changes (v2) found 5 files in C:\Users\saumy\AppData\Local\Temp\commitmaster_test_repo
+2026-10-04 04:34:47 [DEBUG   ] commitmaster.commit_engine — git update-index -q --refresh
+2026-10-04 04:34:47 [DEBUG   ] commitmaster.commit_engine — git -c core.quotepath=false status --porcelain=v2 --untracked-files=all --ignore-submodules=none
+2026-10-04 04:34:47 [DEBUG   ] commitmaster.commit_engine — uncommitted_changes (v2) found 5 files in C:\Users\saumy\AppData\Local\Temp\commitmaster_test_repo
+2026-10-04 04:34:47 [DEBUG   ] commitmaster.commit_engine — git reset
+2026-10-04 04:34:47 [DEBUG   ] commitmaster.commit_engine — git add -A -- src/app.py
+2026-10-04 04:34:47 [DEBUG   ] commitmaster.commit_engine — git commit -m refactor: update app output
+2026-10-04 04:34:47 [DEBUG   ] commitmaster.commit_engine — git log -1 --oneline
+2026-10-04 04:34:47 [INFO    ] commitmaster.commit_engine — Committed in commitmaster_test_repo: b16e131 refactor: update app output
+2026-10-04 04:34:47 [DEBUG   ] commitmaster.commit_engine — git log --oneline
+2026-10-04 04:34:47 [DEBUG   ] commitmaster.commit_engine — git update-index -q --refresh
+2026-10-04 04:34:47 [DEBUG   ] commitmaster.commit_engine — git -c core.quotepath=false status --porcelain=v2 --untracked-files=all --ignore-submodules=none
+2026-10-04 04:34:47 [DEBUG   ] commitmaster.commit_engine — uncommitted_changes (v2) found 4 files in C:\Users\saumy\AppData\Local\Temp\commitmaster_test_repo
+2026-10-04 04:34:47 [DEBUG   ] commitmaster.commit_engine — git diff --cached --unified=2
+2026-10-04 04:34:47 [DEBUG   ] commitmaster.commit_engine — git diff --unified=2
+2026-10-04 04:34:47 [DEBUG   ] commitmaster.commit_engine — git diff HEAD --stat
+2026-10-04 04:34:47 [DEBUG   ] commitmaster.commit_engine — Found GitHub Desktop at: C:\Users\saumy\AppData\Local\GitHubDesktop\GitHubDesktop.exe
+2026-10-04 04:34:54 [DEBUG   ] commitmaster.ai_messages — Auto-detected model: google/gemma-4-12b-qat
+2026-10-04 04:34:54 [DEBUG   ] commitmaster.commit_engine — git diff --cached -- commitmaster/database.py
+2026-10-04 04:34:54 [DEBUG   ] commitmaster.commit_engine — git diff -- commitmaster/database.py
+2026-10-04 04:34:54 [DEBUG   ] commitmaster.commit_engine — git diff HEAD -- commitmaster/database.py
+2026-10-04 04:34:54 [DEBUG   ] commitmaster.commit_engine — git diff --cached -- commitmaster/github_service.py
+2026-10-04 04:34:54 [DEBUG   ] commitmaster.commit_engine — git diff -- commitmaster/github_service.py
+2026-10-04 04:34:54 [DEBUG   ] commitmaster.commit_engine — git diff HEAD -- commitmaster/github_service.py
+2026-10-04 04:34:54 [DEBUG   ] commitmaster.commit_engine — git diff --cached -- README.md
+2026-10-04 04:34:54 [DEBUG   ] commitmaster.commit_engine — git diff -- README.md
+2026-10-04 04:34:54 [DEBUG   ] commitmaster.commit_engine — git rev-parse --abbrev-ref HEAD
+2026-10-04 04:34:54 [INFO    ] commitmaster.ai_messages — Calling local AI 'google/gemma-4-12b-qat' for per-file comments...
+2026-10-04 04:34:56 [WARNING ] commitmaster.ai_messages — Local AI per-file comment generation failed: HTTPConnectionPool(host='localhost', port=1234): Read timed out. (read timeout=1) — using heuristics.
+2026-10-04 04:35:08 [DEBUG   ] commitmaster.commit_engine — git update-index -q --refresh
+2026-10-04 04:35:08 [DEBUG   ] commitmaster.commit_engine — git -c core.quotepath=false status --porcelain=v2 --untracked-files=all --ignore-submodules=none
+2026-10-04 04:35:08 [DEBUG   ] commitmaster.commit_engine — uncommitted_changes (v2) found 12 files in .
+2026-10-04 04:40:36 [DEBUG   ] commitmaster.ai_messages — Auto-detected model: google/gemma-4-12b-qat
+2026-10-04 04:40:36 [DEBUG   ] commitmaster.commit_engine — git rev-parse --abbrev-ref HEAD
+2026-10-04 04:40:36 [DEBUG   ] commitmaster.commit_engine — git update-index -q --refresh
+2026-10-04 04:40:36 [DEBUG   ] commitmaster.commit_engine — git -c core.quotepath=false status --porcelain=v2 --untracked-files=all --ignore-submodules=none
+2026-10-04 04:40:36 [DEBUG   ] commitmaster.commit_engine — uncommitted_changes (v2) found 14 files in C:\Data\Saumya\Projects\CommitMaster
+2026-10-04 04:41:12 [DEBUG   ] commitmaster.commit_engine — git rev-parse --abbrev-ref HEAD
+2026-10-04 04:41:14 [DEBUG   ] commitmaster.ai_messages — Auto-detected model: google/gemma-4-12b-qat
+2026-10-04 04:41:14 [DEBUG   ] commitmaster.commit_engine — git update-index -q --refresh
+2026-10-04 04:41:14 [DEBUG   ] commitmaster.commit_engine — git -c core.quotepath=false status --porcelain=v2 --untracked-files=all --ignore-submodules=none
+2026-10-04 04:41:15 [DEBUG   ] commitmaster.commit_engine — uncommitted_changes (v2) found 14 files in C:\Data\Saumya\Projects\CommitMaster
+2026-10-04 04:41:15 [DEBUG   ] commitmaster.commit_engine — git diff --cached -- README.md
+2026-10-04 04:41:15 [DEBUG   ] commitmaster.commit_engine — git diff -- README.md
+2026-10-04 04:41:15 [DEBUG   ] commitmaster.commit_engine — git rev-parse --abbrev-ref HEAD
+2026-10-04 04:41:15 [DEBUG   ] commitmaster.commit_engine — git log origin/main..main --oneline
+2026-10-04 04:41:26 [DEBUG   ] commitmaster.ai_messages — Auto-detected model: google/gemma-4-12b-qat
+2026-10-04 04:41:26 [DEBUG   ] commitmaster.commit_engine — git diff --cached -- README.md
+2026-10-04 04:41:26 [DEBUG   ] commitmaster.commit_engine — git diff -- README.md
+2026-10-04 04:41:26 [DEBUG   ] commitmaster.commit_engine — git rev-parse --abbrev-ref HEAD
+2026-10-04 04:41:26 [INFO    ] commitmaster.ai_messages — Calling local AI 'google/gemma-4-12b-qat' for per-file comments...
+2026-10-04 04:41:59 [DEBUG   ] commitmaster.ai_messages — Raw per-file AI response: {
+  "headline": "docs: update v2.0 highlights in README",
+  "file_comments": {
+    "README.md": "Updated the v2.0 highlights section to include the new Flexible Commit Strategy and the Automated Pre-Commit Health & Vulnerability Inspector features."
+  },
+  "description": "- README.md: Added document
+2026-10-04 04:42:43 [DEBUG   ] commitmaster.ai_messages — Auto-detected model: google/gemma-4-12b-qat
+2026-10-04 04:42:43 [DEBUG   ] commitmaster.commit_engine — git diff --cached -- smoke_test.py
+2026-10-04 04:42:43 [DEBUG   ] commitmaster.commit_engine — git diff -- smoke_test.py
+2026-10-04 04:42:44 [DEBUG   ] commitmaster.commit_engine — git rev-parse --abbrev-ref HEAD
+2026-10-04 04:42:44 [INFO    ] commitmaster.ai_messages — Calling local AI 'google/gemma-4-12b-qat' for per-file comments...
+2026-10-04 04:43:17 [DEBUG   ] commitmaster.ai_messages — Raw per-file AI response: {
+  "headline": "test(smoke_test): update config model assertion",
+  "file_comments": {
+    "smoke_test.py": "Updated the assertion in test_config_defaults to check for the existence of the 'model' key rather than its specific default value."
+  },
+  "description": "- smoke_test.py: Updated the asser
+2026-10-04 04:43:34 [DEBUG   ] commitmaster.commit_engine — git reset
+2026-10-04 04:43:34 [DEBUG   ] commitmaster.commit_engine — git add -A -- smoke_test.py
+2026-10-04 04:43:34 [DEBUG   ] commitmaster.commit_engine — git commit -m test(smoke_test): update config model assertion
+
+- smoke_test.py: Updated the assertion in test_config_defaults to check for the existence of the 'model' key rather than its specific default value.
+2026-10-04 04:43:34 [DEBUG   ] commitmaster.commit_engine — git log -1 --oneline
+2026-10-04 04:43:34 [INFO    ] commitmaster.commit_engine — Committed in CommitMaster: 25caa39 test(smoke_test): update config model assertion
+2026-10-04 04:43:34 [DEBUG   ] commitmaster.commit_engine — git rev-parse --abbrev-ref HEAD
+2026-10-04 04:43:34 [DEBUG   ] commitmaster.commit_engine — git rev-parse --abbrev-ref HEAD
+2026-10-04 04:43:34 [DEBUG   ] commitmaster.commit_engine — git log origin/main..main --oneline
+2026-10-04 04:43:39 [DEBUG   ] commitmaster.commit_engine — git rev-parse --abbrev-ref HEAD
+2026-10-04 04:43:39 [DEBUG   ] commitmaster.commit_engine — git remote get-url origin
+2026-10-04 04:43:39 [DEBUG   ] commitmaster.commit_engine — git config user.name Saumya Patel
+2026-10-04 04:43:39 [DEBUG   ] commitmaster.commit_engine — git config user.email saumya.a.patel@gmail.com
+2026-10-04 04:43:39 [INFO    ] commitmaster.commit_engine — Pushing CommitMaster (main) to Saumya-Patel-10/CommitMaster via @Saumya-Patel-10
+2026-10-04 04:43:41 [INFO    ] commitmaster.commit_engine — Push succeeded for CommitMaster: branch 'main' set up to track 'https://Saumya-Patel-10:[TOKEN_REDACTED]@github.com/Saumya-Patel-10/CommitMaster.git/main'.
+2026-10-04 04:43:43 [DEBUG   ] commitmaster.commit_engine — git rev-parse --abbrev-ref HEAD
+2026-10-04 04:43:45 [DEBUG   ] commitmaster.ai_messages — Auto-detected model: google/gemma-4-12b-qat
+2026-10-04 04:43:45 [DEBUG   ] commitmaster.commit_engine — git update-index -q --refresh
+2026-10-04 04:43:45 [DEBUG   ] commitmaster.commit_engine — git -c core.quotepath=false status --porcelain=v2 --untracked-files=all --ignore-submodules=none
+2026-10-04 04:43:45 [DEBUG   ] commitmaster.commit_engine — uncommitted_changes (v2) found 13 files in C:\Data\Saumya\Projects\CommitMaster
+2026-10-04 04:43:45 [DEBUG   ] commitmaster.commit_engine — git diff --cached -- README.md
+2026-10-04 04:43:45 [DEBUG   ] commitmaster.commit_engine — git diff -- README.md
+2026-10-04 04:43:45 [DEBUG   ] commitmaster.commit_engine — git rev-parse --abbrev-ref HEAD
+2026-10-04 04:43:45 [DEBUG   ] commitmaster.commit_engine — git log origin/main..main --oneline
+2026-10-04 17:27:58 [DEBUG   ] commitmaster.ai_messages — list_models failed: HTTPConnectionPool(host='localhost', port=1234): Max retries exceeded with url: /v1/models (Caused by NewConnectionError("HTTPConnection(host='localhost', port=1234): Failed to establish a new connection: [WinError 10061] No connection could be made because the target machine actively refused it"))
+2026-10-04 17:27:58 [DEBUG   ] commitmaster.commit_engine — git rev-parse --abbrev-ref HEAD
+2026-10-04 17:27:58 [DEBUG   ] commitmaster.commit_engine — git update-index -q --refresh
+2026-10-04 17:27:58 [DEBUG   ] commitmaster.commit_engine — git -c core.quotepath=false status --porcelain=v2 --untracked-files=all --ignore-submodules=none
+2026-10-04 17:27:58 [DEBUG   ] commitmaster.commit_engine — uncommitted_changes (v2) found 13 files in C:\Data\Saumya\Projects\CommitMaster
+2026-10-04 17:33:19 [DEBUG   ] commitmaster.ai_messages — Auto-detected model: google/gemma-4-12b-qat
+2026-10-04 17:34:16 [DEBUG   ] commitmaster.ai_messages — Auto-detected model: google/gemma-4-12b-qat
+2026-10-04 17:34:16 [DEBUG   ] commitmaster.commit_engine — git rev-parse --abbrev-ref HEAD
+2026-10-04 17:34:16 [DEBUG   ] commitmaster.commit_engine — git update-index -q --refresh
+2026-10-04 17:34:16 [DEBUG   ] commitmaster.commit_engine — git -c core.quotepath=false status --porcelain=v2 --untracked-files=all --ignore-submodules=none
+2026-10-04 17:34:16 [DEBUG   ] commitmaster.commit_engine — uncommitted_changes (v2) found 13 files in C:\Data\Saumya\Projects\CommitMaster
+2026-10-04 17:34:21 [DEBUG   ] commitmaster.commit_engine — git rev-parse --abbrev-ref HEAD
+2026-10-04 17:34:23 [DEBUG   ] commitmaster.ai_messages — Auto-detected model: google/gemma-4-12b-qat
+2026-10-04 17:34:23 [DEBUG   ] commitmaster.commit_engine — git update-index -q --refresh
+2026-10-04 17:34:23 [DEBUG   ] commitmaster.commit_engine — git -c core.quotepath=false status --porcelain=v2 --untracked-files=all --ignore-submodules=none
+2026-10-04 17:34:23 [DEBUG   ] commitmaster.commit_engine — uncommitted_changes (v2) found 13 files in C:\Data\Saumya\Projects\CommitMaster
+2026-10-04 17:34:23 [DEBUG   ] commitmaster.commit_engine — git diff --cached -- README.md
+2026-10-04 17:34:23 [DEBUG   ] commitmaster.commit_engine — git diff -- README.md
+2026-10-04 17:34:23 [DEBUG   ] commitmaster.commit_engine — git rev-parse --abbrev-ref HEAD
+2026-10-04 17:34:23 [DEBUG   ] commitmaster.commit_engine — git log origin/main..main --oneline
+2026-10-04 17:34:23 [DEBUG   ] commitmaster.commit_engine — git rev-parse --abbrev-ref HEAD
+2026-10-04 17:34:25 [DEBUG   ] commitmaster.ai_messages — Auto-detected model: google/gemma-4-12b-qat
+2026-10-04 17:34:25 [DEBUG   ] commitmaster.commit_engine — git update-index -q --refresh
+2026-10-04 17:34:25 [DEBUG   ] commitmaster.commit_engine — git -c core.quotepath=false status --porcelain=v2 --untracked-files=all --ignore-submodules=none
+2026-10-04 17:34:25 [DEBUG   ] commitmaster.commit_engine — uncommitted_changes (v2) found 13 files in C:\Data\Saumya\Projects\CommitMaster
+2026-10-04 17:34:25 [DEBUG   ] commitmaster.commit_engine — git diff --cached -- README.md
+2026-10-04 17:34:25 [DEBUG   ] commitmaster.commit_engine — git diff -- README.md
+2026-10-04 17:34:25 [DEBUG   ] commitmaster.commit_engine — git rev-parse --abbrev-ref HEAD
+2026-10-04 17:34:25 [DEBUG   ] commitmaster.commit_engine — git log origin/main..main --oneline
+2026-10-04 17:36:05 [DEBUG   ] commitmaster.ai_messages — Auto-detected model: google/gemma-4-12b-qat
+2026-10-04 17:36:05 [DEBUG   ] commitmaster.commit_engine — git rev-parse --abbrev-ref HEAD
+2026-10-04 17:36:05 [DEBUG   ] commitmaster.commit_engine — git update-index -q --refresh
+2026-10-04 17:36:05 [DEBUG   ] commitmaster.commit_engine — git -c core.quotepath=false status --porcelain=v2 --untracked-files=all --ignore-submodules=none
+2026-10-04 17:36:05 [DEBUG   ] commitmaster.commit_engine — uncommitted_changes (v2) found 13 files in C:\Data\Saumya\Projects\CommitMaster
+2026-10-04 17:36:06 [DEBUG   ] commitmaster.commit_engine — git rev-parse --abbrev-ref HEAD
+2026-10-04 17:36:08 [DEBUG   ] commitmaster.ai_messages — Auto-detected model: google/gemma-4-12b-qat
+2026-10-04 17:36:08 [DEBUG   ] commitmaster.commit_engine — git update-index -q --refresh
+2026-10-04 17:36:08 [DEBUG   ] commitmaster.commit_engine — git -c core.quotepath=false status --porcelain=v2 --untracked-files=all --ignore-submodules=none
+2026-10-04 17:36:08 [DEBUG   ] commitmaster.commit_engine — uncommitted_changes (v2) found 13 files in C:\Data\Saumya\Projects\CommitMaster
+2026-10-04 17:36:09 [DEBUG   ] commitmaster.commit_engine — git diff --cached -- README.md
+2026-10-04 17:36:09 [DEBUG   ] commitmaster.commit_engine — git diff -- README.md
+2026-10-04 17:36:09 [DEBUG   ] commitmaster.commit_engine — git rev-parse --abbrev-ref HEAD
+2026-10-04 17:36:09 [DEBUG   ] commitmaster.commit_engine — git log origin/main..main --oneline
+2026-10-04 17:36:15 [DEBUG   ] commitmaster.commit_engine — git rev-parse --abbrev-ref HEAD
+2026-10-04 17:36:17 [DEBUG   ] commitmaster.ai_messages — Auto-detected model: google/gemma-4-12b-qat
+2026-10-04 17:36:17 [DEBUG   ] commitmaster.commit_engine — git update-index -q --refresh
+2026-10-04 17:36:17 [DEBUG   ] commitmaster.commit_engine — git -c core.quotepath=false status --porcelain=v2 --untracked-files=all --ignore-submodules=none
+2026-10-04 17:36:17 [DEBUG   ] commitmaster.commit_engine — uncommitted_changes (v2) found 13 files in C:\Data\Saumya\Projects\CommitMaster
+2026-10-04 17:36:17 [DEBUG   ] commitmaster.commit_engine — git diff --cached -- README.md
+2026-10-04 17:36:17 [DEBUG   ] commitmaster.commit_engine — git diff -- README.md
+2026-10-04 17:36:17 [DEBUG   ] commitmaster.commit_engine — git rev-parse --abbrev-ref HEAD
+2026-10-04 17:36:17 [DEBUG   ] commitmaster.commit_engine — git log origin/main..main --oneline
+2026-10-04 17:36:18 [DEBUG   ] commitmaster.commit_engine — git rev-parse --abbrev-ref HEAD
+2026-10-04 17:36:21 [DEBUG   ] commitmaster.ai_messages — Auto-detected model: google/gemma-4-12b-qat
+2026-10-04 17:36:21 [DEBUG   ] commitmaster.commit_engine — git update-index -q --refresh
+2026-10-04 17:36:21 [DEBUG   ] commitmaster.commit_engine — git -c core.quotepath=false status --porcelain=v2 --untracked-files=all --ignore-submodules=none
+2026-10-04 17:36:21 [DEBUG   ] commitmaster.commit_engine — uncommitted_changes (v2) found 13 files in C:\Data\Saumya\Projects\CommitMaster
+2026-10-04 17:36:21 [DEBUG   ] commitmaster.commit_engine — git diff --cached -- README.md
+2026-10-04 17:36:21 [DEBUG   ] commitmaster.commit_engine — git diff -- README.md
+2026-10-04 17:36:21 [DEBUG   ] commitmaster.commit_engine — git rev-parse --abbrev-ref HEAD
+2026-10-04 17:36:21 [DEBUG   ] commitmaster.commit_engine — git log origin/main..main --oneline
+2026-10-04 17:36:33 [DEBUG   ] commitmaster.ai_messages — Auto-detected model: google/gemma-4-12b-qat
+2026-10-04 17:36:33 [DEBUG   ] commitmaster.commit_engine — git diff --cached -- build_exe.py
+2026-10-04 17:36:33 [DEBUG   ] commitmaster.commit_engine — git diff -- build_exe.py
+2026-10-04 17:36:33 [DEBUG   ] commitmaster.commit_engine — git rev-parse --abbrev-ref HEAD
+2026-10-04 17:36:33 [INFO    ] commitmaster.ai_messages — Calling local AI 'google/gemma-4-12b-qat' for per-file comments...
+2026-10-04 17:37:11 [DEBUG   ] commitmaster.ai_messages — Raw per-file AI response: {
+  "headline": "build: add automatic ZIP packaging for release",
+  "file_comments": {
+    "build_exe.py": "Updated the build success message and added functionality to package the executable and README into a ZIP archive."
+  },
+  "description": "- build_exe.py: Updated success messaging and impleme
+2026-10-04 17:40:28 [DEBUG   ] commitmaster.commit_engine — git reset
+2026-10-04 17:40:28 [DEBUG   ] commitmaster.commit_engine — git add -A -- build_exe.py
+2026-10-04 17:40:28 [DEBUG   ] commitmaster.commit_engine — git commit -m Updated the build success message and added functionality to package the executable and README into a ZIP archive.
+2026-10-04 17:40:28 [DEBUG   ] commitmaster.commit_engine — git log -1 --oneline
+2026-10-04 17:40:28 [INFO    ] commitmaster.commit_engine — Committed individually in CommitMaster [build_exe.py]: 8008eec Updated the build success message and added functionality to package the executable and README into a ZIP archive.
+2026-10-04 17:40:28 [DEBUG   ] commitmaster.commit_engine — git rev-parse --abbrev-ref HEAD
+2026-10-04 17:40:28 [DEBUG   ] commitmaster.commit_engine — git rev-parse --abbrev-ref HEAD
+2026-10-04 17:40:28 [DEBUG   ] commitmaster.commit_engine — git log origin/main..main --oneline
+2026-10-04 17:40:58 [DEBUG   ] commitmaster.commit_engine — git reset
+2026-10-04 17:40:58 [DEBUG   ] commitmaster.commit_engine — git add -A -- build_exe.py
+2026-10-04 17:40:58 [DEBUG   ] commitmaster.commit_engine — git commit -m Updated the build success message and added functionality to package the executable and README into a ZIP archive.
+2026-10-04 17:40:58 [WARNING ] commitmaster.commit_engine — git error in C:/Data/Saumya/Projects/CommitMaster: git commit -m Updated the build success message and added functionality to package the executable and README into a ZIP archive. failed
+2026-10-04 17:41:00 [DEBUG   ] commitmaster.commit_engine — git rev-parse --abbrev-ref HEAD
+2026-10-04 17:41:00 [DEBUG   ] commitmaster.commit_engine — git rev-parse --abbrev-ref HEAD
+2026-10-04 17:41:00 [DEBUG   ] commitmaster.commit_engine — git log origin/main..main --oneline
+2026-10-04 17:46:03 [DEBUG   ] commitmaster.ai_messages — Auto-detected model: google/gemma-4-12b-qat
+2026-10-04 19:01:30 [DEBUG   ] commitmaster.ai_messages — Auto-detected model: google/gemma-4-12b-qat
+2026-10-04 19:01:30 [DEBUG   ] commitmaster.commit_engine — git rev-parse --abbrev-ref HEAD
+2026-10-04 19:01:30 [DEBUG   ] commitmaster.commit_engine — git update-index -q --refresh
+2026-10-04 19:01:30 [DEBUG   ] commitmaster.commit_engine — git -c core.quotepath=false status --porcelain=v2 --untracked-files=all --ignore-submodules=none
+2026-10-04 19:01:30 [DEBUG   ] commitmaster.commit_engine — uncommitted_changes (v2) found 13 files in C:\Data\Saumya\Projects\CommitMaster
+2026-10-04 19:01:35 [DEBUG   ] commitmaster.commit_engine — git rev-parse --abbrev-ref HEAD
+2026-10-04 19:01:38 [DEBUG   ] commitmaster.ai_messages — Auto-detected model: google/gemma-4-12b-qat
+2026-10-04 19:01:38 [DEBUG   ] commitmaster.commit_engine — git update-index -q --refresh
+2026-10-04 19:01:38 [DEBUG   ] commitmaster.commit_engine — git -c core.quotepath=false status --porcelain=v2 --untracked-files=all --ignore-submodules=none
+2026-10-04 19:01:38 [DEBUG   ] commitmaster.commit_engine — uncommitted_changes (v2) found 13 files in C:\Data\Saumya\Projects\CommitMaster
+2026-10-04 19:01:38 [DEBUG   ] commitmaster.commit_engine — git diff --cached -- README.md
+2026-10-04 19:01:38 [DEBUG   ] commitmaster.commit_engine — git diff -- README.md
+2026-10-04 19:01:38 [DEBUG   ] commitmaster.commit_engine — git rev-parse --abbrev-ref HEAD
+2026-10-04 19:01:38 [DEBUG   ] commitmaster.commit_engine — git log origin/main..main --oneline
+2026-10-04 19:01:45 [DEBUG   ] commitmaster.commit_engine — git rev-parse --abbrev-ref HEAD
+2026-10-04 19:01:47 [DEBUG   ] commitmaster.ai_messages — Auto-detected model: google/gemma-4-12b-qat
+2026-10-04 19:01:47 [DEBUG   ] commitmaster.commit_engine — git update-index -q --refresh
+2026-10-04 19:01:47 [DEBUG   ] commitmaster.commit_engine — git -c core.quotepath=false status --porcelain=v2 --untracked-files=all --ignore-submodules=none
+2026-10-04 19:01:47 [DEBUG   ] commitmaster.commit_engine — uncommitted_changes (v2) found 13 files in C:\Data\Saumya\Projects\CommitMaster
+2026-10-04 19:01:47 [DEBUG   ] commitmaster.commit_engine — git diff --cached -- README.md
+2026-10-04 19:01:47 [DEBUG   ] commitmaster.commit_engine — git diff -- README.md
+2026-10-04 19:01:47 [DEBUG   ] commitmaster.commit_engine — git rev-parse --abbrev-ref HEAD
+2026-10-04 19:01:47 [DEBUG   ] commitmaster.commit_engine — git log origin/main..main --oneline
+2026-10-04 19:01:56 [DEBUG   ] commitmaster.ai_messages — Auto-detected model: google/gemma-4-12b-qat
+2026-10-04 19:01:56 [DEBUG   ] commitmaster.commit_engine — git diff --cached -- build_exe.py
+2026-10-04 19:01:56 [DEBUG   ] commitmaster.commit_engine — git diff -- build_exe.py
+2026-10-04 19:01:56 [DEBUG   ] commitmaster.commit_engine — git rev-parse --abbrev-ref HEAD
+2026-10-04 19:01:56 [INFO    ] commitmaster.ai_messages — Calling local AI 'google/gemma-4-12b-qat' for per-file comments...
+2026-10-04 19:02:29 [DEBUG   ] commitmaster.ai_messages — Raw per-file AI response: {
+  "headline": "build: add automated ZIP packaging for release",
+  "file_comments": {
+    "build_exe.py": "Updated the build success message and path handling, and added logic to package the executable and README into a ZIP archive."
+  },
+  "description": "- build_exe.py: Updated the build success 
+2026-10-04 19:03:42 [DEBUG   ] commitmaster.commit_engine — git diff --cached -- commitmaster.db-wal
+2026-10-04 19:03:42 [DEBUG   ] commitmaster.commit_engine — git diff -- commitmaster.db-wal
+2026-10-04 19:03:42 [DEBUG   ] commitmaster.commit_engine — git diff HEAD -- commitmaster.db-wal
+2026-10-04 22:28:50 [DEBUG   ] commitmaster.ai_messages — list_models failed: HTTPConnectionPool(host='localhost', port=1234): Max retries exceeded with url: /v1/models (Caused by NewConnectionError("HTTPConnection(host='localhost', port=1234): Failed to establish a new connection: [WinError 10061] No connection could be made because the target machine actively refused it"))
+2026-10-04 22:28:50 [DEBUG   ] commitmaster.commit_engine — git rev-parse --abbrev-ref HEAD
+2026-10-04 22:28:50 [DEBUG   ] commitmaster.commit_engine — git update-index -q --refresh
+2026-10-04 22:28:50 [DEBUG   ] commitmaster.commit_engine — git -c core.quotepath=false status --porcelain=v2 --untracked-files=all --ignore-submodules=none
+2026-10-04 22:28:50 [DEBUG   ] commitmaster.commit_engine — uncommitted_changes (v2) found 13 files in C:\Data\Saumya\Projects\CommitMaster
+2026-10-04 22:29:07 [DEBUG   ] commitmaster.ai_messages — list_models failed: HTTPConnectionPool(host='localhost', port=1234): Max retries exceeded with url: /v1/models (Caused by NewConnectionError("HTTPConnection(host='localhost', port=1234): Failed to establish a new connection: [WinError 10061] No connection could be made because the target machine actively refused it"))
+2026-10-04 22:29:07 [DEBUG   ] commitmaster.commit_engine — git rev-parse --abbrev-ref HEAD
+2026-10-04 22:29:07 [DEBUG   ] commitmaster.commit_engine — git update-index -q --refresh
+2026-10-04 22:29:07 [DEBUG   ] commitmaster.commit_engine — git -c core.quotepath=false status --porcelain=v2 --untracked-files=all --ignore-submodules=none
+2026-10-04 22:29:08 [DEBUG   ] commitmaster.commit_engine — uncommitted_changes (v2) found 13 files in C:\Data\Saumya\Projects\CommitMaster
+2026-10-04 22:29:12 [DEBUG   ] commitmaster.ai_messages — list_models failed: HTTPConnectionPool(host='localhost', port=1234): Max retries exceeded with url: /v1/models (Caused by NewConnectionError("HTTPConnection(host='localhost', port=1234): Failed to establish a new connection: [WinError 10061] No connection could be made because the target machine actively refused it"))
+2026-10-04 22:29:12 [DEBUG   ] commitmaster.commit_engine — git rev-parse --abbrev-ref HEAD
+2026-10-04 22:29:12 [DEBUG   ] commitmaster.commit_engine — git update-index -q --refresh
+2026-10-04 22:29:12 [DEBUG   ] commitmaster.commit_engine — git -c core.quotepath=false status --porcelain=v2 --untracked-files=all --ignore-submodules=none
+2026-10-04 22:29:12 [DEBUG   ] commitmaster.commit_engine — uncommitted_changes (v2) found 13 files in C:\Data\Saumya\Projects\CommitMaster
+2026-10-05 00:49:08 [DEBUG   ] commitmaster.ai_messages — list_models failed: HTTPConnectionPool(host='localhost', port=1234): Max retries exceeded with url: /v1/models (Caused by NewConnectionError("HTTPConnection(host='localhost', port=1234): Failed to establish a new connection: [WinError 10061] No connection could be made because the target machine actively refused it"))
+2026-10-05 00:49:08 [DEBUG   ] commitmaster.commit_engine — git rev-parse --abbrev-ref HEAD
+2026-10-05 00:49:08 [DEBUG   ] commitmaster.commit_engine — git update-index -q --refresh
+2026-10-05 00:49:08 [DEBUG   ] commitmaster.commit_engine — git -c core.quotepath=false status --porcelain=v2 --untracked-files=all --ignore-submodules=none
+2026-10-05 00:49:09 [DEBUG   ] commitmaster.commit_engine — uncommitted_changes (v2) found 13 files in C:\Data\Saumya\Projects\CommitMaster
+2026-10-05 00:49:11 [DEBUG   ] commitmaster.commit_engine — git rev-parse --abbrev-ref HEAD
+2026-10-05 00:49:16 [DEBUG   ] commitmaster.ai_messages — list_models failed: HTTPConnectionPool(host='localhost', port=1234): Max retries exceeded with url: /v1/models (Caused by NewConnectionError("HTTPConnection(host='localhost', port=1234): Failed to establish a new connection: [WinError 10061] No connection could be made because the target machine actively refused it"))
+2026-10-05 00:49:16 [DEBUG   ] commitmaster.commit_engine — git update-index -q --refresh
+2026-10-05 00:49:16 [DEBUG   ] commitmaster.commit_engine — git -c core.quotepath=false status --porcelain=v2 --untracked-files=all --ignore-submodules=none
+2026-10-05 00:49:16 [DEBUG   ] commitmaster.commit_engine — uncommitted_changes (v2) found 13 files in C:\Data\Saumya\Projects\CommitMaster
+2026-10-05 00:49:16 [DEBUG   ] commitmaster.commit_engine — git diff --cached -- README.md
+2026-10-05 00:49:16 [DEBUG   ] commitmaster.commit_engine — git diff -- README.md
+2026-10-05 00:49:16 [DEBUG   ] commitmaster.commit_engine — git rev-parse --abbrev-ref HEAD
+2026-10-05 00:49:16 [DEBUG   ] commitmaster.commit_engine — git log origin/main..main --oneline
+2026-10-05 00:49:28 [DEBUG   ] commitmaster.ai_messages — list_models failed: HTTPConnectionPool(host='localhost', port=1234): Max retries exceeded with url: /v1/models (Caused by NewConnectionError("HTTPConnection(host='localhost', port=1234): Failed to establish a new connection: [WinError 10061] No connection could be made because the target machine actively refused it"))
+2026-10-05 00:49:28 [INFO    ] commitmaster.ai_messages — Local AI offline or not detected — generating heuristic per-file comments.
+2026-10-05 00:50:33 [DEBUG   ] commitmaster.commit_engine — git reset
+2026-10-05 00:50:33 [DEBUG   ] commitmaster.commit_engine — git add -A -- admin_app.py
+2026-10-05 00:50:33 [DEBUG   ] commitmaster.commit_engine — git commit -m Update logic and implementation in admin_app.py
+2026-10-05 00:50:33 [DEBUG   ] commitmaster.commit_engine — git log -1 --oneline
+2026-10-05 00:50:33 [INFO    ] commitmaster.commit_engine — Committed individually in CommitMaster [admin_app.py]: 9cc680a Update logic and implementation in admin_app.py
+2026-10-05 00:50:33 [DEBUG   ] commitmaster.commit_engine — git rev-parse --abbrev-ref HEAD
+2026-10-05 00:50:33 [DEBUG   ] commitmaster.commit_engine — git rev-parse --abbrev-ref HEAD
+2026-10-05 00:50:33 [DEBUG   ] commitmaster.commit_engine — git log origin/main..main --oneline
+2026-10-05 00:50:38 [DEBUG   ] commitmaster.commit_engine — git rev-parse --abbrev-ref HEAD
+2026-10-05 00:50:38 [DEBUG   ] commitmaster.commit_engine — git remote get-url origin
+2026-10-05 00:50:38 [DEBUG   ] commitmaster.commit_engine — git config user.name Saumya Patel
+2026-10-05 00:50:38 [DEBUG   ] commitmaster.commit_engine — git config user.email saumya.a.patel@gmail.com
+2026-10-05 00:50:38 [INFO    ] commitmaster.commit_engine — Pushing CommitMaster (main) to Saumya-Patel-10/CommitMaster via @Saumya-Patel-10
+2026-10-05 00:50:40 [INFO    ] commitmaster.commit_engine — Push succeeded for CommitMaster: branch 'main' set up to track 'https://Saumya-Patel-10:[TOKEN_REDACTED]@github.com/Saumya-Patel-10/CommitMaster.git/main'.
+2026-10-05 00:50:41 [DEBUG   ] commitmaster.commit_engine — git rev-parse --abbrev-ref HEAD
+2026-10-05 00:50:43 [DEBUG   ] commitmaster.ai_messages — Auto-detected model: google/gemma-4-12b-qat
+2026-10-05 00:50:43 [DEBUG   ] commitmaster.commit_engine — git update-index -q --refresh
+2026-10-05 00:50:43 [DEBUG   ] commitmaster.commit_engine — git -c core.quotepath=false status --porcelain=v2 --untracked-files=all --ignore-submodules=none
+2026-10-05 00:50:43 [DEBUG   ] commitmaster.commit_engine — uncommitted_changes (v2) found 12 files in C:\Data\Saumya\Projects\CommitMaster
+2026-10-05 00:50:43 [DEBUG   ] commitmaster.commit_engine — git diff --cached -- README.md
+2026-10-05 00:50:43 [DEBUG   ] commitmaster.commit_engine — git diff -- README.md
+2026-10-05 00:50:43 [DEBUG   ] commitmaster.commit_engine — git rev-parse --abbrev-ref HEAD
+2026-10-05 00:50:43 [DEBUG   ] commitmaster.commit_engine — git log origin/main..main --oneline
+2026-10-05 00:51:13 [DEBUG   ] commitmaster.ai_messages — Auto-detected model: google/gemma-4-12b-qat
+2026-10-05 00:51:13 [DEBUG   ] commitmaster.commit_engine — git diff --cached -- admin_app.py
+2026-10-05 00:51:13 [DEBUG   ] commitmaster.commit_engine — git diff -- admin_app.py
+2026-10-05 00:51:13 [DEBUG   ] commitmaster.commit_engine — git diff HEAD -- admin_app.py
+2026-10-05 00:51:13 [DEBUG   ] commitmaster.commit_engine — git diff --cached -- build_exe.py
+2026-10-05 00:51:13 [DEBUG   ] commitmaster.commit_engine — git diff -- build_exe.py
+2026-10-05 00:51:13 [DEBUG   ] commitmaster.commit_engine — git rev-parse --abbrev-ref HEAD
+2026-10-05 00:51:13 [INFO    ] commitmaster.ai_messages — Calling local AI 'google/gemma-4-12b-qat' for per-file comments...
+2026-10-05 00:52:00 [DEBUG   ] commitmaster.ai_messages — Raw per-file AI response: {
+  "headline": "feat: add admin application and automated build packaging",
+  "file_comments": {
+    "admin_app.py": "Introduced a new admin-specific application that unifies workspace and administrative controls into a single interface.",
+    "build_exe.py": "Enhanced the build script to automatic
