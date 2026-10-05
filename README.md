@@ -30,6 +30,14 @@ CommitMaster inspects git changes, generates intelligent commit comments for **e
 ## 🌟 Highlights of v2.0
 
 - ⚡ **Local Repo Scanner & AI Push Preview**: Real-time repository scanning directly on the Overview dashboard. View modified/added file badges, generate AI commit comments, edit the headline and per-file descriptions to your liking, and approve before pushing to GitHub.
+- 🔀 **Flexible Commit Strategy (All-in-One vs Individual Commits)**: Choose between:
+  - **📦 Commit All in One**: Stage all selected files in a single unified Git commit with headline and combined description.
+  - **📝 Commit Individually**: Commit each modified file separately with its own dedicated commit comment and individual commit hash in Git history.
+- 🛡️ **Automated Pre-Commit Health & Vulnerability Inspector**: Catches issues before they reach your Git history:
+  - **Syntax Errors**: Python AST syntax errors, JSON decode errors, and YAML tab indentation errors with line numbers and faulty snippets.
+  - **Unresolved Merge Conflict Markers**: Detects `<<<<<<< HEAD`, `=======`, `>>>>>>>` markers.
+  - **Credential Leak Protection**: Detects GitHub PATs, AWS access keys, OpenAI keys, and private keys.
+  - **Accidental Binaries & Corruptions**: Flags oversized files and corrupted encodings.
 - 🖥️ **Integrated Git Desktop View**: A full-featured desktop client with branch switching, visual file status indicators (`M`, `A`, `D`, `?`), side-by-side colorized diff viewing, and one-click commit & push.
 - 🤖 **Native Local PC AI Per-File Comments**: Uses your local LLM (Gemma, Qwen, Llama, Mistral) via `localhost:1234` or `localhost:11434` with support for reasoning models, custom prompts, and heuristic fallbacks.
 - 📜 **Smooth Scrolling & Precision Touchpad Engine**: Natural, high-performance scrolling across User and Admin apps for both traditional mouse wheels and modern laptop touchpads.
