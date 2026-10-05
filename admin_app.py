@@ -15,7 +15,7 @@ import json
 import threading
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
-from typing import Dict, Callable
+from typing import Callable, Dict, Optional
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 if APP_DIR not in sys.path:
@@ -23,6 +23,7 @@ if APP_DIR not in sys.path:
 
 from commitmaster import database as db
 from commitmaster import commit_engine, ai_messages, ui, github_service, file_inspector
+from commitmaster import commit_composer, charts, navigation, issue_view
 from commitmaster.config import load_config
 from commitmaster.app_styles import (
     COLORS, FONTS, SIZES, AVATAR_COLORS, THEMES, ACCENTS, FONT_FAMILIES, FONT_SCALES,
@@ -134,7 +135,7 @@ class AdminApp:
         self._gd_staged_vars: dict = {}
         self._gd_file_comments: dict = {}
         self._gd_file_comment_vars: dict = {}
-        self._gd_commit_mode_var: tk.StringVar = tk.StringVar(value="all")
+        self._gd_commit_mode_var: tk.StringVar = tk.StringVar(value="individual")
         self._gd_active_file: Optional[str] = None
         self._gd_headline_var: tk.StringVar = tk.StringVar()
         self._gd_ask_push_var: tk.BooleanVar = tk.BooleanVar(value=bool(prefs.get("ask_before_push", 1)))
@@ -193,7 +194,13 @@ class AdminApp:
         self._cf.bind("<Configure>",
                       lambda e: self._canvas.configure(
                           scrollregion=self._canvas.bbox("all")))
-        self.root.bind_all("<MouseWheel>", self._on_mousewheel)
+        self._canvas.bind("<Configure>", lambda e: self._canvas.itemconfig(self._cw, width=e.width))
+        self._navigator = navigation.PageNavigator(self.root, self._canvas, self._cf, self._cw)
+        navigation.install_smooth_scroll(self.root, self._canvas, self._cf)
+        navigation.install_header_controls(
+            self._header_bar, self._header_title, self._navigator, self._nav_back, self._nav_forward)
+        navigation.install_shortcuts(
+            self.root, self._nav_order, self._go, self._nav_back, self._nav_forward)
 
     def _on_mousewheel(self, event):
         try:
@@ -251,7 +258,7 @@ class AdminApp:
         self._section_label(sb, "MY WORKSPACE")
         workspace_nav = [
             ("📊", "Overview",            "overview"),
-            ("🖥️", "Git Desktop",         "git_desktop"),
+            ("💻", "Git Desktop",         "git_desktop"),
             ("📁", "Watched Repos",       "watched_repos"),
             ("📝", "My Commits",          "commits"),
             ("🐙", "GitHub Accounts",     "github_accounts"),
@@ -272,6 +279,7 @@ class AdminApp:
 
         all_nav = [("workspace", workspace_nav), ("admin", admin_nav)]
         self._nav_buttons: Dict[str, tk.Button] = {}
+        self._nav_order = []
 
         for section, items in all_nav:
             if section == "admin":
@@ -280,14 +288,9 @@ class AdminApp:
                 self._section_label(sb, "ADMIN CONTROL")
 
             for icon, label, key in items:
-                btn = tk.Button(
-                    sb, text=f"  {icon}  {label}",
-                    font=FONTS["label"], fg=COLORS["text_secondary"],
-                    bg=COLORS["bg_sidebar"], relief="flat", bd=0,
-                    cursor="hand2", anchor="w", padx=14, pady=9,
-                    command=lambda k=key: self._nav_to(k))
-                btn.pack(fill="x")
+                btn = navigation.make_nav_button(sb, icon, label, lambda k=key: self._go(k), padx=14, pady=9)
                 self._nav_buttons[key] = btn
+                self._nav_order.append(key)
 
         # Spacer + logout
         tk.Frame(sb, bg=COLORS["bg_sidebar"]).pack(fill="both", expand=True)
@@ -368,25 +371,31 @@ class AdminApp:
         self._build_layout()
         self._nav_to(nav_to)
 
-    def _nav_to(self, key: str):
+    def _go(self, key=None):
+        """Navigate to `key`; None reloads the current page."""
+        self._nav_to(key or getattr(self, "_active_key", None) or "overview")
+
+    def _nav_back(self):
+        key = self._navigator.step(-1)
+        if key:
+            self._nav_to(key, record=False)
+
+    def _nav_forward(self):
+        key = self._navigator.step(1)
+        if key:
+            self._nav_to(key, record=False)
+
+    def _nav_to(self, key: str, record: bool = True):
         is_admin = key in self._ADMIN_KEYS
         accent = COLORS["admin"] if is_admin else COLORS["accent"]
-
-        # Update nav button colours
-        for k, btn in self._nav_buttons.items():
-            if k == key:
-                btn.config(bg=COLORS["bg_medium"], fg=accent)
-            else:
-                btn.config(bg=COLORS["bg_sidebar"], fg=COLORS["text_secondary"])
+        navigation.set_active_nav(self._nav_buttons, key, accent)
+        self._active_key = key
+        self._gd_composer = None
 
         self._header_title.config(text=self._TITLES.get(key, key))
         self._section_badge.config(
             text="  ADMIN CONTROL  " if is_admin else "  MY WORKSPACE  ",
             bg=accent)
-
-        # Clear and render
-        for w in self._cf.winfo_children():
-            w.destroy()
 
         pages = {
             "overview":        self._page_overview,
@@ -405,10 +414,7 @@ class AdminApp:
             "my_settings":     self._page_my_settings,
         }
         if key in pages:
-            pages[key]()
-        self._canvas.yview_moveto(0)
-        self.root.update_idletasks()
-        self._canvas.configure(scrollregion=self._canvas.bbox("all"))
+            self._navigator.show(key, pages[key], record=record)
 
     # ── Shared widget helpers ─────────────────────────────────────────────────
 
@@ -478,33 +484,6 @@ class AdminApp:
         r, g, b = max(0, r - 25), max(0, g - 25), max(0, b - 25)
         return f"#{r:02x}{g:02x}{b:02x}"
 
-    def _bar_chart(self, parent, data: list, width=800, height=160,
-                   value_key="commits_made", color=None):
-        color = color or COLORS["accent"]
-        canvas = tk.Canvas(parent, width=width, height=height,
-                           bg=COLORS["bg_card"], highlightthickness=0)
-        canvas.pack(anchor="w", pady=(0, 8))
-        if not data:
-            canvas.create_text(width // 2, height // 2, text="No data yet",
-                                fill=COLORS["text_muted"], font=FONTS["body_sm"])
-            return
-        max_v = max((r.get(value_key, 0) for r in data), default=1) or 1
-        n = len(data)
-        bar_w = max(4, (width - 40) // max(n, 1) - 2)
-        pad_l, pad_b = 20, 30
-        for i, row in enumerate(data):
-            val = row.get(value_key, 0)
-            x0 = pad_l + i * ((width - 40) // max(n, 1))
-            bh = int((val / max_v) * (height - pad_b - 10))
-            y1 = height - pad_b
-            c = color if val > 0 else COLORS["border"]
-            canvas.create_rectangle(x0, y1 - bh, x0 + bar_w, y1,
-                                    fill=c, outline="")
-            if n <= 16 or i % 2 == 0:
-                canvas.create_text(x0 + bar_w // 2, height - 12,
-                                   text=row.get("date", "")[5:],
-                                   fill=COLORS["text_muted"], font=FONTS["caption"])
-
     # ═══════════════════════════════════════════════════════════════════════════
     # MY WORKSPACE PAGES
     # ═══════════════════════════════════════════════════════════════════════════
@@ -544,8 +523,8 @@ class AdminApp:
         self._build_repo_scanner_card(p)
 
         # My 30-day chart
-        self._section_hdr(p, "MY COMMIT ACTIVITY — LAST 30 DAYS", (0, 8))
-        self._bar_chart(p, usage, width=760, height=150)
+        self._section_hdr(p, "MY ACTIVITY — LAST 30 DAYS", (0, 8))
+        charts.user_activity_chart(p, self.user["id"], days=30, height=210).pack(fill="x", pady=(0, 8))
 
         # Recent commits
         self._section_hdr(p, "MY RECENT COMMITS", (8, 8))
@@ -573,12 +552,30 @@ class AdminApp:
         ).pack(side="left")
 
         ai_url = cfg.get("ai", {}).get("base_url", "http://localhost:1234/v1")
-        ai_model = cfg.get("ai", {}).get("model") or ai_messages.detect_model(cfg)
-        status_text = f"⚡ Local AI: {ai_model or 'Online'} ({ai_url})" if ai_model else f"⚡ Local AI Server: {ai_url}"
-        tk.Label(
+        cfg_model = cfg.get("ai", {}).get("model")
+        cached_model = cfg_model or (ai_messages._MODEL_CACHE["models"][0] if ai_messages._MODEL_CACHE["models"] else None)
+        status_text = f"⚡ Local AI: {cached_model or 'Online'} ({ai_url})" if cached_model else f"⚡ Local AI Server: {ai_url}"
+        ai_status_lbl = tk.Label(
             hdr_row, text=status_text, font=FONTS["caption"],
-            fg=COLORS["accent"] if ai_model else COLORS["text_muted"], bg=COLORS["bg_card"]
-        ).pack(side="right")
+            fg=COLORS["accent"] if cached_model else COLORS["text_muted"], bg=COLORS["bg_card"]
+        )
+        ai_status_lbl.pack(side="right")
+
+        if not cached_model and not cfg_model:
+            def _async_detect():
+                m = ai_messages.detect_model(cfg, force=False)
+                if m:
+                    def _update():
+                        try:
+                            if ai_status_lbl.winfo_exists():
+                                ai_status_lbl.config(
+                                    text=f"⚡ Local AI: {m} ({ai_url})",
+                                    fg=COLORS["accent"]
+                                )
+                        except tk.TclError:
+                            pass
+                    self.root.after(0, _update)
+            threading.Thread(target=_async_detect, daemon=True).start()
 
         tk.Label(
             card,
@@ -621,6 +618,8 @@ class AdminApp:
         def on_repo_changed(val):
             target = repo_map.get(val)
             if target:
+                if target != self._gd_selected_repo:
+                    commit_composer.reset_state(self)
                 self._gd_selected_repo = target
                 render_scanner_content()
 
@@ -636,9 +635,10 @@ class AdminApp:
             if d:
                 norm = os.path.normpath(d)
                 if commit_engine.is_git_repo(norm):
-                    db.add_watched_repo(
+                    db.add_or_update_watched_repo(
                         user_id=self.user["id"],
                         repo_name=commit_engine.repo_name(norm),
+                        repo_full_name=commit_engine.repo_name(norm),
                         local_path=norm,
                         is_active_watch=1,
                     )
@@ -703,13 +703,7 @@ class AdminApp:
 
             # Scan for uncommitted changes
             changes = commit_engine.uncommitted_changes(self._gd_selected_repo)
-            self._gd_changes = changes
-
-            sensitive_patterns = cfg.get("sensitive_patterns", [])
-            for status, path in changes:
-                if path not in self._gd_staged_vars:
-                    is_sens = any(s in path.lower() for s in sensitive_patterns)
-                    self._gd_staged_vars[path] = tk.BooleanVar(value=not is_sens)
+            commit_composer.sync_selection(self, changes, cfg.get("sensitive_patterns", []))
 
             if not changes:
                 clean_f = tk.Frame(content_container, bg=COLORS["bg_card"], padx=14, pady=16,
@@ -741,42 +735,43 @@ class AdminApp:
             ).pack(side="left")
 
             def toggle_all():
-                all_staged = all(self._gd_staged_vars[p].get() for _, p in changes if p in self._gd_staged_vars)
-                for _, p in changes:
-                    if p in self._gd_staged_vars:
-                        self._gd_staged_vars[p].set(not all_staged)
+                vars_ = [self._gd_staged_vars[p] for _, p in changes if p in self._gd_staged_vars]
+                target = not all(v.get() for v in vars_)
+                for v in vars_:
+                    v.set(target)
 
             tgl_btn = tk.Button(chg_hdr, text="Toggle All", font=FONTS["caption"],
                                 fg=COLORS["accent"], bg=COLORS["bg_card"], relief="flat", bd=0,
                                 cursor="hand2", command=toggle_all)
             tgl_btn.pack(side="right")
 
-            # Pre-commit inspection on all pending changes
+            # Pre-commit inspection on all pending changes (code snippets + fix advice on demand)
             detected_issues = file_inspector.inspect_files(self._gd_selected_repo, [p for _, p in changes])
-            if detected_issues:
-                issue_count = sum(len(v) for v in detected_issues.values())
-                warn_card = tk.Frame(content_container, bg="#3d2f00", padx=12, pady=8,
-                                     highlightthickness=1, highlightbackground="#d29922")
-                warn_card.pack(fill="x", pady=(0, 8))
-                tk.Label(warn_card, text=f"⚠️  Pre-Commit Notice: {issue_count} issue(s) detected in changed files (syntax / secrets / conflicts).",
-                         font=FONTS["label_bold"], fg="#f0a62e", bg="#3d2f00").pack(side="left")
-                tk.Label(warn_card, text="CommitMaster will verify before committing.",
-                         font=FONTS["caption"], fg="#e6edf3", bg="#3d2f00").pack(side="left", padx=(8, 0))
+            issues_panel = issue_view.build_issues_panel(content_container, detected_issues, self._gd_selected_repo)
+            if issues_panel is not None:
+                issues_panel.pack(fill="x", pady=(0, 8))
 
-            # File list frame
-            files_box = tk.Frame(content_container, bg=COLORS["bg_input"], padx=8, pady=6,
+            # File list (scrolls when long)
+            list_h = min(len(changes), 8) * 28 + 12
+            files_box = tk.Frame(content_container, bg=COLORS["bg_input"],
                                  highlightthickness=1, highlightbackground=COLORS["border"])
             files_box.pack(fill="x", pady=(0, 10))
+            files_cv = tk.Canvas(files_box, bg=COLORS["bg_input"], highlightthickness=0, height=list_h)
+            files_sb = tk.Scrollbar(files_box, orient="vertical", command=files_cv.yview)
+            files_in = tk.Frame(files_cv, bg=COLORS["bg_input"], padx=8, pady=6)
+            files_win = files_cv.create_window((0, 0), window=files_in, anchor="nw")
+            files_in.bind("<Configure>", lambda e: files_cv.configure(scrollregion=files_cv.bbox("all")))
+            files_cv.bind("<Configure>", lambda e: files_cv.itemconfig(files_win, width=e.width))
+            files_cv.configure(yscrollcommand=files_sb.set)
+            if len(changes) > 8:
+                files_sb.pack(side="right", fill="y")
+            files_cv.pack(side="left", fill="both", expand=True)
 
             status_colors = {"M": ("Modified", "#f0883e"), "A": ("Added", "#3fb950"), "D": ("Deleted", "#f85149"), "??": ("Untracked", "#58a6ff")}
-            for st, path in changes[:12]:
-                row = tk.Frame(files_box, bg=COLORS["bg_input"])
+            for st, path in changes:
+                row = tk.Frame(files_in, bg=COLORS["bg_input"])
                 row.pack(fill="x", pady=1)
-
-                var = self._gd_staged_vars.get(path)
-                if not var:
-                    var = tk.BooleanVar(value=True)
-                    self._gd_staged_vars[path] = var
+                var = self._gd_staged_vars[path]
                 cb = tk.Checkbutton(row, variable=var, bg=COLORS["bg_input"], selectcolor=COLORS["bg_card"],
                                     activebackground=COLORS["bg_input"])
                 cb.pack(side="left")
@@ -785,343 +780,34 @@ class AdminApp:
                 tk.Label(row, text=f"[{st}]", font=FONTS["mono_sm"], fg=color_hex, bg=COLORS["bg_input"]).pack(side="left", padx=(0, 6))
                 tk.Label(row, text=path, font=FONTS["body_sm"], fg=COLORS["text_primary"], bg=COLORS["bg_input"]).pack(side="left")
 
-                # If issues exist for this file, show inline warning badge
                 if path in detected_issues:
-                    file_iss = detected_issues[path]
-                    top_iss = file_iss[0]
+                    top_iss = detected_issues[path][0]
                     sev = top_iss.get("severity")
                     l_no = top_iss.get("line", 1)
+                    n_more = len(detected_issues[path])
                     if sev == "error":
-                        b_text = f"❌ Error (L{l_no})"
-                        b_fg, b_bg = "#ffffff", "#da3633"
+                        b_text, b_bg = f"❌ Error (L{l_no})", "#da3633"
                     elif sev == "security":
-                        b_text = f"🛡️ Secret (L{l_no})"
-                        b_fg, b_bg = "#ffffff", "#d29922"
+                        b_text, b_bg = f"🛡️ Security (L{l_no})", "#d29922"
                     else:
-                        b_text = f"⚠️ Warning (L{l_no})"
-                        b_fg, b_bg = "#ffffff", "#9e6a03"
-                    tk.Label(row, text=f" {b_text} ", font=FONTS["caption"], fg=b_fg, bg=b_bg).pack(side="left", padx=(8, 0))
+                        b_text, b_bg = f"⚠️ Warning (L{l_no})", "#9e6a03"
+                    if n_more > 1:
+                        b_text += f" +{n_more - 1}"
+                    tk.Label(row, text=f" {b_text} ", font=FONTS["caption"], fg="#ffffff", bg=b_bg).pack(side="left", padx=(8, 0))
 
-            if len(changes) > 12:
-                tk.Label(files_box, text=f"... and {len(changes) - 12} more files (see Git Desktop for complete list)",
-                         font=FONTS["caption"], fg=COLORS["text_muted"], bg=COLORS["bg_input"]).pack(anchor="w", pady=(4, 0))
-
-            # ── AI Commentary & Edit Section ──────────────────────────────────
-            ai_box = tk.Frame(content_container, bg=COLORS["bg_card"], padx=14, pady=12,
-                              highlightthickness=1, highlightbackground=COLORS["accent"])
-            ai_box.pack(fill="x", pady=(0, 10))
-
-            ai_top = tk.Frame(ai_box, bg=COLORS["bg_card"])
-            ai_top.pack(fill="x", pady=(0, 8))
-
-            status_lbl = tk.Label(ai_top, text="💡 AI comments ready to generate or edit manually",
-                                  font=FONTS["caption"], fg=COLORS["text_secondary"], bg=COLORS["bg_card"])
-
-            def trigger_ai_gen():
-                selected_files = [p for p, v in self._gd_staged_vars.items() if v.get()]
-                if not selected_files:
-                    selected_files = [p for _, p in changes]
-                status_lbl.config(text="⏳ Native Local PC AI is reading diffs and crafting comments...", fg=COLORS["info"])
-                self.root.update_idletasks()
-
-                def do_call():
-                    res = ai_messages.generate_file_comments(cfg, self._gd_selected_repo, selected_files)
-                    def update_ui():
-                        self._gd_headline_var.set(res.get("headline", ""))
-                        self._gd_file_comments = res.get("file_comments", {})
-                        desc_text.delete("1.0", "end")
-                        desc_text.insert("end", res.get("description", ""))
-
-                        # Update all per-file comment input variables
-                        for p, comment_text in self._gd_file_comments.items():
-                            if p in self._gd_file_comment_vars:
-                                self._gd_file_comment_vars[p].set(comment_text)
-
-                        # Refresh individual view rows if visible
-                        refresh_indiv_rows()
-                        status_lbl.config(text="✔ AI comments generated! You can edit them below before approving.", fg=COLORS["success"])
-                    self.root.after(0, update_ui)
-
-                threading.Thread(target=do_call, daemon=True).start()
-
-            ai_gen_btn = tk.Button(
-                ai_top, text="✨ Write AI Comments for Each File (Native Local AI)",
-                font=FONTS["label_bold"], fg="white", bg=COLORS["accent"],
-                activebackground=COLORS["accent_hover"], activeforeground="white",
-                relief="flat", bd=0, cursor="hand2", padx=12, pady=5,
-                command=trigger_ai_gen
-            )
-            ai_gen_btn.pack(side="left", padx=(0, 10))
-            self._add_hover(ai_gen_btn, COLORS["accent_hover"], COLORS["accent"])
-
-            status_lbl.pack(side="left")
-
-            # ── Commit Strategy Mode Selector (All-in-one vs Individual) ──────
-            strategy_frame = tk.Frame(ai_box, bg=COLORS["bg_card"])
-            strategy_frame.pack(fill="x", pady=(0, 10))
-
-            tk.Label(strategy_frame, text="Commit Strategy:", font=FONTS["label_bold"],
-                     fg=COLORS["text_primary"], bg=COLORS["bg_card"]).pack(side="left", padx=(0, 12))
-
-            rb_all = tk.Radiobutton(
-                strategy_frame, text="📦 Commit All in One (Single Commit)",
-                variable=self._gd_commit_mode_var, value="all",
-                font=FONTS["body_sm"], fg=COLORS["text_primary"], bg=COLORS["bg_card"],
-                selectcolor=COLORS["bg_input"], activebackground=COLORS["bg_card"],
-                activeforeground=COLORS["text_primary"], command=lambda: update_mode_visibility()
-            )
-            rb_all.pack(side="left", padx=(0, 12))
-
-            rb_indiv = tk.Radiobutton(
-                strategy_frame, text="📝 Commit Individually (Dedicated Comment per File)",
-                variable=self._gd_commit_mode_var, value="individual",
-                font=FONTS["body_sm"], fg=COLORS["text_primary"], bg=COLORS["bg_card"],
-                selectcolor=COLORS["bg_input"], activebackground=COLORS["bg_card"],
-                activeforeground=COLORS["text_primary"], command=lambda: update_mode_visibility()
-            )
-            rb_indiv.pack(side="left")
-
-            # Container 1: All-in-one commit inputs
-            all_container = tk.Frame(ai_box, bg=COLORS["bg_card"])
-
-            tk.Label(all_container, text="Unified Commit Headline (Editable):", font=FONTS["label_bold"],
-                     fg=COLORS["text_primary"], bg=COLORS["bg_card"]).pack(anchor="w", pady=(0, 2))
-
-            if not self._gd_headline_var.get():
-                self._gd_headline_var.set(f"refactor: update {len(changes)} files in {commit_engine.repo_name(self._gd_selected_repo)}")
-
-            headline_ent = tk.Entry(
-                all_container, textvariable=self._gd_headline_var, font=FONTS["body_md"],
-                bg=COLORS["bg_input"], fg=COLORS["text_primary"], relief="flat",
-                highlightthickness=1, highlightbackground=COLORS["border"],
-            )
-            headline_ent.pack(fill="x", pady=(0, 8), ipady=4)
-
-            tk.Label(all_container, text="Commit Description & Per-File Commentary (100% Editable):", font=FONTS["caption"],
-                     fg=COLORS["text_secondary"], bg=COLORS["bg_card"]).pack(anchor="w", pady=(0, 2))
-
-            desc_text = tk.Text(
-                all_container, font=FONTS["body_sm"], height=4, bg=COLORS["bg_input"],
-                fg=COLORS["text_primary"], relief="flat", padx=8, pady=6,
-                highlightthickness=1, highlightbackground=COLORS["border"],
-            )
-            desc_text.pack(fill="x", pady=(0, 10))
-
-            initial_desc = "\n".join(f"- {p}: Update file logic" for _, p in changes[:8])
-            desc_text.insert("end", initial_desc)
-
-            # Container 2: Individual file commit comments inputs
-            indiv_container = tk.Frame(ai_box, bg=COLORS["bg_card"])
-
-            tk.Label(indiv_container, text="Dedicated Commit Comment for Each File (Individual Git Commits):",
-                     font=FONTS["label_bold"], fg=COLORS["text_primary"], bg=COLORS["bg_card"]).pack(anchor="w", pady=(0, 4))
-            tk.Label(indiv_container, text="Each selected file below will receive its own separate commit in Git history.",
-                     font=FONTS["caption"], fg=COLORS["text_secondary"], bg=COLORS["bg_card"]).pack(anchor="w", pady=(0, 6))
-
-            indiv_scroll_frame = tk.Frame(indiv_container, bg=COLORS["bg_input"], padx=8, pady=6,
-                                          highlightthickness=1, highlightbackground=COLORS["border"])
-            indiv_scroll_frame.pack(fill="x", pady=(0, 10))
-
-            def refresh_indiv_rows():
-                for widget in indiv_scroll_frame.winfo_children():
-                    widget.destroy()
-
-                selected_paths = [p for p, v in self._gd_staged_vars.items() if v.get()]
-                if not selected_paths:
-                    selected_paths = [p for _, p in changes[:12]]
-
-                for p in selected_paths[:12]:
-                    f_row = tk.Frame(indiv_scroll_frame, bg=COLORS["bg_input"])
-                    f_row.pack(fill="x", pady=3)
-
-                    tk.Label(f_row, text=f"📄 {p}:", font=FONTS["mono_sm"], fg=COLORS["text_primary"],
-                             bg=COLORS["bg_input"], width=32, anchor="w").pack(side="left", padx=(0, 8))
-
-                    if p not in self._gd_file_comment_vars:
-                        initial_comm = self._gd_file_comments.get(p) or f"chore: update {os.path.basename(p)}"
-                        self._gd_file_comment_vars[p] = tk.StringVar(value=initial_comm)
-
-                    f_ent = tk.Entry(
-                        f_row, textvariable=self._gd_file_comment_vars[p], font=FONTS["body_sm"],
-                        bg=COLORS["bg_card"], fg=COLORS["text_primary"], relief="flat",
-                        highlightthickness=1, highlightbackground=COLORS["border"],
-                    )
-                    f_ent.pack(side="left", fill="x", expand=True, ipady=3)
-
-                    def make_tracker(path_key, var):
-                        def on_type(*_):
-                            self._gd_file_comments[path_key] = var.get()
-                        var.trace_add("write", on_type)
-                    make_tracker(p, self._gd_file_comment_vars[p])
-
-                if len(selected_paths) > 12:
-                    tk.Label(indiv_scroll_frame, text=f"... and {len(selected_paths) - 12} more files",
-                             font=FONTS["caption"], fg=COLORS["text_muted"], bg=COLORS["bg_input"]).pack(anchor="w", pady=(4, 0))
-
-            def update_mode_visibility():
-                if self._gd_commit_mode_var.get() == "all":
-                    indiv_container.pack_forget()
-                    all_container.pack(fill="x", pady=(0, 4))
-                else:
-                    all_container.pack_forget()
-                    refresh_indiv_rows()
-                    indiv_container.pack(fill="x", pady=(0, 4))
-
-            # Initial view configuration
-            update_mode_visibility()
-
-            # ── Action Buttons Row ────────────────────────────────────────────
-            act_row = tk.Frame(ai_box, bg=COLORS["bg_card"])
-            act_row.pack(fill="x")
-
-            ask_cb = tk.Checkbutton(
-                act_row, text="Ask me before git pushing", variable=self._gd_ask_push_var,
-                font=FONTS["body_sm"], fg=COLORS["text_primary"], bg=COLORS["bg_card"],
-                selectcolor=COLORS["bg_input"], activebackground=COLORS["bg_card"],
-                activeforeground=COLORS["text_primary"],
-            )
-            ask_cb.pack(side="left", padx=(0, 12))
-
-            push_res_lbl = tk.Label(ai_box, text="", font=FONTS["label_bold"], bg=COLORS["bg_card"])
-            push_res_lbl.pack(anchor="w", pady=(6, 0))
-
-            def execute_approve_and_push(push_remote: bool):
-                staged = [p for p, v in self._gd_staged_vars.items() if v.get()]
-                if not staged:
-                    messagebox.showwarning("No Files Selected", "Please check at least one file to include in the commit.", parent=self.root)
-                    return
-
-                repo_name = commit_engine.repo_name(self._gd_selected_repo)
-                cur_branch = commit_engine.current_branch(self._gd_selected_repo)
-
-                # ── Pre-Commit Health & Issue Check ───────────────────────────
-                staged_issues = file_inspector.inspect_files(self._gd_selected_repo, staged)
-                if staged_issues:
-                    proceed = ui.ask_pre_commit_issues_warning(staged_issues, repo_name=repo_name, parent=self.root)
-                    if not proceed:
-                        push_res_lbl.config(text="ℹ Commit cancelled to allow resolving file issues.", fg=COLORS["warning"])
-                        return
-
-                headline = self._gd_headline_var.get().strip() or "chore: update repository files"
-                desc = desc_text.get("1.0", "end").strip()
-                full_msg = f"{headline}\n\n{desc}" if desc else headline
-                mode = self._gd_commit_mode_var.get()
-
-                acc = db.get_repo_account(self.user["id"], self._gd_selected_repo)
-
-                if push_remote and self._gd_ask_push_var.get():
-                    unpushed = commit_engine.get_unpushed_commits(self._gd_selected_repo)
-                    confirmed = ui.ask_push_confirmation(repo_name, cur_branch, acc, unpushed)
-                    if not confirmed:
-                        push_res_lbl.config(text="ℹ Push cancelled by user. Changes remain uncommitted.", fg=COLORS["warning"])
-                        return
-
-                push_res_lbl.config(text="⏳ Committing and processing Git operations...", fg=COLORS["info"])
-                self.root.update_idletasks()
-
-                def do_commit_and_push_worker():
-                    try:
-                        if mode == "individual":
-                            # Commit each file individually with its dedicated comment
-                            file_comment_pairs = []
-                            for p in staged:
-                                if p in self._gd_file_comment_vars:
-                                    comm = self._gd_file_comment_vars[p].get().strip()
-                                else:
-                                    comm = self._gd_file_comments.get(p, "").strip()
-                                if not comm:
-                                    comm = f"chore: update {os.path.basename(p)}"
-                                file_comment_pairs.append((p, comm))
-
-                            commit_results = commit_engine.stage_and_commit_individual(self._gd_selected_repo, file_comment_pairs)
-                            for item in commit_results:
-                                db.log_commit(
-                                    user_id=self.user["id"],
-                                    repo_path=self._gd_selected_repo,
-                                    commit_msg=item["message"],
-                                    files_count=1,
-                                    commit_hash=item["hash"],
-                                )
-                            summary_display = f"{len(commit_results)} individual commits created"
-                            commit_hash = commit_results[-1]["hash"] if commit_results else ""
-                        else:
-                            # Commit all in one single commit
-                            summary = commit_engine.stage_and_commit(self._gd_selected_repo, staged, full_msg)
-                            commit_hash = summary.split()[0] if summary else ""
-                            db.log_commit(
-                                user_id=self.user["id"],
-                                repo_path=self._gd_selected_repo,
-                                commit_msg=headline,
-                                files_count=len(staged),
-                                commit_hash=commit_hash,
-                            )
-                            summary_display = summary
-
-                        if push_remote:
-                            if acc:
-                                ok, pmsg = commit_engine.push_repo_with_account(self._gd_selected_repo, acc)
-                            else:
-                                accounts = db.get_github_accounts(self.user["id"])
-                                if accounts:
-                                    ok, pmsg = commit_engine.push_repo_with_account(self._gd_selected_repo, accounts[0])
-                                else:
-                                    ok, pmsg = commit_engine.push(self._gd_selected_repo)
-
-                            def on_push_done():
-                                if ok:
-                                    push_res_lbl.config(text=f"🎉 Successfully committed ({summary_display}) and pushed to GitHub!", fg=COLORS["success"])
-                                    messagebox.showinfo("Push Succeeded", f"✔ Successfully committed and pushed to GitHub!\n\nSummary: {summary_display}\nFiles: {len(staged)} files", parent=self.root)
-                                    render_scanner_content()
-                                else:
-                                    push_res_lbl.config(text=f"❌ Push error: {pmsg}", fg=COLORS["danger"])
-                                    messagebox.showerror("Push Error", f"Commit succeeded locally, but git push failed:\n\n{pmsg}", parent=self.root)
-                            self.root.after(0, on_push_done)
-                        else:
-                            def on_commit_done():
-                                push_res_lbl.config(text=f"✔ Committed locally: {summary_display}", fg=COLORS["success"])
-                                messagebox.showinfo("Committed Locally", f"Saved to Git locally:\n\n{summary_display}", parent=self.root)
-                                render_scanner_content()
-                            self.root.after(0, on_commit_done)
-
-                    except Exception as err:
-                        def on_err():
-                            push_res_lbl.config(text=f"❌ Commit failed: {err}", fg=COLORS["danger"])
-                            messagebox.showerror("Commit Failed", f"Could not create commit:\n\n{err}", parent=self.root)
-                        self.root.after(0, on_err)
-
-                threading.Thread(target=do_commit_and_push_worker, daemon=True).start()
-
-            # Push button
-            push_btn = tk.Button(
-                act_row, text="🚀 Approve & Git Push to GitHub", font=FONTS["label_bold"],
-                fg="white", bg=COLORS["accent"], activebackground=COLORS["accent_hover"],
-                activeforeground="white", relief="flat", bd=0, cursor="hand2", padx=16, pady=7,
-                command=lambda: execute_approve_and_push(push_remote=True)
-            )
-            push_btn.pack(side="left", padx=(0, 8))
-            self._add_hover(push_btn, COLORS["accent_hover"], COLORS["accent"])
-
-            # Commit locally button
-            commit_btn = tk.Button(
-                act_row, text="💾 Commit Locally Only", font=FONTS["label_bold"],
-                fg=COLORS["text_primary"], bg=COLORS["bg_medium"],
-                activebackground=COLORS["bg_card_hover"], activeforeground=COLORS["text_primary"],
-                relief="flat", bd=0, cursor="hand2", padx=12, pady=7,
-                command=lambda: execute_approve_and_push(push_remote=False)
-            )
-            commit_btn.pack(side="left", padx=(0, 8))
-            self._add_hover(commit_btn, COLORS["bg_card_hover"], COLORS["bg_medium"])
-
-            # Open in Git Desktop button
-            open_gd_btn = tk.Button(
-                act_row, text="🖥️ Open Full Diff in Git Desktop", font=FONTS["label"],
-                fg=COLORS["text_secondary"], bg=COLORS["bg_card"],
-                activebackground=COLORS["bg_medium"], activeforeground=COLORS["text_primary"],
-                relief="flat", bd=0, cursor="hand2", padx=10, pady=7,
+            # ── Commit composer: Summary + Description, one commit per file by default ──
+            composer_box = tk.Frame(content_container, bg=COLORS["bg_card"], padx=14, pady=12,
+                                    highlightthickness=1, highlightbackground=COLORS["accent"])
+            composer_box.pack(fill="x", pady=(0, 10))
+            commit_composer.CommitComposer(
+                composer_box, self, cfg, on_done=render_scanner_content
+            ).pack(fill="x")
+            tk.Button(
+                composer_box, text="🖥️ Open full diff in Git Desktop", font=FONTS["label"],
+                fg=COLORS["text_secondary"], bg=COLORS["bg_card"], activebackground=COLORS["bg_medium"],
+                activeforeground=COLORS["text_primary"], relief="flat", bd=0, cursor="hand2", padx=10, pady=6,
                 command=lambda: self._nav_to("git_desktop")
-            )
-            open_gd_btn.pack(side="left")
-            self._add_hover(open_gd_btn, COLORS["bg_medium"], COLORS["bg_card"])
+            ).pack(anchor="w", pady=(6, 0))
 
         render_scanner_content()
 
@@ -1519,7 +1205,7 @@ class AdminApp:
             if target and target != self._gd_selected_repo:
                 self._gd_selected_repo = target
                 self._gd_active_file = None
-                self._gd_file_comments = {}
+                commit_composer.reset_state(self)
                 self._nav_to("git_desktop")
 
         repo_menu = tk.OptionMenu(tb_left, repo_var, *repo_options, command=on_repo_select)
@@ -1549,11 +1235,26 @@ class AdminApp:
         tb_right = tk.Frame(tb, bg=COLORS["bg_card"])
         tb_right.pack(side="right")
 
-        ai_model = cfg.get("ai", {}).get("model") or ai_messages.detect_model(cfg)
-        ai_text = f"⚡ Local AI: {ai_model or 'Ready'}"
-        tk.Label(tb_right, text=ai_text, font=FONTS["caption"],
-                 fg=COLORS["accent"] if ai_model else COLORS["warning"],
-                 bg=COLORS["bg_card"]).pack(side="left", padx=(0, 10))
+        cfg_model = cfg.get("ai", {}).get("model")
+        cached_model = cfg_model or (ai_messages._MODEL_CACHE["models"][0] if ai_messages._MODEL_CACHE["models"] else None)
+        ai_text = f"⚡ Local AI: {cached_model or 'Ready'}"
+        ai_lbl = tk.Label(tb_right, text=ai_text, font=FONTS["caption"],
+                          fg=COLORS["accent"] if cached_model else COLORS["warning"],
+                          bg=COLORS["bg_card"])
+        ai_lbl.pack(side="left", padx=(0, 10))
+
+        if not cached_model and not cfg_model:
+            def _async_detect_gd():
+                m = ai_messages.detect_model(cfg, force=False)
+                if m:
+                    def _update():
+                        try:
+                            if ai_lbl.winfo_exists():
+                                ai_lbl.config(text=f"⚡ Local AI: {m}", fg=COLORS["accent"])
+                        except tk.TclError:
+                            pass
+                    self.root.after(0, _update)
+            threading.Thread(target=_async_detect_gd, daemon=True).start()
 
         refresh_btn = tk.Button(tb_right, text="🔄 Refresh", font=FONTS["caption"],
                                 fg=COLORS["text_primary"], bg=COLORS["bg_medium"],
@@ -1579,10 +1280,7 @@ class AdminApp:
         self._gd_changes = changes
         sensitive_patterns = cfg.get("sensitive_patterns", [])
 
-        for status, path in changes:
-            if path not in self._gd_staged_vars:
-                is_sens = any(s in path.lower() for s in sensitive_patterns)
-                self._gd_staged_vars[path] = tk.BooleanVar(value=not is_sens)
+        commit_composer.sync_selection(self, changes, sensitive_patterns)
 
         if (not self._gd_active_file or not any(p == self._gd_active_file for _, p in changes)) and changes:
             self._gd_active_file = changes[0][1]
@@ -1628,7 +1326,9 @@ class AdminApp:
         right_p = tk.Frame(ws, bg=COLORS["bg_dark"])
         right_p.pack(side="left", fill="both", expand=True)
 
-        self._gd_build_ai_file_comment_card(right_p)
+        # Issues for the file currently shown in the diff (code snippet + how to fix)
+        self._gd_issue_frame = tk.Frame(right_p, bg=COLORS["bg_dark"])
+        self._gd_issue_frame.pack(side="bottom", fill="x", pady=(8, 0))
 
         diff_card = tk.Frame(right_p, bg=COLORS["bg_card"],
                              highlightthickness=1, highlightbackground=COLORS["border"])
@@ -1637,8 +1337,9 @@ class AdminApp:
         diff_hdr = tk.Frame(diff_card, bg=COLORS["bg_medium"], padx=12, pady=6)
         diff_hdr.pack(fill="x")
         active_name = self._gd_active_file or "No file selected"
-        tk.Label(diff_hdr, text=f"Diff: {active_name}", font=FONTS["mono_sm"],
-                 fg=COLORS["text_primary"], bg=COLORS["bg_medium"]).pack(side="left")
+        self._gd_diff_title = tk.Label(diff_hdr, text=f"Diff: {active_name}", font=FONTS["mono_sm"],
+                                       fg=COLORS["text_primary"], bg=COLORS["bg_medium"])
+        self._gd_diff_title.pack(side="left")
 
         diff_f = tk.Frame(diff_card, bg=COLORS["bg_card"])
         diff_f.pack(fill="both", expand=True)
@@ -1663,8 +1364,14 @@ class AdminApp:
 
         if self._gd_active_file:
             self._gd_load_file_diff(self._gd_active_file)
+            self._gd_refresh_issue_panel(self._gd_active_file)
 
-        self._gd_build_commit_dock(pad, cfg)
+        # ── Bottom dock: commit composer (Summary + Description) ──────────────
+        dock = self._card(pad, padx=14, pady=12)
+        dock.pack(fill="x", pady=(10, 0))
+        commit_composer.CommitComposer(
+            dock, self, cfg, on_done=lambda: self._nav_to("git_desktop")
+        ).pack(fill="x")
 
     def _gd_add_local_repo(self):
         d = filedialog.askdirectory(title="Select Local Git Repository Folder", parent=self.root)
@@ -1686,11 +1393,12 @@ class AdminApp:
                 messagebox.showerror("Not a Git Repository", f"'{d}' is not a valid git repository (.git folder not found).", parent=self.root)
 
     def _gd_toggle_all_files(self):
-        if not self._gd_staged_vars:
+        vars_ = [self._gd_staged_vars[p] for _, p in self._gd_changes if p in self._gd_staged_vars]
+        if not vars_:
             return
-        all_checked = all(var.get() for var in self._gd_staged_vars.values())
-        for var in self._gd_staged_vars.values():
-            var.set(not all_checked)
+        target = not all(v.get() for v in vars_)
+        for v in vars_:
+            v.set(target)
 
     def _gd_build_file_row(self, parent, status: str, path: str):
         row = tk.Frame(parent, bg=COLORS["bg_card"], padx=6, pady=4)
@@ -1741,9 +1449,21 @@ class AdminApp:
     def _gd_select_file(self, path: str):
         self._gd_active_file = path
         self._gd_load_file_diff(path)
-        comment = self._gd_file_comments.get(path, "")
-        if self._gd_comment_var:
-            self._gd_comment_var.set(comment or "(Click '✨ Write AI Comments for Each File' below to generate with local AI)")
+        title = getattr(self, "_gd_diff_title", None)
+        if title is not None:
+            title.config(text=f"Diff: {path}")
+        self._gd_refresh_issue_panel(path)
+
+    def _gd_refresh_issue_panel(self, path: str):
+        frame = getattr(self, "_gd_issue_frame", None)
+        if frame is None or not frame.winfo_exists():
+            return
+        for w in frame.winfo_children():
+            w.destroy()
+        issues = file_inspector.inspect_file(self._gd_selected_repo, path) if self._gd_selected_repo else []
+        panel = issue_view.build_issues_panel(frame, {path: issues} if issues else {}, self._gd_selected_repo)
+        if panel is not None:
+            panel.pack(fill="x")
 
     def _gd_load_file_diff(self, file_path: str):
         if not self._gd_diff_text or not self._gd_selected_repo:
@@ -1763,237 +1483,6 @@ class AdminApp:
                 self._gd_diff_text.insert("end", line_str, "diff_hunk")
             else:
                 self._gd_diff_text.insert("end", line_str)
-
-    def _gd_build_ai_file_comment_card(self, parent):
-        card = tk.Frame(parent, bg=COLORS["bg_card"], padx=12, pady=8,
-                        highlightthickness=1, highlightbackground=COLORS["border"])
-        card.pack(fill="x", pady=(0, 8))
-
-        f_hdr = tk.Frame(card, bg=COLORS["bg_card"])
-        f_hdr.pack(fill="x")
-        tk.Label(f_hdr, text="🤖 Native Local AI — File Comment:",
-                 font=FONTS["label_bold"], fg=COLORS["accent"], bg=COLORS["bg_card"]).pack(side="left")
-
-        current_file = self._gd_active_file or ""
-        comment = self._gd_file_comments.get(current_file, "")
-        if not comment:
-            comment = "(Click '✨ Write AI Comments for Each File' below to generate with local AI)"
-
-        self._gd_comment_var.set(comment)
-        self._gd_comment_entry = tk.Entry(
-            card, textvariable=self._gd_comment_var, font=FONTS["body_sm"],
-            bg=COLORS["bg_input"], fg=COLORS["text_primary"], relief="flat",
-            highlightthickness=1, highlightbackground=COLORS["border"],
-        )
-        self._gd_comment_entry.pack(fill="x", pady=(4, 0), ipady=4)
-
-        def on_comment_edit(e=None):
-            if self._gd_active_file:
-                self._gd_file_comments[self._gd_active_file] = self._gd_comment_var.get()
-        self._gd_comment_entry.bind("<KeyRelease>", on_comment_edit)
-
-    def _gd_build_commit_dock(self, parent, cfg):
-        dock = self._card(parent, padx=14, pady=10)
-        dock.pack(fill="x", pady=(10, 0))
-
-        ai_row = tk.Frame(dock, bg=COLORS["bg_card"])
-        ai_row.pack(fill="x", pady=(0, 6))
-
-        gen_btn = tk.Button(
-            ai_row, text="✨ Write AI Comments for Each File (Native Local PC AI)",
-            font=FONTS["label_bold"], fg="white", bg=COLORS["accent"],
-            activebackground=COLORS["accent_hover"], activeforeground="white",
-            relief="flat", bd=0, cursor="hand2", padx=14, pady=5,
-            command=lambda: self._gd_generate_ai_comments(cfg)
-        )
-        gen_btn.pack(side="left", padx=(0, 10))
-        self._add_hover(gen_btn, COLORS["accent_hover"], COLORS["accent"])
-
-        self._gd_ai_status_lbl = tk.Label(ai_row, text="", font=FONTS["caption"],
-                                          fg=COLORS["text_secondary"], bg=COLORS["bg_card"])
-        self._gd_ai_status_lbl.pack(side="left")
-
-        # Commit strategy selector
-        strat_row = tk.Frame(dock, bg=COLORS["bg_card"])
-        strat_row.pack(fill="x", pady=(2, 6))
-        tk.Label(strat_row, text="Commit Strategy:", font=FONTS["label_bold"],
-                 fg=COLORS["text_primary"], bg=COLORS["bg_card"]).pack(side="left", padx=(0, 10))
-        tk.Radiobutton(
-            strat_row, text="📦 Commit All in One", variable=self._gd_commit_mode_var, value="all",
-            font=FONTS["body_sm"], fg=COLORS["text_primary"], bg=COLORS["bg_card"],
-            selectcolor=COLORS["bg_input"], activebackground=COLORS["bg_card"],
-            activeforeground=COLORS["text_primary"]
-        ).pack(side="left", padx=(0, 10))
-        tk.Radiobutton(
-            strat_row, text="📝 Dedicated Comment per File", variable=self._gd_commit_mode_var, value="individual",
-            font=FONTS["body_sm"], fg=COLORS["text_primary"], bg=COLORS["bg_card"],
-            selectcolor=COLORS["bg_input"], activebackground=COLORS["bg_card"],
-            activeforeground=COLORS["text_primary"]
-        ).pack(side="left")
-
-        # Headline Input
-        tk.Label(dock, text="Commit Headline (for All in One):", font=FONTS["label_bold"],
-                 fg=COLORS["text_primary"], bg=COLORS["bg_card"]).pack(anchor="w")
-
-        headline_e = tk.Entry(
-            dock, textvariable=self._gd_headline_var, font=FONTS["body_md"],
-            bg=COLORS["bg_input"], fg=COLORS["text_primary"], relief="flat",
-            highlightthickness=1, highlightbackground=COLORS["border"],
-        )
-        headline_e.pack(fill="x", pady=(2, 6), ipady=4)
-
-        # Full Description Text
-        tk.Label(dock, text="Description & Per-File Commentary:", font=FONTS["caption"],
-                 fg=COLORS["text_secondary"], bg=COLORS["bg_card"]).pack(anchor="w")
-
-        self._gd_desc_text = tk.Text(
-            dock, font=FONTS["body_sm"], height=3, bg=COLORS["bg_input"],
-            fg=COLORS["text_primary"], relief="flat", padx=8, pady=6,
-            highlightthickness=1, highlightbackground=COLORS["border"],
-        )
-        self._gd_desc_text.pack(fill="x", pady=(2, 8))
-
-        # Push Confirmation & Action Buttons Row
-        action_row = tk.Frame(dock, bg=COLORS["bg_card"])
-        action_row.pack(fill="x")
-
-        cb = tk.Checkbutton(
-            action_row, text="Ask me before git pushing", variable=self._gd_ask_push_var,
-            font=FONTS["body_sm"], fg=COLORS["text_primary"], bg=COLORS["bg_card"],
-            selectcolor=COLORS["bg_input"], activebackground=COLORS["bg_card"],
-            activeforeground=COLORS["text_primary"],
-        )
-        cb.pack(side="left", padx=(0, 14))
-
-        commit_btn = tk.Button(
-            action_row, text="💾 Commit Changes", font=FONTS["label_bold"],
-            fg=COLORS["text_primary"], bg=COLORS["bg_medium"],
-            activebackground=COLORS["bg_card_hover"], activeforeground=COLORS["text_primary"],
-            relief="flat", bd=0, cursor="hand2", padx=14, pady=6,
-            command=lambda: self._gd_do_commit(push=False)
-        )
-        commit_btn.pack(side="left", padx=(0, 8))
-        self._add_hover(commit_btn, COLORS["bg_card_hover"], COLORS["bg_medium"])
-
-        commit_push_btn = tk.Button(
-            action_row, text="🚀 Commit & Push to GitHub", font=FONTS["label_bold"],
-            fg="white", bg=COLORS["accent"], activebackground=COLORS["accent_hover"],
-            activeforeground="white", relief="flat", bd=0, cursor="hand2", padx=16, pady=6,
-            command=lambda: self._gd_do_commit(push=True)
-        )
-        commit_push_btn.pack(side="left", padx=(0, 8))
-        self._add_hover(commit_push_btn, COLORS["accent_hover"], COLORS["accent"])
-
-        unpushed = commit_engine.get_unpushed_commits(self._gd_selected_repo) if self._gd_selected_repo else []
-        push_label = f"⬆️ Push Commits ({len(unpushed)})" if unpushed else "⬆️ Push Commits"
-        push_remote_btn = tk.Button(
-            action_row, text=push_label, font=FONTS["label"],
-            fg=COLORS["text_primary"], bg=COLORS["bg_medium"],
-            activebackground=COLORS["bg_card_hover"], activeforeground=COLORS["text_primary"],
-            relief="flat", bd=0, cursor="hand2", padx=12, pady=6,
-            command=self._gd_push_commits
-        )
-        push_remote_btn.pack(side="left")
-        self._add_hover(push_remote_btn, COLORS["bg_card_hover"], COLORS["bg_medium"])
-
-    def _gd_generate_ai_comments(self, cfg):
-        if not self._gd_selected_repo:
-            return
-
-        selected_files = [p for p, var in self._gd_staged_vars.items() if var.get()]
-        if not selected_files:
-            selected_files = [p for _, p in self._gd_changes]
-
-        if not selected_files:
-            messagebox.showinfo("No Changes", "No files selected or modified in this repository.", parent=self.root)
-            return
-
-        if self._gd_ai_status_lbl:
-            self._gd_ai_status_lbl.config(text="⏳ Native Local AI is analyzing diffs...", fg=COLORS["info"])
-        self.root.update_idletasks()
-
-        def do_gen():
-            res = ai_messages.generate_file_comments(cfg, self._gd_selected_repo, selected_files)
-
-            def apply():
-                self._gd_headline_var.set(res.get("headline", ""))
-                self._gd_file_comments = res.get("file_comments", {})
-                for p, c in self._gd_file_comments.items():
-                    if p in self._gd_file_comment_vars:
-                        self._gd_file_comment_vars[p].set(c)
-                if self._gd_desc_text:
-                    self._gd_desc_text.delete("1.0", "end")
-                    self._gd_desc_text.insert("end", res.get("description", ""))
-                if self._gd_active_file and self._gd_comment_var:
-                    comm = self._gd_file_comments.get(self._gd_active_file, "")
-                    self._gd_comment_var.set(comm)
-                if self._gd_ai_status_lbl:
-                    self._gd_ai_status_lbl.config(text="✔ AI comments ready for files!", fg=COLORS["success"])
-
-            self.root.after(0, apply)
-
-        threading.Thread(target=do_gen, daemon=True).start()
-
-    def _gd_do_commit(self, push: bool = False):
-        if not self._gd_selected_repo:
-            return
-
-        staged_files = [p for p, var in self._gd_staged_vars.items() if var.get()]
-        if not staged_files:
-            messagebox.showwarning("Nothing Staged", "Please select at least one changed file to commit.", parent=self.root)
-            return
-
-        repo_name = commit_engine.repo_name(self._gd_selected_repo)
-
-        # ── Pre-Commit Health & Issue Check ───────────────────────────────────
-        staged_issues = file_inspector.inspect_files(self._gd_selected_repo, staged_files)
-        if staged_issues:
-            proceed = ui.ask_pre_commit_issues_warning(staged_issues, repo_name=repo_name, parent=self.root)
-            if not proceed:
-                return
-
-        headline = self._gd_headline_var.get().strip() or "chore: update repository files"
-        desc = self._gd_desc_text.get("1.0", "end").strip() if self._gd_desc_text else ""
-        full_msg = f"{headline}\n\n{desc}" if desc else headline
-        mode = self._gd_commit_mode_var.get()
-
-        try:
-            if mode == "individual":
-                file_comment_pairs = []
-                for p in staged_files:
-                    comm = (self._gd_file_comment_vars.get(p).get() if p in self._gd_file_comment_vars else self._gd_file_comments.get(p, "")).strip()
-                    if not comm:
-                        comm = f"chore: update {os.path.basename(p)}"
-                    file_comment_pairs.append((p, comm))
-
-                commit_results = commit_engine.stage_and_commit_individual(self._gd_selected_repo, file_comment_pairs)
-                for item in commit_results:
-                    db.log_commit(
-                        user_id=self.user["id"],
-                        repo_path=self._gd_selected_repo,
-                        commit_msg=item["message"],
-                        files_count=1,
-                        commit_hash=item["hash"],
-                    )
-                summary = f"Created {len(commit_results)} individual commits in Git history"
-            else:
-                summary = commit_engine.stage_and_commit(self._gd_selected_repo, staged_files, full_msg)
-                db.log_commit(
-                    user_id=self.user["id"],
-                    repo_path=self._gd_selected_repo,
-                    commit_msg=headline,
-                    files_count=len(staged_files),
-                    commit_hash=summary.split()[0] if summary else "",
-                )
-
-            if push:
-                self._gd_push_commits()
-            else:
-                messagebox.showinfo("Committed", f"Committed successfully:\n{summary}", parent=self.root)
-                self._nav_to("git_desktop")
-
-        except Exception as exc:
-            messagebox.showerror("Commit Failed", f"Could not create commit:\n{exc}", parent=self.root)
 
     def _gd_push_commits(self):
         if not self._gd_selected_repo:
@@ -2752,53 +2241,7 @@ class AdminApp:
                      font=FONTS["body_sm"], fg=COLORS["text_secondary"],
                      bg=COLORS["bg_card"]).pack(side="right")
 
-        self._section_hdr(p, "SYSTEM ACTIVITY — LAST 14 DAYS")
-        usage = db.get_usage_stats(days=14)
-        self._multi_bar_chart(p, usage, width=820, height=180)
-
-    def _multi_bar_chart(self, parent, data: list, width=820, height=180):
-        canvas = tk.Canvas(parent, width=width, height=height,
-                           bg=COLORS["bg_card"], highlightthickness=0)
-        canvas.pack(anchor="w", pady=(0, 8))
-        if not data:
-            canvas.create_text(width // 2, height // 2, text="No data",
-                                fill=COLORS["text_muted"], font=FONTS["body_sm"])
-            return
-        n = len(data)
-        pad_l, pad_b = 20, 30
-        avail_w = width - pad_l - 20
-        grp = avail_w // max(n, 1)
-        bw = max(3, grp // 3 - 2)
-        max_val = max(
-            max((r.get("commits_made", 0) for r in data), default=1),
-            max((r.get("sessions", 0) for r in data), default=1)
-        ) or 1
-        ch = height - pad_b - 10
-        for i, row in enumerate(data):
-            x0 = pad_l + i * grp
-            y1 = height - pad_b
-            for j, (key, color) in enumerate([
-                ("commits_made", COLORS["chart_commits"]),
-                ("sessions",     COLORS["chart_sessions"]),
-            ]):
-                v = row.get(key, 0)
-                bh = int((v / max_val) * ch)
-                xj = x0 + j * (bw + 2)
-                canvas.create_rectangle(xj, y1 - bh, xj + bw, y1,
-                                        fill=color, outline="")
-            if n <= 14 or i % 2 == 0:
-                canvas.create_text(x0 + grp // 2, height - 12,
-                                   text=row["date"][5:],
-                                   fill=COLORS["text_muted"], font=FONTS["caption"])
-        # Legend
-        lx = width - 180
-        for color, label in [(COLORS["chart_commits"], "Commits"),
-                              (COLORS["chart_sessions"], "Sessions")]:
-            canvas.create_rectangle(lx, 8, lx + 12, 18, fill=color, outline="")
-            canvas.create_text(lx + 16, 13, text=label,
-                                fill=COLORS["text_secondary"],
-                                font=FONTS["caption"], anchor="w")
-            lx += 80
+        charts.build_admin_overview(p, days=14)
 
     def _page_users(self):
         from commitmaster.admin_portal import AdminPortal, _UserDialog
@@ -2819,7 +2262,7 @@ class AdminApp:
         tk.Label(sf, text="🔍", font=FONTS["body_md"],
                  fg=COLORS["text_muted"], bg=COLORS["bg_dark"]).pack(side="left")
         self._user_search = tk.StringVar()
-        self._user_search.trace("w", lambda *a: self._refresh_users_list(p))
+        self._user_search.trace_add("write", lambda *a: self._refresh_users_list(p))
         tk.Entry(sf, textvariable=self._user_search, font=FONTS["body_md"],
                  bg=COLORS["bg_input"], fg=COLORS["text_primary"],
                  relief="flat", highlightthickness=1,
@@ -3010,61 +2453,7 @@ class AdminApp:
                  font=FONTS["body_sm"], fg=COLORS["text_secondary"],
                  bg=COLORS["bg_dark"]).pack(anchor="w", pady=(2, 20))
 
-        self._section_hdr(p, "ACTIVITY — LAST 30 DAYS", (0, 8))
-        self._multi_bar_chart(p, db.get_usage_stats(days=30), width=900, height=200)
-
-        self._section_hdr(p, "COMMITS PER USER", (16, 8))
-        users = db.get_all_users()
-        if users:
-            self._user_bar_chart(p, users)
-
-        self._section_hdr(p, "DAILY BREAKDOWN — LAST 7 DAYS", (16, 8))
-        hdr = tk.Frame(p, bg=COLORS["bg_medium"])
-        hdr.pack(fill="x")
-        for col, w in [("Date", 20), ("Sessions", 15),
-                       ("Commits", 15), ("Active Users", 15)]:
-            tk.Label(hdr, text=col, font=FONTS["label_bold"],
-                     fg=COLORS["text_secondary"], bg=COLORS["bg_medium"],
-                     width=w, anchor="w", padx=8, pady=6).pack(side="left")
-        for row_data in reversed(db.get_usage_stats(days=7)):
-            row = tk.Frame(p, bg=COLORS["bg_card"])
-            row.pack(fill="x")
-            tk.Frame(p, height=1, bg=COLORS["border"]).pack(fill="x")
-            for val, w in [
-                (row_data["date"], 20),
-                (str(row_data.get("sessions", 0)), 15),
-                (str(row_data.get("commits_made", 0)), 15),
-                (str(row_data.get("active_users", 0)), 15),
-            ]:
-                tk.Label(row, text=val, font=FONTS["body_sm"],
-                         fg=COLORS["text_primary"], bg=COLORS["bg_card"],
-                         width=w, anchor="w", padx=8, pady=7).pack(side="left")
-
-    def _user_bar_chart(self, parent, users: list):
-        canvas = tk.Canvas(parent, width=900, height=160,
-                           bg=COLORS["bg_card"], highlightthickness=0)
-        canvas.pack(anchor="w", pady=(0, 8))
-        data = sorted(
-            [(u["username"][:12], u.get("total_commits", 0)) for u in users],
-            key=lambda x: x[1], reverse=True)[:12]
-        if not data:
-            return
-        max_v = max(c for _, c in data) or 1
-        n = len(data)
-        bw = min(50, (880 // n) - 4)
-        for i, (name, val) in enumerate(data):
-            x0 = 20 + i * (880 // n)
-            bh = int((val / max_v) * 110)
-            y1 = 120
-            c = AVATAR_COLORS[i % len(AVATAR_COLORS)]
-            canvas.create_rectangle(x0, y1 - bh, x0 + bw, y1,
-                                    fill=c, outline="")
-            if val > 0:
-                canvas.create_text(x0 + bw // 2, y1 - bh - 10,
-                                    text=str(val), fill=c, font=FONTS["caption"])
-            canvas.create_text(x0 + bw // 2, y1 + 14,
-                                text=name, fill=COLORS["text_muted"],
-                                font=FONTS["caption"])
+        charts.build_admin_analytics(p, days=30)
 
     def _page_global_settings(self):
         p = self._pad()
