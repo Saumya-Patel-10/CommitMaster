@@ -1,0 +1,39 @@
+name: Build & Release Standalone Windows App
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+
+    - name: Install Dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install pyinstaller
+
+    - name: Build Standalone Windows Executable
+      run: |
+        python build_exe.py
+
+    - name: Upload Release Binaries to GitHub
+      uses: softprops/action-gh-release@v2
+      if: startsWith(github.ref, 'refs/tags/')
+      with:
+        files: |
+          dist/CommitMaster.exe
+          dist/CommitMaster-v2.0-Windows.zip
+        generate_release_notes: true
