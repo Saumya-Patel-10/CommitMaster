@@ -645,9 +645,11 @@ def ask_pre_commit_issues_warning(
     issues_by_file: Dict[str, List[Dict]],
     repo_name: str = "",
     parent: Optional[tk.Widget] = None,
+    repo_path: Optional[str] = None,
 ) -> bool:
     """
-    Display a modal dialog with details of pre-commit issues found in changed files.
+    Display a modal dialog with details of pre-commit issues found in changed files
+    (offending code, why it matters, how to fix).
     Gives the user the opportunity to cancel commit and fix the issues or proceed anyway.
     Returns True if user chooses to proceed anyway, False if user chooses to cancel.
     """
@@ -660,8 +662,8 @@ def ask_pre_commit_issues_warning(
     def _build_dialog(win, is_toplevel: bool, on_finish):
         win.title("CommitMaster — Pre-Commit Issues Detected")
         _style_window(win)
-        win.geometry("640x520")
-        win.minsize(560, 420)
+        win.geometry("820x680")
+        win.minsize(640, 460)
         win.attributes("-topmost", True)
 
         outer = tk.Frame(win, bg=C["bg"], padx=20, pady=16)
@@ -734,60 +736,55 @@ def ask_pre_commit_issues_warning(
         canvas.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
 
-        # Mousewheel binding
+        # Mousewheel: scoped to this dialog only (never bind_all - that would
+        # steal scrolling from the main window and break it after closing).
         def _on_mousewheel(event):
-            delta = int(-1 * (event.delta / 120)) if event.delta else 1
-            canvas.yview_scroll(delta, "units")
-        canvas.bind_all("<MouseWheel>", _on_mousewheel)
+            canvas.yview_scroll(int(-1 * (event.delta / 120)) if event.delta else 1, "units")
+            return "break"
 
-        # Populate file issue items
+        def _bind_wheel(widget):
+            widget.bind("<MouseWheel>", _on_mousewheel)
+            for child in widget.winfo_children():
+                _bind_wheel(child)
+
+        # Populate file issue items (code snippet + explanation + fix for each)
+        from commitmaster.issue_view import build_issue_card
+        pal = {"bg": C["bg2"], "bg2": C["bg3"], "code_bg": C["entry_bg"], "text": C["text"],
+               "text2": C["text2"], "muted": "#6e7681", "border": C["border"]}
         for file_path, issues in issues_by_file.items():
-            f_frame = tk.Frame(scroll_content, bg=C["bg3"], padx=10, pady=8, highlightthickness=1, highlightbackground=C["border"])
-            f_frame.pack(fill="x", pady=(0, 8))
-
-            f_hdr = tk.Frame(f_frame, bg=C["bg3"])
-            f_hdr.pack(fill="x", pady=(0, 4))
-            tk.Label(f_hdr, text=f"📄 {file_path}", fg=C["text"], bg=C["bg3"], font=("Segoe UI", 10, "bold")).pack(side="left")
-            tk.Label(f_hdr, text=f"({len(issues)} issue{'s' if len(issues) != 1 else ''})", fg=C["text2"], bg=C["bg3"], font=("Segoe UI", 9)).pack(side="left", padx=(6, 0))
-
+            f_hdr = tk.Frame(scroll_content, bg=C["bg2"])
+            f_hdr.pack(fill="x", pady=(4, 6))
+            tk.Label(f_hdr, text=f"📄 {file_path}", fg=C["text"], bg=C["bg2"],
+                     font=("Segoe UI", 10, "bold")).pack(side="left")
+            tk.Label(f_hdr, text=f"{len(issues)} issue{'s' if len(issues) != 1 else ''}", fg=C["text2"],
+                     bg=C["bg2"], font=("Segoe UI", 9)).pack(side="left", padx=(8, 0))
             for issue in issues:
-                i_row = tk.Frame(f_frame, bg=C["bg3"])
-                i_row.pack(fill="x", pady=2)
-
-                sev = issue.get("severity", "warning")
-                if sev == "error":
-                    sev_badge = "❌ ERROR"
-                    sev_fg = "#f85149"
-                elif sev == "security":
-                    sev_badge = "🛡️ SECURITY"
-                    sev_fg = "#f0883e"
-                else:
-                    sev_badge = "⚠️ WARNING"
-                    sev_fg = "#d29922"
-
-                line_num = issue.get("line", 1)
-                tk.Label(i_row, text=f"[{sev_badge} L{line_num}]", fg=sev_fg, bg=C["bg3"], font=("Segoe UI", 8, "bold")).pack(side="left", padx=(0, 6))
-                tk.Label(i_row, text=issue.get("message", ""), fg=C["text"], bg=C["bg3"], font=("Segoe UI", 9), wraplength=480, justify="left").pack(side="left", fill="x", expand=True)
-
-                snippet = issue.get("snippet", "").strip()
-                if snippet:
-                    snip_row = tk.Frame(f_frame, bg=C["entry_bg"], padx=6, pady=2)
-                    snip_row.pack(fill="x", padx=(20, 0), pady=(1, 4))
-                    tk.Label(snip_row, text=f"> {snippet}", fg=C["text2"], bg=C["entry_bg"], font=("Consolas", 8), anchor="w").pack(fill="x")
+                build_issue_card(scroll_content, issue, pal, repo_path=repo_path,
+                                 show_file=False, wrap=720).pack(fill="x", pady=(0, 8))
+        scroll_content.update_idletasks()
+        _bind_wheel(scroll_content)
+        canvas.bind("<MouseWheel>", _on_mousewheel)
 
         # Bottom Action Buttons
         btn_row = tk.Frame(outer, bg=C["bg"])
         btn_row.pack(fill="x")
 
         def _cancel():
-            canvas.unbind_all("<MouseWheel>")
             result["proceed"] = False
             on_finish()
 
         def _proceed():
-            canvas.unbind_all("<MouseWheel>")
             result["proceed"] = True
             on_finish()
+
+        def _copy_report():
+            from commitmaster.file_inspector import format_issue_report
+            try:
+                win.clipboard_clear()
+                win.clipboard_append(format_issue_report(issues_by_file))
+                copy_all_btn.config(text="✔ Report copied")
+            except tk.TclError:
+                pass
 
         cancel_btn = tk.Button(
             btn_row,
@@ -823,8 +820,17 @@ def ask_pre_commit_issues_warning(
         )
         proceed_btn.pack(side="left")
 
+        copy_all_btn = tk.Button(
+            btn_row, text="📋 Copy full report", font=("Segoe UI", 9), fg=C["text"], bg=C["btn2_bg"],
+            activebackground=C["border"], activeforeground=C["text"], relief="flat", bd=0,
+            cursor="hand2", padx=12, pady=8, command=_copy_report,
+        )
+        copy_all_btn.pack(side="right")
+
         win.protocol("WM_DELETE_WINDOW", _cancel)
-        _center(win)
+        win.update_idletasks()
+        w, h = 820, min(680, max(460, win.winfo_screenheight() - 120))
+        win.geometry(f"{w}x{h}+{(win.winfo_screenwidth() - w) // 2}+{(win.winfo_screenheight() - h) // 2 - 20}")
 
     # If parent is provided and mainloop is running, run as transient modal
     if parent is not None:
