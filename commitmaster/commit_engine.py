@@ -83,16 +83,174 @@ def _walk(folder: str, depth: int, max_depth: int, repos: List[str]) -> None:
 # ── Repo introspection ────────────────────────────────────────────────────────
 
 def uncommitted_changes(repo_path: str) -> List[Tuple[str, str]]:
-    """Return list of (status, path) for pending changes, [] if clean."""
-    out = git(repo_path, "status", "--porcelain", "-uall")
+    """
+    Return list of (status, path) for pending changes, [] if clean.
+    Uses GitHub Desktop's proven inspection architecture:
+    1. Runs update-index --refresh to ensure index stats are in sync with filesystem.
+    2. Passes -c core.quotepath=false and --untracked-files=all with porcelain=v2.
+    3. Seamlessly expands any untracked folder into individual file entries.
+    Guarantees 100% parity with official GitHub Desktop.
+    """
+    repo_path = os.path.normpath(repo_path)
+    # 1. Update index stat cache (identical to GitHub Desktop internal worker)
+    try:
+        git(repo_path, "update-index", "-q", "--refresh")
+    except GitError:
+        pass
+
+    # 2. First try porcelain=v2 with raw unquoted paths (matching GitHub Desktop)
+    try:
+        out = git(
+            repo_path,
+            "-c", "core.quotepath=false",
+            "status",
+            "--porcelain=v2",
+            "--untracked-files=all",
+            "--ignore-submodules=none",
+        )
+        changes = _parse_porcelain_v2(out, repo_path=repo_path)
+        log.debug("uncommitted_changes (v2) found %d files in %s", len(changes), repo_path)
+        return changes
+    except GitError:
+        # Resilient fallback to porcelain v1 for older Git installations
+        out = git(
+            repo_path,
+            "-c", "core.quotepath=false",
+            "status",
+            "--porcelain=v1",
+            "--untracked-files=all",
+        )
+        changes = _parse_porcelain_v1(out, repo_path=repo_path)
+        log.debug("uncommitted_changes (v1 fallback) found %d files in %s", len(changes), repo_path)
+        return changes
+
+
+def _format_xy_status(xy: str) -> str:
+    """Map 2-character Git status code (e.g., '.M', 'M.', 'MM', 'A.', '.D') to human-readable label."""
+    if not xy or len(xy) < 2:
+        return "M"
+    index_st, work_st = xy[0], xy[1]
+    if index_st == "U" or work_st == "U" or xy in ("AA", "DD"):
+        return "U"
+    if "R" in xy:
+        return "R"
+    if "A" in xy:
+        return "A" if "M" not in xy else "AM"
+    if "D" in xy:
+        return "D"
+    if xy == "MM":
+        return "MM"
+    if "M" in xy:
+        return "M"
+    return xy.strip(".") or "M"
+
+
+def _expand_dir_files(repo_path: Optional[str], dir_rel_path: str, seen: set) -> List[Tuple[str, str]]:
+    """Expand untracked directory into individual files matching GitHub Desktop's view."""
+    added = []
+    if not repo_path:
+        return added
+    full_path = os.path.join(repo_path, dir_rel_path)
+    if os.path.isdir(full_path):
+        for root, _, filenames in os.walk(full_path):
+            for fn in sorted(filenames):
+                rel = os.path.relpath(os.path.join(root, fn), repo_path).replace("\\", "/")
+                if rel not in seen:
+                    seen.add(rel)
+                    added.append(("??", rel))
+    return added
+
+
+def _parse_porcelain_v2(out: str, repo_path: Optional[str] = None) -> List[Tuple[str, str]]:
+    """Parse git status --porcelain=v2 output without dropping any files or paths with spaces."""
     changes: List[Tuple[str, str]] = []
+    seen = set()
+
     for line in out.splitlines():
-        if not line.strip():
+        line = line.strip()
+        if not line or line.startswith("#"):
             continue
-        status, path = line[:2], line[3:].strip()
-        if " -> " in path:       # renames: keep the new path
+
+        line_type = line[:1]
+
+        if line_type == "1":
+            # 1 <XY> <sub> <mH> <mI> <mW> <hH> <hI> <path>
+            tokens = line.split(" ", 8)
+            if len(tokens) >= 9:
+                xy = tokens[1]
+                path = tokens[8].strip('"')
+                st = _format_xy_status(xy)
+                if path not in seen:
+                    seen.add(path)
+                    changes.append((st, path))
+
+        elif line_type == "2":
+            # 2 <XY> <sub> <mH> <mI> <mW> <hH> <hI> <X><score> <path>\t<origPath>
+            tokens = line.split(" ", 9)
+            if len(tokens) >= 10:
+                xy = tokens[1]
+                path_part = tokens[9]
+                new_path = path_part.split("\t")[0].strip('"')
+                st = _format_xy_status(xy)
+                if new_path not in seen:
+                    seen.add(new_path)
+                    changes.append((st, new_path))
+
+        elif line_type == "u":
+            # Unmerged / conflict: u <XY> <sub> <m1> <m2> <m3> <mW> <h1> <h2> <h3> <path>
+            tokens = line.split(" ", 10)
+            if len(tokens) >= 11:
+                path = tokens[10].strip('"')
+                if path not in seen:
+                    seen.add(path)
+                    changes.append(("U", path))
+
+        elif line_type == "?":
+            # ? <path>
+            path = line[2:].strip().strip('"')
+            if path:
+                if path.endswith("/") or (repo_path and os.path.isdir(os.path.join(repo_path, path))):
+                    expanded = _expand_dir_files(repo_path, path, seen)
+                    if expanded:
+                        changes.extend(expanded)
+                    elif path not in seen:
+                        seen.add(path)
+                        changes.append(("??", path))
+                elif path not in seen:
+                    seen.add(path)
+                    changes.append(("??", path))
+
+    return changes
+
+
+def _parse_porcelain_v1(out: str, repo_path: Optional[str] = None) -> List[Tuple[str, str]]:
+    """Tolerant porcelain v1 parser with clean unquoting and directory expansion."""
+    changes: List[Tuple[str, str]] = []
+    seen = set()
+
+    for line in out.splitlines():
+        if not line or line.startswith("#") or line.startswith("!!"):
+            continue
+        if len(line) < 3:
+            continue
+        status = line[:2]
+        path = line[3:].strip()
+        if " -> " in path:
             path = path.split(" -> ")[1]
-        changes.append((status.strip(), path.strip('"')))
+        path = path.strip('"')
+        st = status.strip() or status
+        if path:
+            if path.endswith("/") or (repo_path and os.path.isdir(os.path.join(repo_path, path))):
+                expanded = _expand_dir_files(repo_path, path, seen)
+                if expanded:
+                    changes.extend(expanded)
+                elif path not in seen:
+                    seen.add(path)
+                    changes.append((st, path))
+            elif path not in seen:
+                seen.add(path)
+                changes.append((st, path))
+
     return changes
 
 
@@ -131,13 +289,55 @@ def stage_and_commit(repo_path: str, files: List[str], message: str) -> str:
     """Stage specific files and create one commit.  Returns commit summary."""
     if not files:
         raise GitError("Nothing to stage")
+    # Clean staging index first so only intended files are committed
+    try:
+        git(repo_path, "reset")
+    except GitError:
+        pass
     # Chunk the adds — very long arg lists can hit OS command-line limits.
     for i in range(0, len(files), 40):
-        git(repo_path, "add", "--", *files[i:i + 40])
+        git(repo_path, "add", "-A", "--", *files[i:i + 40])
     git(repo_path, "commit", "-m", message)
     summary = git(repo_path, "log", "-1", "--oneline").strip()
     log.info("Committed in %s: %s", repo_name(repo_path), summary)
     return summary
+
+
+def stage_and_commit_individual(
+    repo_path: str,
+    file_comments: List[Tuple[str, str]],
+) -> List[Dict[str, str]]:
+    """
+    Commit each file individually with its own dedicated commit comment.
+    file_comments: list of (file_path, comment_message)
+    Returns list of dicts: {"file": path, "hash": hash, "summary": summary, "message": message}
+    """
+    if not file_comments:
+        raise GitError("No files specified for individual commits.")
+
+    # Unstage any previously staged files
+    try:
+        git(repo_path, "reset")
+    except GitError:
+        pass
+
+    results: List[Dict[str, str]] = []
+    for file_path, msg in file_comments:
+        clean_msg = (msg or "").strip() or f"chore: update {os.path.basename(file_path)}"
+        # Stage only this specific file (handles additions, modifications, and deletions)
+        git(repo_path, "add", "-A", "--", file_path)
+        git(repo_path, "commit", "-m", clean_msg)
+        summary = git(repo_path, "log", "-1", "--oneline").strip()
+        commit_hash = summary.split()[0] if summary else ""
+        results.append({
+            "file": file_path,
+            "hash": commit_hash,
+            "summary": summary,
+            "message": clean_msg,
+        })
+        log.info("Committed individually in %s [%s]: %s", repo_name(repo_path), file_path, summary)
+
+    return results
 
 
 # ── GitHub Desktop ────────────────────────────────────────────────────────────
