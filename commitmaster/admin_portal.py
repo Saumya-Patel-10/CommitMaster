@@ -10,7 +10,7 @@ from tkinter import messagebox, simpledialog, ttk
 from datetime import datetime
 from typing import Dict, Callable
 
-from commitmaster import commit_engine
+from commitmaster import commit_engine, charts, navigation
 from commitmaster.app_styles import (
     COLORS, FONTS, SIZES, AVATAR_COLORS, THEMES, ACCENTS, FONT_FAMILIES, FONT_SCALES,
     apply_customization, get_active_customization
@@ -90,9 +90,12 @@ class AdminPortal:
                                      scrollregion=self._canvas.bbox("all")))
         self._canvas.bind("<Configure>",
                           lambda e: self._canvas.itemconfig(self._cw, width=e.width))
-        self._canvas.bind_all("<MouseWheel>",
-                              lambda e: self._canvas.yview_scroll(
-                                  -1 * (e.delta // 120), "units"))
+        self._navigator = navigation.PageNavigator(self.root, self._canvas, self._content_frame, self._cw)
+        navigation.install_smooth_scroll(self.root, self._canvas, self._content_frame)
+        navigation.install_header_controls(
+            self._header_frame, self._header_title, self._navigator, self._nav_back, self._nav_forward)
+        navigation.install_shortcuts(
+            self.root, self._nav_order, self._go, self._nav_back, self._nav_forward)
 
     # ── Sidebar ───────────────────────────────────────────────────────────────
 
@@ -145,13 +148,9 @@ class AdminPortal:
         ]
         all_nav = admin_nav + my_nav
         self._nav_buttons = {}
+        self._nav_order = [k for _, _, k in all_nav]
         for icon, label, key in all_nav:
-            btn = tk.Button(sb, text=f"  {icon}  {label}",
-                            font=FONTS["label"], fg=COLORS["text_secondary"],
-                            bg=COLORS["bg_sidebar"], relief="flat", bd=0,
-                            cursor="hand2", anchor="w", padx=16, pady=10,
-                            command=lambda k=key: self._nav_to(k))
-            btn.pack(fill="x")
+            btn = navigation.make_nav_button(sb, icon, label, lambda k=key: self._go(k), padx=16, pady=10)
             self._nav_buttons[key] = btn
 
         tk.Frame(sb, bg=COLORS["bg_sidebar"]).pack(fill="both", expand=True)
@@ -165,6 +164,7 @@ class AdminPortal:
 
     def _build_header(self):
         header = tk.Frame(self._main, bg=COLORS["bg_dark"], height=56)
+        self._header_frame = header
         header.pack(fill="x")
         header.pack_propagate(False)
         tk.Frame(self._main, height=2, bg=COLORS["admin"]).pack(fill="x")
@@ -186,14 +186,23 @@ class AdminPortal:
         self._build_layout()
         self._nav_to(nav_to)
 
-    def _nav_to(self, key: str):
-        for k, btn in self._nav_buttons.items():
-            if k == key:
-                btn.config(bg=COLORS["bg_medium"], fg=COLORS["admin"])
-            else:
-                btn.config(bg=COLORS["bg_sidebar"], fg=COLORS["text_secondary"])
-        for w in self._content_frame.winfo_children():
-            w.destroy()
+    def _go(self, key=None):
+        """Navigate to `key`; None reloads the current page."""
+        self._nav_to(key or getattr(self, "_active_key", None) or "dashboard")
+
+    def _nav_back(self):
+        key = self._navigator.step(-1)
+        if key:
+            self._nav_to(key, record=False)
+
+    def _nav_forward(self):
+        key = self._navigator.step(1)
+        if key:
+            self._nav_to(key, record=False)
+
+    def _nav_to(self, key: str, record: bool = True):
+        navigation.set_active_nav(self._nav_buttons, key, COLORS["admin"])
+        self._active_key = key
         self._header_title.config(text={
             "dashboard":       "Dashboard",
             "users":           "User Management",
@@ -216,7 +225,7 @@ class AdminPortal:
             "my_settings":     self._page_my_settings,
         }
         if key in pages:
-            pages[key]()
+            self._navigator.show(key, pages[key], record=record)
 
     # ── My Settings page (admin edits their own account) ──────────────────────
 
@@ -583,72 +592,7 @@ class AdminPortal:
             tk.Label(row, text=f"{tc['commits']} commits", font=FONTS["body_sm"],
                      fg=COLORS["text_secondary"], bg=COLORS["bg_card"]).pack(side="right")
 
-        # Mini chart
-        usage = db.get_usage_stats(days=14)
-        tk.Label(pad, text="SYSTEM ACTIVITY — LAST 14 DAYS", font=FONTS["label_bold"],
-                 fg=COLORS["text_secondary"], bg=COLORS["bg_dark"]).pack(anchor="w", pady=(0, 8))
-        self._draw_multi_chart(pad, usage, width=800, height=180)
-
-    def _draw_multi_chart(self, parent, usage_data: list,
-                          width=800, height=180, show_users=True):
-        canvas = tk.Canvas(parent, width=width, height=height,
-                           bg=COLORS["bg_card"], highlightthickness=0)
-        canvas.pack(anchor="w", pady=(0, 8))
-        if not usage_data:
-            canvas.create_text(width // 2, height // 2,
-                                text="No data available",
-                                fill=COLORS["text_muted"], font=FONTS["body_sm"])
-            return
-
-        n = len(usage_data)
-        pad_l, pad_b = 20, 30
-        avail_w = width - pad_l - 20
-        bar_grp = avail_w // max(n, 1)
-        bar_w = max(3, bar_grp // 3 - 2)
-
-        max_commits = max((r.get("commits_made", 0) for r in usage_data), default=1) or 1
-        max_sess = max((r.get("sessions", 0) for r in usage_data), default=1) or 1
-        max_val = max(max_commits, max_sess)
-
-        chart_h = height - pad_b - 10
-
-        for i, row in enumerate(usage_data):
-            x0 = pad_l + i * bar_grp
-
-            commits = row.get("commits_made", 0)
-            bh = int((commits / max_val) * chart_h)
-            y1 = height - pad_b
-            canvas.create_rectangle(x0, y1 - bh, x0 + bar_w, y1,
-                                    fill=COLORS["chart_commits"], outline="")
-
-            sess = row.get("sessions", 0)
-            bh2 = int((sess / max_val) * chart_h)
-            x1 = x0 + bar_w + 2
-            canvas.create_rectangle(x1, y1 - bh2, x1 + bar_w, y1,
-                                    fill=COLORS["chart_sessions"], outline="")
-
-            if show_users and "active_users" in row:
-                users = row.get("active_users", 0)
-                bh3 = int((users / max_val) * chart_h)
-                x2 = x1 + bar_w + 2
-                canvas.create_rectangle(x2, y1 - bh3, x2 + bar_w, y1,
-                                        fill=COLORS["chart_users"], outline="")
-
-            if n <= 14 or i % 2 == 0:
-                canvas.create_text(x0 + bar_grp // 2, height - 12,
-                                   text=row["date"][5:],
-                                   fill=COLORS["text_muted"], font=FONTS["caption"])
-
-        # Legend
-        lx = width - 200
-        for color, label in [
-            (COLORS["chart_commits"], "Commits"),
-            (COLORS["chart_sessions"], "Sessions"),
-        ]:
-            canvas.create_rectangle(lx, 8, lx + 12, 18, fill=color, outline="")
-            canvas.create_text(lx + 16, 13, text=label, fill=COLORS["text_secondary"],
-                                font=FONTS["caption"], anchor="w")
-            lx += 80
+        charts.build_admin_overview(pad, days=14)
 
     def _page_users(self):
         p = self._content_frame
@@ -674,7 +618,7 @@ class AdminPortal:
         tk.Label(sf, text="🔍", font=FONTS["body_md"],
                  fg=COLORS["text_muted"], bg=COLORS["bg_dark"]).pack(side="left")
         self._search_var = tk.StringVar()
-        self._search_var.trace("w", lambda *a: self._refresh_users(pad))
+        self._search_var.trace_add("write", lambda *a: self._refresh_users(pad))
         se = tk.Entry(sf, textvariable=self._search_var, font=FONTS["body_md"],
                       bg=COLORS["bg_input"], fg=COLORS["text_primary"],
                       relief="flat", highlightthickness=1,
@@ -893,74 +837,7 @@ class AdminPortal:
                  font=FONTS["body_sm"], fg=COLORS["text_secondary"],
                  bg=COLORS["bg_dark"]).pack(anchor="w", pady=(2, 20))
 
-        # 30-day chart
-        tk.Label(pad, text="SYSTEM ACTIVITY — LAST 30 DAYS", font=FONTS["label_bold"],
-                 fg=COLORS["text_secondary"], bg=COLORS["bg_dark"]).pack(anchor="w", pady=(0, 8))
-        usage30 = db.get_usage_stats(days=30)
-        self._draw_multi_chart(pad, usage30, width=900, height=200)
-
-        # Per-user breakdown
-        tk.Label(pad, text="COMMITS PER USER", font=FONTS["label_bold"],
-                 fg=COLORS["text_secondary"], bg=COLORS["bg_dark"]).pack(anchor="w", pady=(16, 8))
-        users = db.get_all_users()
-        if users:
-            self._draw_user_bar_chart(pad, users)
-
-        # 7-day table
-        tk.Label(pad, text="DAILY BREAKDOWN — LAST 7 DAYS", font=FONTS["label_bold"],
-                 fg=COLORS["text_secondary"], bg=COLORS["bg_dark"]).pack(anchor="w", pady=(16, 8))
-        usage7 = db.get_usage_stats(days=7)
-        hdr = tk.Frame(pad, bg=COLORS["bg_medium"])
-        hdr.pack(fill="x")
-        for col, w in [("Date", 20), ("Sessions", 15), ("Commits", 15), ("Active Users", 15)]:
-            tk.Label(hdr, text=col, font=FONTS["label_bold"],
-                     fg=COLORS["text_secondary"], bg=COLORS["bg_medium"],
-                     width=w, anchor="w", padx=8, pady=6).pack(side="left")
-        for row_data in reversed(usage7):
-            row = tk.Frame(pad, bg=COLORS["bg_card"],
-                           highlightbackground=COLORS["border"], highlightthickness=0)
-            row.pack(fill="x")
-            tk.Frame(pad, height=1, bg=COLORS["border"]).pack(fill="x")
-            for val, w in [
-                (row_data["date"], 20),
-                (str(row_data.get("sessions", 0)), 15),
-                (str(row_data.get("commits_made", 0)), 15),
-                (str(row_data.get("active_users", 0)), 15),
-            ]:
-                tk.Label(row, text=val, font=FONTS["body_sm"],
-                         fg=COLORS["text_primary"], bg=COLORS["bg_card"],
-                         width=w, anchor="w", padx=8, pady=7).pack(side="left")
-
-    def _draw_user_bar_chart(self, parent, users: list):
-        canvas = tk.Canvas(parent, width=900, height=160,
-                           bg=COLORS["bg_card"], highlightthickness=0)
-        canvas.pack(anchor="w", pady=(0, 8))
-        data = [(u["username"][:12], u.get("total_commits", 0)) for u in users]
-        data.sort(key=lambda x: x[1], reverse=True)
-        data = data[:12]  # top 12
-        if not data:
-            canvas.create_text(450, 80, text="No data", fill=COLORS["text_muted"],
-                                font=FONTS["body_sm"])
-            return
-        max_val = max(c for _, c in data) or 1
-        n = len(data)
-        bar_w = min(50, (880 // n) - 4)
-        pad_l = 20
-        chart_h = 110
-        pad_b = 40
-        colors = AVATAR_COLORS * 3
-        for i, (name, val) in enumerate(data):
-            x0 = pad_l + i * (880 // n)
-            bh = int((val / max_val) * chart_h)
-            y1 = chart_h + 10
-            c = colors[i % len(colors)]
-            canvas.create_rectangle(x0, y1 - bh, x0 + bar_w, y1, fill=c, outline="")
-            if val > 0:
-                canvas.create_text(x0 + bar_w // 2, y1 - bh - 10,
-                                    text=str(val), fill=c, font=FONTS["caption"])
-            canvas.create_text(x0 + bar_w // 2, y1 + 12,
-                                text=name, fill=COLORS["text_muted"],
-                                font=FONTS["caption"], angle=0)
+        charts.build_admin_analytics(pad, days=30)
 
     def _page_global_settings(self):
         p = self._content_frame
