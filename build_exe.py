@@ -29,10 +29,25 @@ def build():
     print("Running:", " ".join(cmd))
     result = subprocess.run(cmd, cwd=APP_DIR)
     if result.returncode == 0:
-        print("\n✅ Build succeeded!")
-        print(f"   Executable: {APP_DIR}\\dist\\CommitMaster.exe")
+        print("\n[OK] Build succeeded!")
+        exe_path = os.path.join(APP_DIR, "dist", "CommitMaster.exe")
+        print(f"   Executable: {exe_path}")
+
+        # Package into a release ZIP archive ready to share with friends
+        zip_path = os.path.join(APP_DIR, "dist", "CommitMaster-v2.0-Windows.zip")
+        try:
+            import zipfile
+            with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+                zf.write(exe_path, "CommitMaster.exe")
+                readme_path = os.path.join(APP_DIR, "README.md")
+                if os.path.exists(readme_path):
+                    zf.write(readme_path, "README.md")
+            print(f"   Release ZIP: {zip_path}")
+            print("\n[INFO] Ready to distribute! You can upload CommitMaster.exe or CommitMaster-v2.0-Windows.zip.")
+        except Exception as e:
+            print(f"   Could not create zip: {e}")
     else:
-        print("\n❌ Build failed. Check the output above for errors.")
+        print("\n[ERROR] Build failed. Check the output above for errors.")
         sys.exit(1)
 
 
