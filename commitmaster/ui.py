@@ -639,3 +639,222 @@ def ask_push_confirmation(
     run_in_ui_thread(_show)
     done_evt.wait()
     return result["confirmed"]
+
+
+def ask_pre_commit_issues_warning(
+    issues_by_file: Dict[str, List[Dict]],
+    repo_name: str = "",
+    parent: Optional[tk.Widget] = None,
+) -> bool:
+    """
+    Display a modal dialog with details of pre-commit issues found in changed files.
+    Gives the user the opportunity to cancel commit and fix the issues or proceed anyway.
+    Returns True if user chooses to proceed anyway, False if user chooses to cancel.
+    """
+    from commitmaster.file_inspector import summarize_issues
+    summary = summarize_issues(issues_by_file)
+
+    result = {"proceed": False}
+    done_evt = threading.Event()
+
+    def _build_dialog(win, is_toplevel: bool, on_finish):
+        win.title("CommitMaster — Pre-Commit Issues Detected")
+        _style_window(win)
+        win.geometry("640x520")
+        win.minsize(560, 420)
+        win.attributes("-topmost", True)
+
+        outer = tk.Frame(win, bg=C["bg"], padx=20, pady=16)
+        outer.pack(fill="both", expand=True)
+
+        # Header
+        top_frame = tk.Frame(outer, bg=C["bg"])
+        top_frame.pack(fill="x", pady=(0, 10))
+
+        header_lbl = tk.Label(
+            top_frame,
+            text="⚠️  Pre-Commit Warning: Issues Found in Changed Files",
+            fg=C["warn_fg"] if summary["errors"] == 0 else C["err_fg"],
+            bg=C["bg"],
+            font=("Segoe UI", 12, "bold"),
+        )
+        header_lbl.pack(anchor="w")
+
+        repo_info = f" in repository '{repo_name}'" if repo_name else ""
+        sub_lbl = tk.Label(
+            top_frame,
+            text=f"CommitMaster detected potential problems{repo_info}. Please inspect before committing:",
+            fg=C["text2"],
+            bg=C["bg"],
+            font=("Segoe UI", 9),
+        )
+        sub_lbl.pack(anchor="w", pady=(2, 6))
+
+        # Metric Badges Row
+        badges_row = tk.Frame(top_frame, bg=C["bg"])
+        badges_row.pack(fill="x", pady=(0, 6))
+
+        if summary["errors"] > 0:
+            tk.Label(
+                badges_row, text=f" ❌ {summary['errors']} Syntax / Critical Errors ",
+                fg="#ffffff", bg="#da3633", font=("Segoe UI", 9, "bold"), padx=6, pady=2
+            ).pack(side="left", padx=(0, 8))
+
+        if summary["security"] > 0:
+            tk.Label(
+                badges_row, text=f" 🛡️ {summary['security']} Security / Secret Leaks ",
+                fg="#ffffff", bg="#d29922", font=("Segoe UI", 9, "bold"), padx=6, pady=2
+            ).pack(side="left", padx=(0, 8))
+
+        if summary["warnings"] > 0:
+            tk.Label(
+                badges_row, text=f" ⚠️ {summary['warnings']} Warnings ",
+                fg="#ffffff", bg="#9e6a03", font=("Segoe UI", 9, "bold"), padx=6, pady=2
+            ).pack(side="left")
+
+        # Scrollable issues container
+        list_card = tk.Frame(outer, bg=C["bg2"], highlightthickness=1, highlightbackground=C["border"])
+        list_card.pack(fill="both", expand=True, pady=(4, 14))
+
+        canvas = tk.Canvas(list_card, bg=C["bg2"], highlightthickness=0, bd=0)
+        scrollbar = ttk.Scrollbar(list_card, orient="vertical", command=canvas.yview)
+        scroll_content = tk.Frame(canvas, bg=C["bg2"], padx=10, pady=10)
+
+        scroll_content.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+        canvas_win = canvas.create_window((0, 0), window=scroll_content, anchor="nw")
+
+        def _on_canvas_configure(event):
+            canvas.itemconfig(canvas_win, width=event.width)
+        canvas.bind("<Configure>", _on_canvas_configure)
+
+        canvas.configure(xscrollcommand=None, yscrollcommand=scrollbar.set)
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+
+        # Mousewheel binding
+        def _on_mousewheel(event):
+            delta = int(-1 * (event.delta / 120)) if event.delta else 1
+            canvas.yview_scroll(delta, "units")
+        canvas.bind_all("<MouseWheel>", _on_mousewheel)
+
+        # Populate file issue items
+        for file_path, issues in issues_by_file.items():
+            f_frame = tk.Frame(scroll_content, bg=C["bg3"], padx=10, pady=8, highlightthickness=1, highlightbackground=C["border"])
+            f_frame.pack(fill="x", pady=(0, 8))
+
+            f_hdr = tk.Frame(f_frame, bg=C["bg3"])
+            f_hdr.pack(fill="x", pady=(0, 4))
+            tk.Label(f_hdr, text=f"📄 {file_path}", fg=C["text"], bg=C["bg3"], font=("Segoe UI", 10, "bold")).pack(side="left")
+            tk.Label(f_hdr, text=f"({len(issues)} issue{'s' if len(issues) != 1 else ''})", fg=C["text2"], bg=C["bg3"], font=("Segoe UI", 9)).pack(side="left", padx=(6, 0))
+
+            for issue in issues:
+                i_row = tk.Frame(f_frame, bg=C["bg3"])
+                i_row.pack(fill="x", pady=2)
+
+                sev = issue.get("severity", "warning")
+                if sev == "error":
+                    sev_badge = "❌ ERROR"
+                    sev_fg = "#f85149"
+                elif sev == "security":
+                    sev_badge = "🛡️ SECURITY"
+                    sev_fg = "#f0883e"
+                else:
+                    sev_badge = "⚠️ WARNING"
+                    sev_fg = "#d29922"
+
+                line_num = issue.get("line", 1)
+                tk.Label(i_row, text=f"[{sev_badge} L{line_num}]", fg=sev_fg, bg=C["bg3"], font=("Segoe UI", 8, "bold")).pack(side="left", padx=(0, 6))
+                tk.Label(i_row, text=issue.get("message", ""), fg=C["text"], bg=C["bg3"], font=("Segoe UI", 9), wraplength=480, justify="left").pack(side="left", fill="x", expand=True)
+
+                snippet = issue.get("snippet", "").strip()
+                if snippet:
+                    snip_row = tk.Frame(f_frame, bg=C["entry_bg"], padx=6, pady=2)
+                    snip_row.pack(fill="x", padx=(20, 0), pady=(1, 4))
+                    tk.Label(snip_row, text=f"> {snippet}", fg=C["text2"], bg=C["entry_bg"], font=("Consolas", 8), anchor="w").pack(fill="x")
+
+        # Bottom Action Buttons
+        btn_row = tk.Frame(outer, bg=C["bg"])
+        btn_row.pack(fill="x")
+
+        def _cancel():
+            canvas.unbind_all("<MouseWheel>")
+            result["proceed"] = False
+            on_finish()
+
+        def _proceed():
+            canvas.unbind_all("<MouseWheel>")
+            result["proceed"] = True
+            on_finish()
+
+        cancel_btn = tk.Button(
+            btn_row,
+            text="🛑  Cancel Commit & Fix Issues (Recommended)",
+            font=("Segoe UI", 10, "bold"),
+            fg="#ffffff",
+            bg="#da3633",
+            activebackground="#b62324",
+            activeforeground="#ffffff",
+            relief="flat",
+            bd=0,
+            cursor="hand2",
+            padx=14,
+            pady=8,
+            command=_cancel,
+        )
+        cancel_btn.pack(side="left", padx=(0, 10))
+
+        proceed_btn = tk.Button(
+            btn_row,
+            text="⚠️  Proceed Anyway (Ignore Warnings)",
+            font=("Segoe UI", 9),
+            fg=C["text2"],
+            bg=C["btn2_bg"],
+            activebackground=C["border"],
+            activeforeground=C["text"],
+            relief="flat",
+            bd=0,
+            cursor="hand2",
+            padx=12,
+            pady=8,
+            command=_proceed,
+        )
+        proceed_btn.pack(side="left")
+
+        win.protocol("WM_DELETE_WINDOW", _cancel)
+        _center(win)
+
+    # If parent is provided and mainloop is running, run as transient modal
+    if parent is not None:
+        try:
+            modal = tk.Toplevel(parent)
+            modal.transient(parent)
+            modal.grab_set()
+
+            def on_close():
+                modal.destroy()
+                done_evt.set()
+
+            _build_dialog(modal, is_toplevel=True, on_finish=on_close)
+            parent.wait_window(modal)
+            return result["proceed"]
+        except Exception as exc:
+            log.warning("Could not open modal on parent window: %s, falling back to UI thread", exc)
+
+    def _show():
+        root = _make_root()
+        win = tk.Toplevel(root)
+
+        def on_close():
+            win.destroy()
+            root.destroy()
+            done_evt.set()
+
+        _build_dialog(win, is_toplevel=True, on_finish=on_close)
+        root.mainloop()
+
+    run_in_ui_thread(_show)
+    done_evt.wait()
+    return result["proceed"]
