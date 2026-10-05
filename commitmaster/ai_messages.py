@@ -17,7 +17,7 @@ import json
 import os
 import re
 import time
-from typing import Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 import requests
 
@@ -66,21 +66,42 @@ _MAX_RETRIES = 2
 
 # ── Public API ────────────────────────────────────────────────────────────────
 
-def list_models(cfg: dict) -> List[str]:
+_MODEL_CACHE: Dict[str, Any] = {
+    "last_check": 0.0,
+    "base_url": "",
+    "models": [],
+}
+
+
+def list_models(cfg: dict, force: bool = False) -> List[str]:
     """Return model IDs available in Bionic / LM Studio ([] if unreachable)."""
-    base = cfg["ai"]["base_url"].rstrip("/")
+    base = cfg.get("ai", {}).get("base_url", "http://localhost:1234/v1").rstrip("/")
+    now = time.time()
+    if not force and _MODEL_CACHE["base_url"] == base and (now - _MODEL_CACHE["last_check"] < 20.0):
+        return list(_MODEL_CACHE["models"])
+
     try:
-        r = requests.get(f"{base}/models", timeout=5)
+        r = requests.get(f"{base}/models", timeout=(0.4, 1.0))
         r.raise_for_status()
-        return [m["id"] for m in r.json().get("data", [])]
+        models = [m["id"] for m in r.json().get("data", [])]
+        _MODEL_CACHE["last_check"] = now
+        _MODEL_CACHE["base_url"] = base
+        _MODEL_CACHE["models"] = models
+        return models
     except Exception as exc:
         log.debug("list_models failed: %s", exc)
+        _MODEL_CACHE["last_check"] = now
+        _MODEL_CACHE["base_url"] = base
+        _MODEL_CACHE["models"] = []
         return []
 
 
-def detect_model(cfg: dict) -> Optional[str]:
+def detect_model(cfg: dict, force: bool = False) -> Optional[str]:
     """Return the first model loaded in Bionic / LM Studio, or None."""
-    models = list_models(cfg)
+    cfg_model = cfg.get("ai", {}).get("model")
+    if cfg_model:
+        return cfg_model
+    models = list_models(cfg, force=force)
     if models:
         log.debug("Auto-detected model: %s", models[0])
         return models[0]
@@ -89,10 +110,10 @@ def detect_model(cfg: dict) -> Optional[str]:
 
 def test_connection(cfg: dict) -> tuple[bool, str]:
     """Returns (ok, message) for the Settings 'Test connection' button."""
-    model = cfg["ai"].get("model") or detect_model(cfg)
+    model = cfg.get("ai", {}).get("model") or detect_model(cfg, force=True)
     if model:
         return True, f"Connected ✔\nModel in use: {model}"
-    base = cfg["ai"]["base_url"]
+    base = cfg.get("ai", {}).get("base_url", "http://localhost:1234/v1")
     return False, (
         f"Could not reach the AI server at {base}.\n\n"
         "Make sure Bionic / LM Studio is running and the local server is started."
@@ -213,188 +234,435 @@ def _apply_parsed(parsed: list, groups: Dict[str, List[str]], result: Dict[str, 
                     break
 
 
-# ── Per-File AI Comments (Native Local PC AI) ────────────────────────────────
 
-FILE_COMMENTS_SYSTEM_PROMPT = (
-    "You are an expert AI code reviewer running locally on the developer's PC. "
-    "Your job is to inspect git diffs and write accurate, helpful commit comments for each changed file, "
-    "plus an overarching Conventional Commit headline and unified description. "
-    "Reply ONLY with a valid JSON object — no markdown fences, no conversational filler."
+# ══════════════════════════════════════════════════════════════════════════════
+# Per-file commit messages  →  Summary (highlight) + Description (exact changes)
+# ══════════════════════════════════════════════════════════════════════════════
+#
+# Every selected file is analysed in isolation: the model only ever sees the diff
+# of ONE file, so a message can never be mixed up with another file's changes.
+
+FILE_SYSTEM_PROMPT = (
+    "You are a senior software engineer who writes precise, professional git commit messages. "
+    "You describe ONLY what is visible in the diff you are given. "
+    "Reply ONLY with a valid JSON object - no markdown fences, no extra prose."
 )
 
-FILE_COMMENTS_USER_PROMPT = """\
-Repository: {repo}
-Branch: {branch}
+FILE_USER_PROMPT = """\
+Repository: {repo}   Branch: {branch}
 
-=== Files changed and their diffs ===
-{diffs}
+You are writing the commit message for exactly ONE file.
+File: {path}
+Change type: {status}
 
-Task:
-1. Write an overarching Conventional Commit headline (≤72 characters, e.g. feat(auth): add GitHub web OAuth).
-2. For EACH file listed, write a 1-2 sentence explanation / comment describing specifically what changed in that file.
-3. Write a concise bulleted description combining the file points.
+=== Diff of this file only ===
+{diff}
 
-Format:
-{{
-  "headline": "<type>: <concise summary>",
-  "file_comments": {{
-    "<file_path>": "<1-2 sentence description of change in this file>"
-  }},
-  "description": "- <file_path>: <summary>\\n- ..."
-}}
+{others}Write:
+  "summary":     a Conventional Commit headline, <= 72 chars, format "<type>(<scope>): <imperative highlight>".
+                 It must state the PURPOSE / OUTCOME of the change (the highlight), not just name the file.
+                 Bad:  "chore: update {base}"      Good: "feat(auth): add token refresh with retry on 401"
+                 Types: feat, fix, refactor, perf, docs, test, chore, style.
+  "description": 2-6 bullet lines ("- ..."), each naming something concrete that was added, changed,
+                 fixed or removed (functions, classes, behaviours, settings) - taken only from the diff above.
+
+Reply with JSON only:
+{{"summary": "...", "description": "- ...\\n- ..."}}
 """
+
+UNIFIED_USER_PROMPT = """\
+Repository: {repo}   Branch: {branch}
+
+These files are being committed together. Per-file summaries:
+{items}
+
+Write ONE Conventional Commit headline (<= 72 chars, "<type>(<scope>): <imperative highlight>") that captures the
+overall purpose of the whole change. Do not list file names.
+Reply with JSON only: {{"summary": "..."}}
+"""
+
+_PER_FILE_DIFF_CHARS = 6_000
+_CONVENTIONAL = re.compile(r"^(feat|fix|refactor|perf|docs|test|tests|chore|style|build|ci|revert)(\([^)]+\))?!?:\s+\S", re.I)
+_GENERIC_SUMMARY = re.compile(
+    r"^\w+(\([^)]*\))?!?:\s*(update|updated|modify|modified|change|changed|edit|edited|fix|tweak)\s+[\w./\\ -]+\.\w{1,5}\s*$",
+    re.I,
+)
+_CONFIG_EXTS = (".json", ".toml", ".yml", ".yaml", ".ini", ".cfg", ".lock", ".env", ".gitignore", ".txt")
+_DOC_EXTS = (".md", ".rst", ".txt")
+
+
+class _AIUnavailable(Exception):
+    """Raised when the AI server cannot be reached - stops further per-file attempts."""
+
+
+def compose_commit_message(summary: str, description: str = "") -> str:
+    """Join summary + description into the final git commit message."""
+    summary = (summary or "").strip()
+    description = (description or "").strip()
+    return f"{summary}\n\n{description}" if description else summary
+
 
 def generate_file_comments(
     cfg: dict,
     repo_path: str,
     files: Optional[List[str]] = None,
+    progress: Optional[Callable[[int, int, str], None]] = None,
 ) -> Dict[str, Any]:
     """
-    Generate commit comments for each individual file using the native local AI.
+    Generate a Summary + Description for every file in `files` (and only those files).
+
     Returns:
     {
-        "headline": "feat: ...",
-        "file_comments": { "file/path": "description" },
-        "description": "combined description"
+        "headline":          unified summary (for a single combined commit),
+        "description":       unified description (per-file sections),
+        "file_comments":     {path: summary},
+        "file_descriptions": {path: description},
     }
     """
     from commitmaster import commit_engine
 
-    # Gather target files
-    if not files:
-        changes = commit_engine.uncommitted_changes(repo_path)
-        files = [p for _, p in changes]
+    try:
+        changes = {p: st for st, p in commit_engine.uncommitted_changes(repo_path)}
+    except Exception as exc:
+        log.debug("Could not read status: %s", exc)
+        changes = {}
 
     if not files:
-        return {
-            "headline": "chore: update repository",
-            "file_comments": {},
-            "description": "No modified files found.",
-        }
+        files = list(changes)
+    seen = set()
+    files = [f for f in files if not (f in seen or seen.add(f))]
+
+    if not files:
+        return {"headline": "chore: update repository", "description": "No modified files found.",
+                "file_comments": {}, "file_descriptions": {}}
 
     model = cfg.get("ai", {}).get("model") or detect_model(cfg)
-    # If no AI model, use intelligent heuristic per-file comments
     if not model:
-        log.info("Local AI offline or not detected — generating heuristic per-file comments.")
-        return _heuristic_file_comments(repo_path, files)
+        log.info("Local AI offline or not detected - using diff-based heuristic messages.")
 
-    # Build per-file diff snippets (cap at 12 files to avoid prompt bloat)
-    diff_blocks = []
+    repo = commit_engine.repo_name(repo_path)
+    branch = commit_engine.current_branch(repo_path)
     sensitive = cfg.get("sensitive_patterns", [])
-    for f in files[:12]:
-        is_sensitive = any(s in f.lower() for s in sensitive)
-        if is_sensitive:
-            diff_blocks.append(f"--- File: {f} ---\n[Sensitive file content omitted for security]\n")
-        else:
-            fdiff = commit_engine.file_diff(repo_path, f, max_chars=1_000)
-            diff_blocks.append(f"--- File: {f} ---\n{fdiff}\n")
-    if len(files) > 12:
-        diff_blocks.append(f"... and {len(files) - 12} additional files.")
 
-    diffs_text = "\n".join(diff_blocks)
-    prompt = FILE_COMMENTS_USER_PROMPT.format(
-        repo=commit_engine.repo_name(repo_path),
-        branch=commit_engine.current_branch(repo_path),
-        diffs=diffs_text,
-    )
+    per_file: Dict[str, Dict[str, str]] = {}
+    for idx, f in enumerate(files):
+        if progress:
+            try:
+                progress(idx, len(files), f)
+            except Exception:
+                pass
+        status = changes.get(f, "M")
 
+        if any(s in f.lower().replace("\\", "/") for s in sensitive):
+            per_file[f] = {
+                "summary": "chore(config): update protected configuration",
+                "description": "- Sensitive file - content intentionally not analysed or shared with the AI",
+            }
+            continue
+
+        full_diff = commit_engine.file_diff(repo_path, f, max_chars=400_000)
+        diff = full_diff[:_PER_FILE_DIFF_CHARS]          # what the model gets to read
+        facts = _analyze_diff(full_diff, f, status)      # statistics use the whole diff
+
+        result = None
+        if model:
+            try:
+                result = _ai_message_for_file(cfg, model, repo, branch, f, status, diff, files, facts)
+            except _AIUnavailable:
+                model = None            # don't wait for a timeout on every remaining file
+            except Exception as exc:
+                log.warning("AI message for %s failed: %s", f, exc)
+        per_file[f] = result or _heuristic_message(f, status, facts)
+
+    headline = _unified_summary(cfg, model, repo, branch, per_file)
+    return {
+        "headline": headline,
+        "description": _unified_description(per_file),
+        "file_comments": {f: m["summary"] for f, m in per_file.items()},
+        "file_descriptions": {f: m["description"] for f, m in per_file.items()},
+    }
+
+
+# ── AI calls ──────────────────────────────────────────────────────────────────
+
+def _chat_json(cfg: dict, model: str, system: str, user: str, max_tokens: int) -> dict:
     base = cfg.get("ai", {}).get("base_url", "http://localhost:1234/v1").rstrip("/")
     payload = {
         "model": model,
-        "messages": [
-            {"role": "system", "content": FILE_COMMENTS_SYSTEM_PROMPT},
-            {"role": "user",   "content": prompt},
-        ],
+        "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
         "temperature": 0.2,
-        "max_tokens": 1500,
+        "max_tokens": max_tokens,
         "stream": False,
     }
-
+    timeout = cfg.get("ai", {}).get("timeout_seconds", 120)
     try:
-        log.info("Calling local AI '%s' for per-file comments...", model)
-        timeout = cfg.get("ai", {}).get("timeout_seconds", 120)
-        resp = requests.post(
-            f"{base}/chat/completions",
-            json=payload,
-            timeout=timeout,
-        )
+        resp = requests.post(f"{base}/chat/completions", json=payload, timeout=timeout)
         resp.raise_for_status()
-        msg_obj = resp.json()["choices"][0]["message"]
-        raw = (msg_obj.get("content") or "").strip()
-        if not raw and "reasoning_content" in msg_obj:
-            raw = (msg_obj.get("reasoning_content") or "").strip()
-        log.debug("Raw per-file AI response: %s", raw[:300])
-        parsed = _parse_file_comments_json(raw, files)
-        return parsed
-    except Exception as exc:
-        log.warning("Local AI per-file comment generation failed: %s — using heuristics.", exc)
-        return _heuristic_file_comments(repo_path, files)
+    except (requests.ConnectionError, requests.Timeout) as exc:
+        raise _AIUnavailable(str(exc))
+    msg_obj = resp.json()["choices"][0]["message"]
+    raw = (msg_obj.get("content") or "").strip()
+    if not raw and msg_obj.get("reasoning_content"):
+        raw = msg_obj["reasoning_content"].strip()
+    log.debug("Raw AI response: %s", raw[:300])
+    return _extract_json_object(raw)
 
 
-def _parse_file_comments_json(text: str, files: List[str]) -> Dict[str, Any]:
-    """Parse JSON containing headline, file_comments, and description."""
+def _extract_json_object(text: str) -> dict:
     clean = re.sub(r"```(?:json)?\s*", "", text).strip().rstrip("`").strip()
     match = re.search(r"\{.*\}", clean, re.DOTALL)
-    if match:
+    if not match:
+        raise ValueError(f"No JSON object in model output: {text[:120]!r}")
+    return json.loads(match.group(0))
+
+
+def _ai_message_for_file(cfg, model, repo, branch, path, status, diff, all_files, facts) -> Optional[Dict[str, str]]:
+    base = os.path.basename(path)
+    other_names = [os.path.basename(o) for o in all_files if o != path]
+    others = ""
+    if other_names:
+        others = ("Other files exist in this working tree but are committed separately - never mention them: "
+                  + ", ".join(other_names[:15]) + "\n\n")
+    prompt = FILE_USER_PROMPT.format(
+        repo=repo, branch=branch, path=path, base=base,
+        status=_STATUS_WORDS.get(status, "modified"), diff=diff or "(no textual diff)", others=others,
+    )
+    data = _chat_json(cfg, model, FILE_SYSTEM_PROMPT, prompt, max_tokens=500)
+
+    summary = _clean_summary(str(data.get("summary", "")), path, facts)
+    desc = data.get("description", "")
+    if isinstance(desc, list):
+        desc = "\n".join(str(d) for d in desc)
+    desc = _clean_description(str(desc), path, other_names)
+    fallback = _heuristic_message(path, status, facts)
+    if not summary or _GENERIC_SUMMARY.match(summary):
+        summary = fallback["summary"]
+    if not desc:
+        desc = fallback["description"]
+    return {"summary": summary, "description": desc}
+
+
+def _unified_summary(cfg, model, repo, branch, per_file) -> str:
+    if len(per_file) == 1:
+        return next(iter(per_file.values()))["summary"]
+    if model:
+        items = "\n".join(f"- {os.path.basename(f)}: {m['summary']}" for f, m in per_file.items())
         try:
-            data = json.loads(match.group(0))
-            headline = data.get("headline", "").strip() or "chore: update files"
-            file_comments = data.get("file_comments", {})
-            for f in files:
-                if f not in file_comments or not file_comments[f]:
-                    file_comments[f] = f"Update logic and content in {os.path.basename(f)}"
-            desc = data.get("description", "").strip()
-            if not desc and file_comments:
-                desc = "\n".join(f"- {f}: {c}" for f, c in file_comments.items())
-            return {
-                "headline": headline,
-                "file_comments": file_comments,
-                "description": desc,
-            }
-        except Exception:
-            pass
+            data = _chat_json(cfg, model, FILE_SYSTEM_PROMPT,
+                              UNIFIED_USER_PROMPT.format(repo=repo, branch=branch, items=items), max_tokens=150)
+            s = _clean_summary(str(data.get("summary", "")), "", {})
+            if s and _CONVENTIONAL.match(s):
+                return s
+        except Exception as exc:
+            log.debug("Unified summary AI failed: %s", exc)
+    return _heuristic_unified_summary(per_file)
 
-    # Fallback if structure didn't parse perfectly
+
+def _heuristic_unified_summary(per_file: Dict[str, Dict[str, str]]) -> str:
+    types: Dict[str, int] = {}
+    for m in per_file.values():
+        t = (m["summary"].split(":", 1)[0].split("(")[0] or "chore").lower()
+        types[t] = types.get(t, 0) + 1
+    priority = ["feat", "fix", "perf", "refactor", "docs", "test", "chore"]
+    main = max(types, key=lambda t: (types[t], -priority.index(t) if t in priority else -99))
+    bodies = [m["summary"].split(":", 1)[-1].strip() for m in per_file.values()]
+    first = bodies[0]
+    n = len(bodies)
+    text = f"{main}: {first}" + (f" and {n - 1} related change{'s' if n > 2 else ''}" if n > 1 else "")
+    if len(text) > 72:
+        stems = ", ".join(os.path.splitext(os.path.basename(f))[0] for f in list(per_file)[:3])
+        text = f"{main}: update {n} files ({stems}{'…' if n > 3 else ''})"
+    return _truncate(text, 72)
+
+
+def _unified_description(per_file: Dict[str, Dict[str, str]]) -> str:
+    blocks = []
+    for f, m in per_file.items():
+        blocks.append(f"{f}\n{m['description']}".strip())
+    return "\n\n".join(blocks)
+
+
+# ── Cleaning / validation ─────────────────────────────────────────────────────
+
+_STATUS_WORDS = {"M": "modified", "MM": "modified", "A": "new file", "AM": "new file", "??": "new file",
+                 "D": "deleted", "R": "renamed", "U": "conflicted"}
+
+
+def _truncate(text: str, limit: int) -> str:
+    text = text.strip()
+    if len(text) <= limit:
+        return text
+    cut = text[:limit - 1]
+    if " " in cut[limit // 2:]:
+        cut = cut[:cut.rfind(" ")]
+    return cut.rstrip(" ,;:-") + "…"
+
+
+def _clean_summary(text: str, path: str, facts: dict) -> str:
+    s = text.strip().splitlines()[0].strip() if text.strip() else ""
+    s = s.strip("`\"' ").rstrip(".")
+    if not s:
+        return ""
+    if path and not _CONVENTIONAL.match(s):
+        ftype, scope = _guess_type(path, facts.get("status", "M"), facts), _scope_for(path)
+        s = f"{ftype}({scope}): {s[0].lower() + s[1:]}"
+    return _truncate(s, 72)
+
+
+def _clean_description(text: str, path: str, other_basenames: List[str]) -> str:
+    lines = []
+    for raw in text.replace("\\n", "\n").splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        if any(len(b) > 3 and b.lower() in line.lower() for b in other_basenames):
+            continue                      # never let another file leak in
+        line = re.sub(r"^[\-\*\u2022\d.\)\s]+", "", line).strip()
+        if line:
+            lines.append("- " + line[0].upper() + line[1:])
+    return "\n".join(lines[:8])
+
+
+# ── Diff analysis + heuristic fallback ───────────────────────────────────────
+
+_SYM_RX = re.compile(
+    r"^[+-]\s*(?:export\s+)?(?:async\s+)?(?:(def|class|function)\s+(\w+)|(?:const|let|var)\s+(\w+)\s*=\s*(?:async\s*)?(?:\(|function))"
+)
+_HUNK_RX = re.compile(r"^@@[^@]*@@\s*(?:async\s+)?(?:export\s+)?(?:(def|class|function)\s+(\w+))")
+_HEADING_RX = re.compile(r"^([+-])\s{0,3}#{1,4}\s+(.+)$")
+
+
+def _analyze_diff(diff: str, path: str, status: str) -> dict:
+    added = removed = 0
+    add_syms: List[tuple] = []
+    rem_syms: List[tuple] = []
+    ctx_syms: List[str] = []
+    headings_added: List[str] = []
+    for line in diff.splitlines():
+        if line.startswith("+++") or line.startswith("---"):
+            continue
+        if line.startswith("+"):
+            added += 1
+        elif line.startswith("-"):
+            removed += 1
+        m = _SYM_RX.match(line)
+        if m:
+            kind = m.group(1) or "function"
+            name = m.group(2) or m.group(3)
+            (add_syms if line[0] == "+" else rem_syms).append((kind, name))
+            continue
+        h = _HUNK_RX.match(line)
+        if h:
+            ctx_syms.append(h.group(2))
+            continue
+        hd = _HEADING_RX.match(line)
+        if hd and hd.group(1) == "+" and path.lower().endswith(_DOC_EXTS):
+            headings_added.append(hd.group(2).strip())
+    added_names = {n for _, n in add_syms}
+    removed_names = {n for _, n in rem_syms}
     return {
-        "headline": "feat: update project files",
-        "file_comments": {f: "Updated file logic and content" for f in files},
-        "description": "\n".join(f"- {f}: Updated" for f in files),
+        "status": status,
+        "added": added,
+        "removed": removed,
+        "new_syms": [(k, n) for k, n in add_syms if n not in removed_names],
+        "gone_syms": [(k, n) for k, n in rem_syms if n not in added_names],
+        "touched": list(dict.fromkeys(
+            [n for _, n in add_syms if n in removed_names] +
+            [n for n in ctx_syms if n not in added_names and n not in removed_names])),
+        "headings": headings_added,
     }
 
 
-def _heuristic_file_comments(repo_path: str, files: List[str]) -> Dict[str, Any]:
-    """Generate smart, clean per-file comments without external AI calls."""
-    comments = {}
-    headline_type = "refactor"
+def _scope_for(path: str) -> str:
+    stem = os.path.splitext(os.path.basename(path))[0]
+    if stem in ("__init__", "index", "main") or not stem:
+        parent = os.path.basename(os.path.dirname(path.replace("\\", "/")))
+        stem = parent or stem or "repo"
+    return stem.lstrip(".") or "repo"
 
-    for f in files:
-        low = f.lower()
-        if low.endswith((".md", ".txt", ".rst")):
-            comments[f] = "Update documentation and notes"
-            if headline_type != "feat":
-                headline_type = "docs"
-        elif "test" in low:
-            comments[f] = "Update automated tests and validation assertions"
-            if headline_type not in ("feat", "fix"):
-                headline_type = "test"
-        elif low.endswith((".json", ".toml", ".yml", ".yaml", ".ini", ".cfg", ".lock")):
-            comments[f] = "Update configuration and dependencies"
-        elif low.endswith((".html", ".css")):
-            comments[f] = "Update UI layout and visual styling"
-        elif "fix" in low or "bug" in low:
-            comments[f] = "Fix issues and improve error handling"
-            headline_type = "fix"
-        elif "auth" in low or "login" in low:
-            comments[f] = "Update authentication and account workflow"
-            headline_type = "feat"
-        else:
-            comments[f] = f"Update logic and implementation in {os.path.basename(f)}"
 
-    headline = f"{headline_type}: update {len(files)} file{'s' if len(files) != 1 else ''}"
-    desc = "\n".join(f"- {f}: {c}" for f, c in comments.items())
+def _guess_type(path: str, status: str, facts: dict) -> str:
+    low = path.lower().replace("\\", "/")
+    base = os.path.basename(low)
+    if "test" in low:
+        return "test"
+    if low.endswith(_DOC_EXTS) and base not in ("requirements.txt",) or low.startswith("docs/"):
+        return "docs"
+    if low.endswith(_CONFIG_EXTS) or base.startswith(".") or base in ("requirements.txt", "dockerfile"):
+        return "chore"
+    if low.endswith((".css", ".scss")):
+        return "style"
+    if status in ("??", "A", "AM") or facts.get("new_syms"):
+        return "feat"
+    return "refactor"
 
-    return {
-        "headline": headline,
-        "file_comments": comments,
-        "description": desc,
-    }
+
+def _humanize(path: str) -> str:
+    return _scope_for(path).replace("_", " ").replace("-", " ")
+
+
+def _names(items, limit=3) -> str:
+    names = [n for _, n in items] if items and isinstance(items[0], tuple) else list(items)
+    shown = [f"`{n}`" for n in names[:limit]]
+    if len(names) > limit:
+        shown.append(f"{len(names) - limit} more")
+    if len(shown) > 1:
+        return ", ".join(shown[:-1]) + " and " + shown[-1]
+    return shown[0] if shown else ""
+
+
+def _heuristic_message(path: str, status: str, facts: dict) -> Dict[str, str]:
+    facts = dict(facts or {})
+    facts.setdefault("status", status)
+    ftype = _guess_type(path, status, facts)
+    scope = _scope_for(path)
+    human = _humanize(path)
+    new_syms, touched, gone = facts.get("new_syms", []), facts.get("touched", []), facts.get("gone_syms", [])
+    added, removed = facts.get("added", 0), facts.get("removed", 0)
+    is_new = status in ("??", "A", "AM")
+
+    def build(limit: int) -> str:
+        if status == "D":
+            return f"remove {human}"
+        if is_new:
+            if ftype == "docs":
+                return f"add {human} documentation"
+            return f"add {human}" + (f" with {_names(new_syms, limit)}" if new_syms else "")
+        if ftype == "docs":
+            heads = facts.get("headings") or []
+            return f"update {human} docs" + (f" - {heads[0][:30]}" if heads else "")
+        if new_syms:
+            return f"add {_names(new_syms, limit)}"
+        if touched:
+            return f"update {_names(touched, limit)}"
+        if ftype == "chore":
+            return f"update {human} settings"
+        return f"revise logic (+{added}/-{removed} lines)"
+
+    if status == "D":
+        ftype = "chore"
+    summary = ""
+    for limit in (3, 2, 1):
+        summary = f"{ftype}({scope}): {build(limit)}"
+        if len(summary) <= 72:
+            break
+    summary = _truncate(summary, 72)
+
+    bullets: List[str] = []
+    base = os.path.basename(path)
+    kind_word = {"def": "function", "function": "function", "class": "class"}
+    if status == "D":
+        bullets.append(f"- Removes `{base}` from the project")
+    elif is_new:
+        bullets.append(f"- Introduces `{base}` ({added} line{'s' if added != 1 else ''})")
+    for kind, name in new_syms[:5]:
+        bullets.append(f"- Adds {kind_word.get(kind, kind)} `{name}`")
+    for name in touched[:4]:
+        bullets.append(f"- Updates logic in `{name}`")
+    for kind, name in gone[:3]:
+        bullets.append(f"- Removes {kind_word.get(kind, kind)} `{name}`")
+    for h in (facts.get("headings") or [])[:3]:
+        bullets.append(f"- Documents \"{h[:60]}\"")
+    if status != "D" and not is_new or not bullets:
+        bullets.append(f"- {added} line{'s' if added != 1 else ''} added, {removed} removed")
+    return {"summary": summary, "description": "\n".join(bullets[:8])}
