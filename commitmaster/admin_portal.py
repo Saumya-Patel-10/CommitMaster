@@ -48,7 +48,6 @@ class AdminPortal:
 
     def _setup_window(self):
         self.root.title("CommitMaster — Admin Portal")
-        self.root.geometry("1200x750")
         self.root.minsize(1000, 640)
         self.root.configure(bg=COLORS["bg_darkest"])
         self.root.update_idletasks()
@@ -56,6 +55,8 @@ class AdminPortal:
         sw = self.root.winfo_screenwidth()
         sh = self.root.winfo_screenheight()
         self.root.geometry(f"{w}x{h}+{(sw - w)//2}+{(sh - h)//2}")
+        from commitmaster import windows_integration
+        windows_integration.apply_windows_theme(self.root, "CommitMaster — Admin Portal")
 
     # ── Layout ────────────────────────────────────────────────────────────────
 
@@ -85,11 +86,8 @@ class AdminPortal:
         self._canvas.pack(side="left", fill="both", expand=True)
         self._content_frame = tk.Frame(self._canvas, bg=COLORS["bg_dark"])
         self._cw = self._canvas.create_window((0, 0), window=self._content_frame, anchor="nw")
-        self._content_frame.bind("<Configure>",
-                                 lambda e: self._canvas.configure(
-                                     scrollregion=self._canvas.bbox("all")))
-        self._canvas.bind("<Configure>",
-                          lambda e: self._canvas.itemconfig(self._cw, width=e.width))
+        self._content_frame.bind("<Configure>", self._on_frame_configure)
+        self._canvas.bind("<Configure>", self._on_canvas_configure)
         self._navigator = navigation.PageNavigator(self.root, self._canvas, self._content_frame, self._cw)
         navigation.install_smooth_scroll(self.root, self._canvas, self._content_frame)
         navigation.install_header_controls(
@@ -97,21 +95,83 @@ class AdminPortal:
         navigation.install_shortcuts(
             self.root, self._nav_order, self._go, self._nav_back, self._nav_forward)
 
+    def _on_frame_configure(self, event):
+        bbox = self._canvas.bbox("all")
+        if getattr(self, "_last_scrollregion", None) != bbox:
+            self._last_scrollregion = bbox
+            self._canvas.configure(scrollregion=bbox)
+
+    def _on_canvas_configure(self, event):
+        if getattr(self, "_last_canvas_width", None) != event.width:
+            self._last_canvas_width = event.width
+            self._canvas.itemconfig(self._cw, width=event.width)
+
     # ── Sidebar ───────────────────────────────────────────────────────────────
 
     def _build_sidebar(self):
         sb = self._sidebar
-        logo_f = tk.Frame(sb, bg=COLORS["bg_sidebar"], height=70)
-        logo_f.pack(fill="x")
-        logo_f.pack_propagate(False)
-        tk.Label(logo_f, text="🛡 Admin Portal", font=FONTS["heading_sm"],
-                 fg=COLORS["admin"], bg=COLORS["bg_sidebar"]).pack(
-            side="left", padx=16, pady=20)
 
-        tk.Frame(sb, height=1, bg=COLORS["border"]).pack(fill="x")
+        # 1. Pinned Top Header (Logo)
+        logo_f = tk.Frame(sb, bg=COLORS["bg_sidebar"], height=70)
+        logo_f.pack(side="top", fill="x")
+        logo_f.pack_propagate(False)
+        from commitmaster import windows_integration
+        logo_img = windows_integration.get_logo_photo(26)
+        if logo_img:
+            self._sidebar_logo_img = logo_img
+            tk.Label(logo_f, image=logo_img, bg=COLORS["bg_sidebar"]).pack(side="left", padx=(16, 8), pady=20)
+            tk.Label(logo_f, text="Admin Portal", font=FONTS["heading_sm"],
+                     fg=COLORS["text_primary"], bg=COLORS["bg_sidebar"]).pack(side="left", pady=20)
+        else:
+            tk.Label(logo_f, text="🛡 Admin Portal", font=FONTS["heading_sm"],
+                     fg=COLORS["admin"], bg=COLORS["bg_sidebar"]).pack(
+                side="left", padx=16, pady=20)
+
+        tk.Frame(sb, height=1, bg=COLORS["border"]).pack(side="top", fill="x")
+
+        # 2. Pinned Bottom Footer (Back button)
+        footer_f = tk.Frame(sb, bg=COLORS["bg_sidebar"])
+        footer_f.pack(side="bottom", fill="x")
+        tk.Frame(footer_f, height=1, bg=COLORS["border"]).pack(side="top", fill="x")
+        back_btn = tk.Button(footer_f, text="  ← Back to App",
+                             font=FONTS["label"], fg=COLORS["text_secondary"],
+                             bg=COLORS["bg_sidebar"], relief="flat", bd=0,
+                             cursor="hand2", anchor="w", padx=16, pady=12,
+                             command=self._go_back)
+        back_btn.pack(side="bottom", fill="x")
+        back_btn.bind("<Enter>", lambda e: back_btn.config(bg=COLORS["bg_medium"]))
+        back_btn.bind("<Leave>", lambda e: back_btn.config(bg=COLORS["bg_sidebar"]))
+
+        # 3. Scrollable Middle Area
+        middle_f = tk.Frame(sb, bg=COLORS["bg_sidebar"])
+        middle_f.pack(side="top", fill="both", expand=True)
+
+        self._sb_canvas = tk.Canvas(middle_f, bg=COLORS["bg_sidebar"], highlightthickness=0)
+        self._sb_scrollbar = tk.Scrollbar(middle_f, orient="vertical", command=self._sb_canvas.yview)
+        self._sb_canvas.configure(yscrollcommand=self._sb_scrollbar.set)
+
+        self._sb_frame = tk.Frame(self._sb_canvas, bg=COLORS["bg_sidebar"])
+        self._sb_window = self._sb_canvas.create_window((0, 0), window=self._sb_frame, anchor="nw")
+
+        def _on_sb_frame_configure(e):
+            bbox = self._sb_canvas.bbox("all")
+            self._sb_canvas.configure(scrollregion=bbox)
+            if bbox and (bbox[3] - bbox[1]) > self._sb_canvas.winfo_height() and self._sb_canvas.winfo_height() > 50:
+                self._sb_scrollbar.pack(side="right", fill="y")
+            else:
+                self._sb_scrollbar.pack_forget()
+
+        def _on_sb_canvas_configure(e):
+            self._sb_canvas.itemconfig(self._sb_window, width=e.width)
+
+        self._sb_frame.bind("<Configure>", _on_sb_frame_configure)
+        self._sb_canvas.bind("<Configure>", _on_sb_canvas_configure)
+        self._sb_canvas.pack(side="left", fill="both", expand=True)
+
+        target = self._sb_frame
 
         # Admin avatar
-        av_f = tk.Frame(sb, bg=COLORS["bg_sidebar"], pady=12)
+        av_f = tk.Frame(target, bg=COLORS["bg_sidebar"], pady=12)
         av_f.pack(fill="x", padx=16)
         color = self.admin_user.get("avatar_color", AVATAR_COLORS[0])
         initials = self._get_initials()
@@ -123,10 +183,10 @@ class AdminPortal:
         tk.Label(av_f, text="● Administrator", font=FONTS["caption"],
                  fg=COLORS["admin"], bg=COLORS["bg_sidebar"]).pack(anchor="w")
 
-        tk.Frame(sb, height=1, bg=COLORS["border"]).pack(fill="x", pady=(8, 4))
+        tk.Frame(target, height=1, bg=COLORS["border"]).pack(fill="x", pady=(8, 4))
 
         # ── Admin Control section ─────────────────────────────────────────────
-        tk.Label(sb, text="  ADMIN CONTROL", font=("Segoe UI", 9, "bold"),
+        tk.Label(target, text="  ADMIN CONTROL", font=("Segoe UI", 9, "bold"),
                  fg=COLORS["text_muted"], bg=COLORS["bg_sidebar"]).pack(
             anchor="w", pady=(4, 2))
         admin_nav = [
@@ -136,9 +196,9 @@ class AdminPortal:
             ("📈", "Usage Charts",   "charts"),
             ("⚙️",  "Global Settings","global_settings"),
         ]
-        tk.Frame(sb, height=1, bg=COLORS["border"]).pack(fill="x", pady=(4, 4))
+        tk.Frame(target, height=1, bg=COLORS["border"]).pack(fill="x", pady=(4, 4))
         # ── My Account section ────────────────────────────────────────────────
-        tk.Label(sb, text="  MY ACCOUNT", font=("Segoe UI", 9, "bold"),
+        tk.Label(target, text="  MY ACCOUNT", font=("Segoe UI", 9, "bold"),
                  fg=COLORS["text_muted"], bg=COLORS["bg_sidebar"]).pack(
             anchor="w", pady=(4, 2))
         my_nav = [
@@ -150,17 +210,33 @@ class AdminPortal:
         self._nav_buttons = {}
         self._nav_order = [k for _, _, k in all_nav]
         for icon, label, key in all_nav:
-            btn = navigation.make_nav_button(sb, icon, label, lambda k=key: self._go(k), padx=16, pady=10)
+            btn = navigation.make_nav_button(target, icon, label, lambda k=key: self._go(k), padx=16, pady=10)
             self._nav_buttons[key] = btn
 
-        tk.Frame(sb, bg=COLORS["bg_sidebar"]).pack(fill="both", expand=True)
-        tk.Frame(sb, height=1, bg=COLORS["border"]).pack(fill="x")
-        back_btn = tk.Button(sb, text="  ← Back to App",
-                             font=FONTS["label"], fg=COLORS["text_secondary"],
-                             bg=COLORS["bg_sidebar"], relief="flat", bd=0,
-                             cursor="hand2", anchor="w", padx=16, pady=12,
-                             command=self._go_back)
-        back_btn.pack(fill="x")
+        # Bottom padding inside scroll area
+        tk.Frame(target, bg=COLORS["bg_sidebar"], height=16).pack(fill="x")
+
+        # Smooth mousewheel binding
+        def _on_sb_wheel(event):
+            delta = getattr(event, "delta", 0)
+            if not delta:
+                return "break"
+            pixels = int(-(delta / 120.0) * 45) if abs(delta) >= 120 else (-1 if delta > 0 else 1) * 35
+            self._sb_canvas.yview_scroll(pixels, "units")
+            return "break"
+
+        def _bind_sb_mousewheel(widget):
+            try:
+                widget.bind("<MouseWheel>", _on_sb_wheel, add="+")
+                widget.bind("<Button-4>", lambda e: self._sb_canvas.yview_scroll(-35, "units"), add="+")
+                widget.bind("<Button-5>", lambda e: self._sb_canvas.yview_scroll(35, "units"), add="+")
+                for child in widget.winfo_children():
+                    _bind_sb_mousewheel(child)
+            except Exception:
+                pass
+
+        _bind_sb_mousewheel(sb)
+
 
     def _build_header(self):
         header = tk.Frame(self._main, bg=COLORS["bg_dark"], height=56)
