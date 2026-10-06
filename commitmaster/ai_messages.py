@@ -260,14 +260,25 @@ Change type: {status}
 
 {others}Write:
   "summary":     a Conventional Commit headline, <= 72 chars, format "<type>(<scope>): <imperative highlight>".
-                 It must state the PURPOSE / OUTCOME of the change (the highlight), not just name the file.
-                 Bad:  "chore: update {base}"      Good: "feat(auth): add token refresh with retry on 401"
+                 State the PURPOSE / OUTCOME of the change clearly (imperative mood), not just naming the file.
+                 Good: "feat(auth): add token refresh with retry on 401"
+                 Bad:  "refactor(login): update login_window"
                  Types: feat, fix, refactor, perf, docs, test, chore, style.
-  "description": 2-6 bullet lines ("- ..."), each naming something concrete that was added, changed,
-                 fixed or removed (functions, classes, behaviours, settings) - taken only from the diff above.
+  "description": Professional markdown description formatted with clear subsections:
+                 - If new features/classes/functions/capabilities were added, MUST include a dedicated subsection:
+                   "### New Features"
+                   followed by concise bullet points ("- ...") describing each new capability.
+                 - For modifications or refactoring to existing logic, include:
+                   "### Changes & Improvements"
+                   followed by concise bullet points ("- ...") explaining the updates.
+                 - For bug or security fixes, include:
+                   "### Bug Fixes & Security"
+                 - For deletions, include:
+                   "### Removals"
+                 Never mention other files. Keep bullets concise, informative, and professional.
 
 Reply with JSON only:
-{{"summary": "...", "description": "- ...\\n- ..."}}
+{{"summary": "...", "description": "### New Features\\n- ...\\n\\n### Changes & Improvements\\n- ..."}}
 """
 
 UNIFIED_USER_PROMPT = """\
@@ -478,7 +489,8 @@ def _heuristic_unified_summary(per_file: Dict[str, Dict[str, str]]) -> str:
 def _unified_description(per_file: Dict[str, Dict[str, str]]) -> str:
     blocks = []
     for f, m in per_file.items():
-        blocks.append(f"{f}\n{m['description']}".strip())
+        desc = m.get("description", "").strip()
+        blocks.append(f"## 📄 {f}\n{desc}".strip())
     return "\n\n".join(blocks)
 
 
@@ -514,13 +526,20 @@ def _clean_description(text: str, path: str, other_basenames: List[str]) -> str:
     for raw in text.replace("\\n", "\n").splitlines():
         line = raw.strip()
         if not line:
+            if lines and lines[-1] != "":
+                lines.append("")
             continue
         if any(len(b) > 3 and b.lower() in line.lower() for b in other_basenames):
             continue                      # never let another file leak in
-        line = re.sub(r"^[\-\*\u2022\d.\)\s]+", "", line).strip()
-        if line:
-            lines.append("- " + line[0].upper() + line[1:])
-    return "\n".join(lines[:8])
+        if line.startswith("#"):
+            lines.append(line)
+        else:
+            cleaned = re.sub(r"^[\-\*\u2022\d.\)\s]+", "", line).strip()
+            if cleaned:
+                lines.append("- " + cleaned[0].upper() + cleaned[1:])
+    while lines and lines[-1] == "":
+        lines.pop()
+    return "\n".join(lines[:25])
 
 
 # ── Diff analysis + heuristic fallback ───────────────────────────────────────
@@ -601,7 +620,7 @@ def _humanize(path: str) -> str:
     return _scope_for(path).replace("_", " ").replace("-", " ")
 
 
-def _names(items, limit=3) -> str:
+def _names(items, limit=2) -> str:
     names = [n for _, n in items] if items and isinstance(items[0], tuple) else list(items)
     shown = [f"`{n}`" for n in names[:limit]]
     if len(names) > limit:
@@ -621,48 +640,102 @@ def _heuristic_message(path: str, status: str, facts: dict) -> Dict[str, str]:
     added, removed = facts.get("added", 0), facts.get("removed", 0)
     is_new = status in ("??", "A", "AM")
 
+    def _is_dunder(name: str) -> bool:
+        return name.startswith("__") and name.endswith("__")
+
+    major_new = [s for s in new_syms if not _is_dunder(s[1]) and not s[1].startswith("_")]
+    minor_new = [s for s in new_syms if not _is_dunder(s[1]) and s[1].startswith("_")]
+    dunder_new = [s for s in new_syms if _is_dunder(s[1])]
+    headline_syms = major_new if major_new else (minor_new if minor_new else dunder_new)
+    meaningful_touched = [n for n in touched if not _is_dunder(n)]
+    if not meaningful_touched:
+        meaningful_touched = touched
+
     def build(limit: int) -> str:
         if status == "D":
             return f"remove {human}"
         if is_new:
             if ftype == "docs":
                 return f"add {human} documentation"
-            return f"add {human}" + (f" with {_names(new_syms, limit)}" if new_syms else "")
+            if major_new:
+                classes = [n for k, n in major_new if k == "class"]
+                if classes:
+                    return f"implement `{classes[0]}` component"
+                return f"add {_names(major_new, limit)}"
+            return f"introduce {human}"
         if ftype == "docs":
             heads = facts.get("headings") or []
-            return f"update {human} docs" + (f" - {heads[0][:30]}" if heads else "")
-        if new_syms:
-            return f"add {_names(new_syms, limit)}"
-        if touched:
-            return f"update {_names(touched, limit)}"
+            return f"update {human} documentation" + (f" - {heads[0][:26]}" if heads else "")
+        if major_new:
+            classes = [n for k, n in major_new if k == "class"]
+            if classes:
+                return f"implement `{classes[0]}` component"
+            return f"add {_names(major_new, limit)}"
+        if meaningful_touched:
+            names_str = _names(meaningful_touched, limit)
+            return f"refine {names_str} logic"
         if ftype == "chore":
-            return f"update {human} settings"
-        return f"revise logic (+{added}/-{removed} lines)"
+            return f"update {human} configuration"
+        if ftype == "test":
+            return f"update {human} tests"
+        return f"enhance {human} logic (+{added}/-{removed} lines)"
 
     if status == "D":
         ftype = "chore"
     summary = ""
-    for limit in (3, 2, 1):
+    for limit in (2, 1):
         summary = f"{ftype}({scope}): {build(limit)}"
         if len(summary) <= 72:
             break
     summary = _truncate(summary, 72)
 
-    bullets: List[str] = []
+    sections: List[str] = []
     base = os.path.basename(path)
     kind_word = {"def": "function", "function": "function", "class": "class"}
-    if status == "D":
-        bullets.append(f"- Removes `{base}` from the project")
-    elif is_new:
-        bullets.append(f"- Introduces `{base}` ({added} line{'s' if added != 1 else ''})")
-    for kind, name in new_syms[:5]:
-        bullets.append(f"- Adds {kind_word.get(kind, kind)} `{name}`")
-    for name in touched[:4]:
-        bullets.append(f"- Updates logic in `{name}`")
-    for kind, name in gone[:3]:
-        bullets.append(f"- Removes {kind_word.get(kind, kind)} `{name}`")
+
+    # Subsection 1: New Features (Prominently highlighted if present)
+    new_feature_bullets = []
+    if is_new:
+        new_feature_bullets.append(f"Introduces `{base}` module ({added} line{'s' if added != 1 else ''})")
+    for kind, name in major_new[:6]:
+        k = kind_word.get(kind, kind)
+        new_feature_bullets.append(f"Adds {k} `{name}`")
+    for kind, name in minor_new[:3]:
+        k = kind_word.get(kind, kind)
+        new_feature_bullets.append(f"Adds helper {k} `{name}`")
+    for kind, name in dunder_new[:2]:
+        new_feature_bullets.append(f"Implements `{name}` method")
+
+    if new_feature_bullets:
+        sections.append("### New Features\n" + "\n".join(f"- {b}" for b in new_feature_bullets))
+
+    # Subsection 2: Changes & Improvements
+    change_bullets = []
+    for name in meaningful_touched[:5]:
+        change_bullets.append(f"Updates logic in `{name}`")
     for h in (facts.get("headings") or [])[:3]:
-        bullets.append(f"- Documents \"{h[:60]}\"")
-    if status != "D" and not is_new or not bullets:
-        bullets.append(f"- {added} line{'s' if added != 1 else ''} added, {removed} removed")
-    return {"summary": summary, "description": "\n".join(bullets[:8])}
+        change_bullets.append(f"Documents \"{h[:60]}\"")
+    if not new_feature_bullets and not change_bullets and status != "D":
+        change_bullets.append(f"Refines implementation details in `{base}`")
+
+    if change_bullets:
+        sections.append("### Changes & Improvements\n" + "\n".join(f"- {b}" for b in change_bullets))
+
+    # Subsection 3: Removals & Deprecations (if any)
+    removal_bullets = []
+    if status == "D":
+        removal_bullets.append(f"Removes `{base}` from the project repository")
+    for kind, name in gone[:4]:
+        k = kind_word.get(kind, kind)
+        removal_bullets.append(f"Removes {k} `{name}`")
+
+    if removal_bullets:
+        sections.append("### Removals & Deprecations\n" + "\n".join(f"- {b}" for b in removal_bullets))
+
+    # Subsection 4: Metrics / Summary
+    if status != "D":
+        stats_line = f"{added} line{'s' if added != 1 else ''} added, {removed} removed across {path}"
+        sections.append(f"### Changes Summary\n- {stats_line}")
+
+    description = "\n\n".join(sections)
+    return {"summary": summary, "description": description}
