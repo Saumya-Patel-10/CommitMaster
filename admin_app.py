@@ -15,7 +15,7 @@ import json
 import threading
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
-from typing import Callable, Dict, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 if APP_DIR not in sys.path:
@@ -67,18 +67,35 @@ def _clear_token() -> None:
 # ── Entry point ────────────────────────────────────────────────────────────────
 
 def launch_admin_app():
-    db.init_db()
+    try:
+        db.init_db()
 
-    token = _load_token()
-    user = None
-    if token:
-        user = db.validate_session_token(token)
+        token = _load_token()
+        user = None
+        if token:
+            user = db.validate_session_token(token)
 
-    if user and user.get("role") == "admin":
-        _open_admin_window(dict(user))
-    else:
-        _clear_token()
-        _open_admin_login()
+        if user and user.get("role") == "admin":
+            _open_admin_window(dict(user))
+        else:
+            _clear_token()
+            _open_admin_login()
+    except Exception as exc:
+        import traceback
+        err_msg = traceback.format_exc()
+        try:
+            root = tk.Tk()
+            root.withdraw()
+            messagebox.showerror(
+                "CommitMaster Admin — Error",
+                f"An unexpected error occurred while starting CommitMaster Admin:\n\n{err_msg}",
+                parent=root
+            )
+            root.destroy()
+        except Exception:
+            pass
+        raise
+
 
 
 def _open_admin_login():
@@ -158,7 +175,6 @@ class AdminApp:
     def _setup_window(self):
         name = self.user.get("full_name") or self.user["username"]
         self.root.title(f"CommitMaster — Admin Workspace  ({name})")
-        self.root.geometry("1200x760")
         self.root.minsize(1000, 640)
         self.root.configure(bg=COLORS["bg_darkest"])
         self.root.update_idletasks()
@@ -166,6 +182,8 @@ class AdminApp:
         sw = self.root.winfo_screenwidth()
         sh = self.root.winfo_screenheight()
         self.root.geometry(f"{w}x{h}+{(sw - w)//2}+{(sh - h)//2}")
+        from commitmaster import windows_integration
+        windows_integration.apply_windows_theme(self.root, f"CommitMaster — Admin Workspace  ({name})")
 
     # ── Layout skeleton ───────────────────────────────────────────────────────
 
@@ -191,16 +209,25 @@ class AdminApp:
         self._canvas.pack(side="left", fill="both", expand=True)
         self._cf = tk.Frame(self._canvas, bg=COLORS["bg_dark"])
         self._cw = self._canvas.create_window((0, 0), window=self._cf, anchor="nw")
-        self._cf.bind("<Configure>",
-                      lambda e: self._canvas.configure(
-                          scrollregion=self._canvas.bbox("all")))
-        self._canvas.bind("<Configure>", lambda e: self._canvas.itemconfig(self._cw, width=e.width))
+        self._cf.bind("<Configure>", self._on_frame_configure)
+        self._canvas.bind("<Configure>", self._on_canvas_configure)
         self._navigator = navigation.PageNavigator(self.root, self._canvas, self._cf, self._cw)
         navigation.install_smooth_scroll(self.root, self._canvas, self._cf)
         navigation.install_header_controls(
             self._header_bar, self._header_title, self._navigator, self._nav_back, self._nav_forward)
         navigation.install_shortcuts(
             self.root, self._nav_order, self._go, self._nav_back, self._nav_forward)
+
+    def _on_frame_configure(self, event):
+        bbox = self._canvas.bbox("all")
+        if getattr(self, "_last_scrollregion", None) != bbox:
+            self._last_scrollregion = bbox
+            self._canvas.configure(scrollregion=bbox)
+
+    def _on_canvas_configure(self, event):
+        if getattr(self, "_last_canvas_width", None) != event.width:
+            self._last_canvas_width = event.width
+            self._canvas.itemconfig(self._cw, width=event.width)
 
     def _on_mousewheel(self, event):
         try:
@@ -225,22 +252,74 @@ class AdminApp:
     def _build_sidebar(self):
         sb = self._sidebar
 
-        # Logo
+        # 1. Pinned Top Header (Logo)
         logo_f = tk.Frame(sb, bg=COLORS["bg_sidebar"], height=64)
-        logo_f.pack(fill="x")
+        logo_f.pack(side="top", fill="x")
         logo_f.pack_propagate(False)
-        tk.Label(logo_f, text="⬡ CommitMaster",
-                 font=FONTS["heading_sm"], fg=COLORS["accent"],
-                 bg=COLORS["bg_sidebar"]).pack(side="left", padx=14, pady=18)
+        from commitmaster import windows_integration
+        logo_img = windows_integration.get_logo_photo(26)
+        if logo_img:
+            self._sidebar_logo_img = logo_img
+            tk.Label(logo_f, image=logo_img, bg=COLORS["bg_sidebar"]).pack(side="left", padx=(14, 6), pady=18)
+            tk.Label(logo_f, text="CommitMaster", font=FONTS["heading_sm"],
+                     fg=COLORS["text_primary"], bg=COLORS["bg_sidebar"]).pack(side="left", pady=18)
+        else:
+            tk.Label(logo_f, text="⬡ CommitMaster",
+                     font=FONTS["heading_sm"], fg=COLORS["accent"],
+                     bg=COLORS["bg_sidebar"]).pack(side="left", padx=14, pady=18)
         # Admin badge
         tk.Label(logo_f, text=" ADMIN ", font=("Segoe UI", 8, "bold"),
                  fg=COLORS["bg_darkest"], bg=COLORS["admin"]).pack(
             side="right", padx=10, pady=20)
 
-        tk.Frame(sb, height=1, bg=COLORS["border"]).pack(fill="x")
+        tk.Frame(sb, height=1, bg=COLORS["border"]).pack(side="top", fill="x")
+
+        # 2. Pinned Bottom Footer (Sign Out)
+        footer_f = tk.Frame(sb, bg=COLORS["bg_sidebar"])
+        footer_f.pack(side="bottom", fill="x")
+        tk.Frame(footer_f, height=1, bg=COLORS["border"]).pack(side="top", fill="x")
+        logout_btn = tk.Button(
+            footer_f, text="  ⏻  Sign Out",
+            font=FONTS["label"], fg=COLORS["text_secondary"],
+            bg=COLORS["bg_sidebar"], relief="flat", bd=0,
+            cursor="hand2", anchor="w", padx=14, pady=11,
+            command=self._logout)
+        logout_btn.pack(side="bottom", fill="x")
+        logout_btn.bind("<Enter>",
+                        lambda e: logout_btn.config(bg=COLORS["bg_medium"]))
+        logout_btn.bind("<Leave>",
+                        lambda e: logout_btn.config(bg=COLORS["bg_sidebar"]))
+
+        # 3. Scrollable Middle Area for Navigation
+        middle_f = tk.Frame(sb, bg=COLORS["bg_sidebar"])
+        middle_f.pack(side="top", fill="both", expand=True)
+
+        self._sb_canvas = tk.Canvas(middle_f, bg=COLORS["bg_sidebar"], highlightthickness=0)
+        self._sb_scrollbar = tk.Scrollbar(middle_f, orient="vertical", command=self._sb_canvas.yview)
+        self._sb_canvas.configure(yscrollcommand=self._sb_scrollbar.set)
+
+        self._sb_frame = tk.Frame(self._sb_canvas, bg=COLORS["bg_sidebar"])
+        self._sb_window = self._sb_canvas.create_window((0, 0), window=self._sb_frame, anchor="nw")
+
+        def _on_sb_frame_configure(e):
+            bbox = self._sb_canvas.bbox("all")
+            self._sb_canvas.configure(scrollregion=bbox)
+            if bbox and (bbox[3] - bbox[1]) > self._sb_canvas.winfo_height() and self._sb_canvas.winfo_height() > 50:
+                self._sb_scrollbar.pack(side="right", fill="y")
+            else:
+                self._sb_scrollbar.pack_forget()
+
+        def _on_sb_canvas_configure(e):
+            self._sb_canvas.itemconfig(self._sb_window, width=e.width)
+
+        self._sb_frame.bind("<Configure>", _on_sb_frame_configure)
+        self._sb_canvas.bind("<Configure>", _on_sb_canvas_configure)
+        self._sb_canvas.pack(side="left", fill="both", expand=True)
+
+        target = self._sb_frame
 
         # Avatar
-        av_f = tk.Frame(sb, bg=COLORS["bg_sidebar"], pady=12)
+        av_f = tk.Frame(target, bg=COLORS["bg_sidebar"], pady=12)
         av_f.pack(fill="x", padx=14)
         color = self.user.get("avatar_color", AVATAR_COLORS[0])
         av = tk.Label(av_f, text=self._initials(), font=FONTS["heading_sm"],
@@ -252,10 +331,10 @@ class AdminApp:
         tk.Label(av_f, text="● Administrator", font=FONTS["caption"],
                  fg=COLORS["admin"], bg=COLORS["bg_sidebar"]).pack(anchor="w")
 
-        tk.Frame(sb, height=1, bg=COLORS["border"]).pack(fill="x", pady=(8, 4))
+        tk.Frame(target, height=1, bg=COLORS["border"]).pack(fill="x", pady=(8, 4))
 
         # ── MY WORKSPACE section ───────────────────────────────────────────────
-        self._section_label(sb, "MY WORKSPACE")
+        self._section_label(target, "MY WORKSPACE")
         workspace_nav = [
             ("📊", "Overview",            "overview"),
             ("💻", "Git Desktop",         "git_desktop"),
@@ -283,29 +362,39 @@ class AdminApp:
 
         for section, items in all_nav:
             if section == "admin":
-                tk.Frame(sb, height=1, bg=COLORS["border"]).pack(
+                tk.Frame(target, height=1, bg=COLORS["border"]).pack(
                     fill="x", pady=(6, 4))
-                self._section_label(sb, "ADMIN CONTROL")
+                self._section_label(target, "ADMIN CONTROL")
 
             for icon, label, key in items:
-                btn = navigation.make_nav_button(sb, icon, label, lambda k=key: self._go(k), padx=14, pady=9)
+                btn = navigation.make_nav_button(target, icon, label, lambda k=key: self._go(k), padx=14, pady=9)
                 self._nav_buttons[key] = btn
                 self._nav_order.append(key)
 
-        # Spacer + logout
-        tk.Frame(sb, bg=COLORS["bg_sidebar"]).pack(fill="both", expand=True)
-        tk.Frame(sb, height=1, bg=COLORS["border"]).pack(fill="x")
-        logout_btn = tk.Button(
-            sb, text="  ⏻  Sign Out",
-            font=FONTS["label"], fg=COLORS["text_secondary"],
-            bg=COLORS["bg_sidebar"], relief="flat", bd=0,
-            cursor="hand2", anchor="w", padx=14, pady=11,
-            command=self._logout)
-        logout_btn.pack(fill="x")
-        logout_btn.bind("<Enter>",
-                        lambda e: logout_btn.config(bg=COLORS["bg_medium"]))
-        logout_btn.bind("<Leave>",
-                        lambda e: logout_btn.config(bg=COLORS["bg_sidebar"]))
+        # Bottom padding inside scroll area
+        tk.Frame(target, bg=COLORS["bg_sidebar"], height=16).pack(fill="x")
+
+        # Smooth mousewheel binding across all sidebar elements
+        def _on_sb_wheel(event):
+            delta = getattr(event, "delta", 0)
+            if not delta:
+                return "break"
+            pixels = int(-(delta / 120.0) * 45) if abs(delta) >= 120 else (-1 if delta > 0 else 1) * 35
+            self._sb_canvas.yview_scroll(pixels, "units")
+            return "break"
+
+        def _bind_sb_mousewheel(widget):
+            try:
+                widget.bind("<MouseWheel>", _on_sb_wheel, add="+")
+                widget.bind("<Button-4>", lambda e: self._sb_canvas.yview_scroll(-35, "units"), add="+")
+                widget.bind("<Button-5>", lambda e: self._sb_canvas.yview_scroll(35, "units"), add="+")
+                for child in widget.winfo_children():
+                    _bind_sb_mousewheel(child)
+            except Exception:
+                pass
+
+        _bind_sb_mousewheel(sb)
+
 
     def _section_label(self, parent, text: str):
         tk.Label(parent, text=f"  {text}",
@@ -574,7 +663,10 @@ class AdminApp:
                                 )
                         except tk.TclError:
                             pass
-                    self.root.after(0, _update)
+                    try:
+                        self.root.after(0, _update)
+                    except (tk.TclError, RuntimeError):
+                        pass
             threading.Thread(target=_async_detect, daemon=True).start()
 
         tk.Label(
@@ -1253,7 +1345,10 @@ class AdminApp:
                                 ai_lbl.config(text=f"⚡ Local AI: {m}", fg=COLORS["accent"])
                         except tk.TclError:
                             pass
-                    self.root.after(0, _update)
+                    try:
+                        self.root.after(0, _update)
+                    except (tk.TclError, RuntimeError):
+                        pass
             threading.Thread(target=_async_detect_gd, daemon=True).start()
 
         refresh_btn = tk.Button(tb_right, text="🔄 Refresh", font=FONTS["caption"],
@@ -1320,8 +1415,9 @@ class AdminApp:
                      font=FONTS["body_sm"], fg=COLORS["success"], bg=COLORS["bg_card"],
                      justify="center", padx=16, pady=24).pack(fill="x")
         else:
+            cached_issues = file_inspector.inspect_files(self._gd_selected_repo, [p for _, p in changes]) if self._gd_selected_repo else {}
             for status, path in changes:
-                self._gd_build_file_row(files_frame, status, path)
+                self._gd_build_file_row(files_frame, status, path, issues=cached_issues.get(path, []))
 
         right_p = tk.Frame(ws, bg=COLORS["bg_dark"])
         right_p.pack(side="left", fill="both", expand=True)
@@ -1400,7 +1496,7 @@ class AdminApp:
         for v in vars_:
             v.set(target)
 
-    def _gd_build_file_row(self, parent, status: str, path: str):
+    def _gd_build_file_row(self, parent, status: str, path: str, issues: Optional[List[Dict[str, Any]]] = None):
         row = tk.Frame(parent, bg=COLORS["bg_card"], padx=6, pady=4)
         row.pack(fill="x")
 
@@ -1431,15 +1527,16 @@ class AdminApp:
         lbl.pack(side="left", fill="x", expand=True)
 
         # Inline issue badge if problems detected in this file
-        if self._gd_selected_repo:
-            file_issues = file_inspector.inspect_file(self._gd_selected_repo, path)
-            if file_issues:
-                top_iss = file_issues[0]
-                sev = top_iss.get("severity")
-                l_no = top_iss.get("line", 1)
-                b_text = f"❌ Error (L{l_no})" if sev == "error" else (f"🛡️ Secret (L{l_no})" if sev == "security" else f"⚠️ Warning (L{l_no})")
-                b_bg = "#da3633" if sev == "error" else ("#d29922" if sev == "security" else "#9e6a03")
-                tk.Label(row, text=f" {b_text} ", font=FONTS["caption"], fg="#ffffff", bg=b_bg).pack(side="right", padx=(4, 2))
+        if issues is None and self._gd_selected_repo:
+            issues = file_inspector.inspect_file(self._gd_selected_repo, path)
+
+        if issues:
+            top_iss = issues[0]
+            sev = top_iss.get("severity")
+            l_no = top_iss.get("line", 1)
+            b_text = f"❌ Error (L{l_no})" if sev == "error" else (f"🛡️ Secret (L{l_no})" if sev == "security" else f"⚠️ Warning (L{l_no})")
+            b_bg = "#da3633" if sev == "error" else ("#d29922" if sev == "security" else "#9e6a03")
+            tk.Label(row, text=f" {b_text} ", font=FONTS["caption"], fg="#ffffff", bg=b_bg).pack(side="right", padx=(4, 2))
 
         def on_click(e):
             self._gd_select_file(path)
@@ -2090,8 +2187,41 @@ class AdminApp:
                       relief="flat", bd=0, cursor="hand2",
                       padx=10, pady=4, command=cmd).pack(side="left", padx=(0, 6))
 
+        # Desktop Integration card
+        desk_card = self._card(p, padx=20, pady=16)
+        desk_card.pack(fill="x", pady=(0, 12))
+        tk.Label(desk_card, text="Windows Desktop Integration",
+                 font=FONTS["heading_sm"], fg=COLORS["text_primary"],
+                 bg=COLORS["bg_card"]).pack(anchor="w")
+        tk.Label(desk_card,
+                 text="Create 1-click desktop shortcuts with official branding for instant access without terminal commands.",
+                 font=FONTS["caption"], fg=COLORS["text_secondary"],
+                 bg=COLORS["bg_card"]).pack(anchor="w", pady=(2, 10))
+
+        desk_btn_f = tk.Frame(desk_card, bg=COLORS["bg_card"])
+        desk_btn_f.pack(anchor="w")
+        tk.Button(desk_btn_f, text="📌 Create Desktop Shortcuts", font=FONTS["label_bold"],
+                  fg="white", bg=COLORS["info"], relief="flat", bd=0, cursor="hand2",
+                  padx=14, pady=6, command=self._create_desktop_shortcuts).pack(side="left", padx=(0, 8))
+
         self._primary_btn(p, "  💾  Save Settings",
                           self._save_settings).pack(anchor="w", pady=(8, 0))
+
+    def _create_desktop_shortcuts(self):
+        from commitmaster import windows_integration
+        ok, msg = windows_integration.create_desktop_shortcut("both")
+        if ok:
+            messagebox.showinfo(
+                "Shortcuts Created",
+                "Desktop shortcuts created successfully!\n\n"
+                "• CommitMaster Admin\n"
+                "• CommitMaster (User App)\n\n"
+                "Both have been placed on your Windows Desktop with the official icon.",
+                parent=self.root
+            )
+        else:
+            messagebox.showerror("Shortcut Error", f"Could not create shortcuts:\n{msg}", parent=self.root)
+
 
     def _add_dir(self):
         d = filedialog.askdirectory(title="Select Project Folder",
