@@ -1,61 +1,89 @@
 """
-Build CommitMaster as a standalone Windows .exe using PyInstaller.
-Run:  python build_exe.py
+Build CommitMaster as standalone Windows .exe applications using PyInstaller:
+  1. CommitMaster.exe       → Public release for Microsoft Store / users (from app.py)
+  2. CommitMaster-Admin.exe → Saumya's private personal administrative tool (from admin_app.py)
+
+Can be launched directly or by double-clicking 'Build_All_Packages.bat'.
 """
+import os
 import subprocess
 import sys
-import os
+import zipfile
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 
 
-def build():
-    print("=== CommitMaster — Build EXE ===")
+def build_single(target_script: str, exe_name: str, description: str) -> str:
+    print(f"\n[{description}] Compiling {exe_name}...")
     cmd = [
         sys.executable, "-m", "PyInstaller",
-        "--onefile",           # single .exe
-        "--noconsole",         # no terminal window
-        "--name", "CommitMaster",
-        "--icon", os.path.join(APP_DIR, "icon.ico"),  # optional icon
+        "--onefile",
+        "--noconsole",
+        "--name", exe_name,
         "--add-data", f"{APP_DIR}/commitmaster;commitmaster",
-        "app.py",
     ]
 
-    # Remove icon flag if no icon file exists
-    if not os.path.exists(os.path.join(APP_DIR, "icon.ico")):
-        cmd = [c for c in cmd if c not in ["--icon",
-               os.path.join(APP_DIR, "icon.ico")]]
+    icon_path = os.path.join(APP_DIR, "icon.ico")
+    if os.path.exists(icon_path):
+        cmd.extend(["--icon", icon_path])
 
-    print("Running:", " ".join(cmd))
+    cmd.append(target_script)
+
     result = subprocess.run(cmd, cwd=APP_DIR)
-    if result.returncode == 0:
-        print("\n[OK] Build succeeded!")
-        exe_path = os.path.join(APP_DIR, "dist", "CommitMaster.exe")
-        print(f"   Executable: {exe_path}")
-
-        # Package into a release ZIP archive ready to share with friends
-        zip_path = os.path.join(APP_DIR, "dist", "CommitMaster-v2.0-Windows.zip")
-        try:
-            import zipfile
-            with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
-                zf.write(exe_path, "CommitMaster.exe")
-                readme_path = os.path.join(APP_DIR, "README.md")
-                if os.path.exists(readme_path):
-                    zf.write(readme_path, "README.md")
-            print(f"   Release ZIP: {zip_path}")
-            print("\n[INFO] Ready to distribute! You can upload CommitMaster.exe or CommitMaster-v2.0-Windows.zip.")
-        except Exception as e:
-            print(f"   Could not create zip: {e}")
-    else:
-        print("\n[ERROR] Build failed. Check the output above for errors.")
+    if result.returncode != 0:
+        print(f"[ERROR] Failed to compile {exe_name}.")
         sys.exit(1)
+
+    out_path = os.path.join(APP_DIR, "dist", f"{exe_name}.exe")
+    print(f"[OK] {exe_name} created successfully at: {out_path}")
+    return out_path
+
+
+def main():
+    print("=" * 65)
+    print("      CommitMaster — Standalone Packaging & Build System")
+    print("=" * 65)
+
+    # 1. Build Public User App for Microsoft Store / Public Release
+    user_exe = build_single(
+        target_script="app.py",
+        exe_name="CommitMaster",
+        description="1/2: Public User Application (for Microsoft Store / GitHub Releases)",
+    )
+
+    # 2. Build Private Admin Application for Saumya
+    admin_exe = build_single(
+        target_script="admin_app.py",
+        exe_name="CommitMaster-Admin",
+        description="2/2: Saumya's Private Admin App (Keep private, DO NOT upload to Store)",
+    )
+
+    # 3. Create public release ZIP archive
+    zip_path = os.path.join(APP_DIR, "dist", "CommitMaster-v3.0-Windows.zip")
+    try:
+        with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+            zf.write(user_exe, "CommitMaster.exe")
+            readme_path = os.path.join(APP_DIR, "README.md")
+            if os.path.exists(readme_path):
+                zf.write(readme_path, "README.md")
+        print(f"\n[OK] Release ZIP archive created: {zip_path}")
+    except Exception as exc:
+        print(f"[WARN] Could not create zip archive: {exc}")
+
+    print("\n" + "=" * 65)
+    print("BUILD SUMMARY:")
+    print("  • Public Store/User Binary : dist/CommitMaster.exe")
+    print("  • Public Release Archive    : dist/CommitMaster-v3.0-Windows.zip")
+    print("  • Saumya's Private Admin App: dist/CommitMaster-Admin.exe")
+    print("=" * 65)
+    print("NOTE: Only upload 'CommitMaster.exe' to Microsoft Store.")
+    print("Keep 'CommitMaster-Admin.exe' for yourself to monitor users & manage data.")
 
 
 if __name__ == "__main__":
-    # Ensure PyInstaller is installed
     try:
         import PyInstaller
     except ImportError:
-        print("Installing PyInstaller...")
+        print("PyInstaller not detected. Installing PyInstaller...")
         subprocess.check_call([sys.executable, "-m", "pip", "install", "pyinstaller"])
-    build()
+    main()
