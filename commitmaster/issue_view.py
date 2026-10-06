@@ -174,8 +174,21 @@ def build_issues_panel(parent: tk.Widget, issues_by_file: Dict[str, List[Dict[st
 
     details = tk.Frame(wrap, bg=pal["bg"])
     state = {"open": False}
+
+    def _copy_vulnerability_log(btn_widget):
+        from commitmaster.file_inspector import format_issue_report
+        repo_name = os.path.basename(repo_path) if repo_path else ""
+        report_text = format_issue_report(issues_by_file, repo_name=repo_name)
+        _copy_to_clipboard(btn_widget, report_text, btn_widget)
+
     toggle = tk.Button(bar, text="Show details ▾", font=("Segoe UI", 9, "bold"), fg="#ffffff", bg="#9e6a03",
                        relief="flat", bd=0, cursor="hand2", padx=10, pady=2)
+
+    copy_btn = tk.Button(bar, text="📋 Copy Vulnerability Log", font=("Segoe UI", 9, "bold"), fg="#ffffff",
+                         bg="#8a3b14", activebackground="#a84718", activeforeground="#ffffff",
+                         relief="flat", bd=0, cursor="hand2", padx=10, pady=2,
+                         command=lambda: _copy_vulnerability_log(copy_btn))
+    copy_btn.pack(side="right", padx=(0, 8))
 
     def _toggle():
         if state["open"]:
@@ -183,6 +196,15 @@ def build_issues_panel(parent: tk.Widget, issues_by_file: Dict[str, List[Dict[st
             toggle.config(text="Show details ▾")
         else:
             if not details.winfo_children():
+                det_top = tk.Frame(details, bg=pal["bg"])
+                det_top.pack(fill="x", pady=(6, 2))
+                tk.Label(det_top, text="Flagged Pre-Commit Issues & Security Findings",
+                         font=("Segoe UI", 10, "bold"), fg=pal["text"], bg=pal["bg"]).pack(side="left")
+                det_copy = tk.Button(det_top, text="📋 Copy Entire Vulnerability Log", font=("Segoe UI", 8, "bold"),
+                                     fg="#ffffff", bg="#8a3b14", relief="flat", bd=0, cursor="hand2", padx=8, pady=2,
+                                     command=lambda: _copy_vulnerability_log(det_copy))
+                det_copy.pack(side="right")
+
                 for path, issues in issues_by_file.items():
                     tk.Label(details, text=f"📄 {path}", fg=pal["text"], bg=pal["bg"],
                              font=("Segoe UI", 10, "bold")).pack(anchor="w", pady=(8, 4))
