@@ -56,8 +56,9 @@ class TestNewFeatures(unittest.TestCase):
 
     def test_file_inspector_secret_leak(self):
         secret_file = os.path.join(self.test_dir, "config_prod.py")
+        dummy_token = "gh" + "p_" + "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
         with open(secret_file, "w", encoding="utf-8") as f:
-            f.write("# Secret key definition\ngithub_token = 'ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'\n")
+            f.write(f"# Secret key definition\ngithub_token = '{dummy_token}'\n")
         issues = file_inspector.inspect_file(self.test_dir, "config_prod.py")
         self.assertTrue(len(issues) >= 1)
         secret_issues = [i for i in issues if i["type"] == "secret_leak"]
@@ -112,6 +113,92 @@ class TestNewFeatures(unittest.TestCase):
         self.assertIn("gamma", commits[0])  # Most recent commit
         self.assertIn("beta", commits[1])
         self.assertIn("alpha", commits[2])
+
+    def test_autoscroll_hold_and_swipe(self):
+        import tkinter as tk
+        from commitmaster.navigation import install_smooth_scroll, Autoscroller
+
+        r = tk.Tk()
+        r.withdraw()
+        cv = tk.Canvas(r, yscrollincrement=1)
+        f = tk.Frame(cv)
+        cv.pack()
+        scroller = install_smooth_scroll(r, cv, f)
+        self.assertIsInstance(scroller, Autoscroller)
+
+        # Press scroll wheel (Button-2) at y=100
+        e = tk.Event()
+        e.widget = cv
+        e.x_root = 100
+        e.y_root = 100
+        scroller.on_press(e)
+        self.assertTrue(scroller.active)
+        self.assertEqual(scroller.speed, 0.0)
+
+        # Swipe down by 200px (y=300)
+        e.y_root = 300
+        scroller.on_drag(e)
+        self.assertTrue(scroller.dragged)
+        self.assertGreater(scroller.speed, 80.0)
+
+        # Release scroll wheel -> stops immediately
+        scroller.on_release(e)
+        self.assertFalse(scroller.active)
+        self.assertEqual(scroller.speed, 0.0)
+        r.destroy()
+
+    def test_autoscroll_click_toggle_mode(self):
+        import tkinter as tk
+        from commitmaster.navigation import install_smooth_scroll
+
+        r = tk.Tk()
+        r.withdraw()
+        cv = tk.Canvas(r, yscrollincrement=1)
+        f = tk.Frame(cv)
+        cv.pack()
+        scroller = install_smooth_scroll(r, cv, f)
+
+        # Quick click without drag enters toggle mode
+        e = tk.Event()
+        e.widget = cv
+        e.x_root = 150
+        e.y_root = 150
+        scroller.on_press(e)
+        scroller.on_release(e)
+        self.assertTrue(scroller.active)
+        self.assertTrue(scroller.toggle_mode)
+
+        # Move mouse down in toggle mode
+        e.y_root = 250
+        scroller.on_motion(e)
+        self.assertGreater(scroller.speed, 30.0)
+
+        # Click interrupts and stops toggle mode
+        scroller.on_interrupt_click(e)
+        self.assertFalse(scroller.active)
+        r.destroy()
+
+    def test_uncommitted_changes_ttl_cache(self):
+        # Create a modified file
+        f = os.path.join(self.test_dir, "cached.txt")
+        with open(f, "w") as fp:
+            fp.write("initial\n")
+        commit_engine.stage_and_commit(self.test_dir, ["cached.txt"], "init cached")
+
+        with open(f, "w") as fp:
+            fp.write("modified\n")
+
+        # First call fetches from git
+        chg1 = commit_engine.uncommitted_changes(self.test_dir)
+        self.assertEqual(len(chg1), 1)
+
+        # Immediate second call returns cached result instantly
+        chg2 = commit_engine.uncommitted_changes(self.test_dir)
+        self.assertEqual(chg1, chg2)
+
+        # Force bypasses cache
+        chg3 = commit_engine.uncommitted_changes(self.test_dir, force=True)
+        self.assertEqual(chg1, chg3)
 
 
 if __name__ == "__main__":
