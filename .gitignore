@@ -15,6 +15,11 @@ venv/
 
 # Database & Sessions
 *.db
+*.db-wal
+*.db-shm
+*.db-journal
+*.sqlite
+*.sqlite3
 *.log
 .admin_session
 .session_token
