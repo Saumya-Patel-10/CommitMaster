@@ -140,10 +140,280 @@ def install_shortcuts(root: tk.Tk, ordered_keys: List[str], go: Callable[[str], 
     root.bind("<Control-r>", lambda _e: go(None))     # None = reload current page
 
 
+# ── Middle Mouse Autoscroll (Chrome-Style) ───────────────────────────────────
+import time
+
+
+class Autoscroller:
+    """
+    Chrome-style autoscroll (pan-scroll) using the mouse scroll wheel (middle button).
+
+    Supports:
+      • Hold-and-drag: Press and hold scroll wheel (Button-2), swipe down or up to scroll.
+        Speed scales dynamically with distance from anchor. Releasing the wheel stops scrolling.
+      • Click-and-move: Click scroll wheel once to enter autoscroll mode, move mouse to steer
+        speed, click any mouse button or press any key to stop.
+      • Floating circular anchor marker positioned at the middle-click coordinate with arrows.
+      • Distance-proportional velocity curve with a gentle reading deadband and fast swipe acceleration.
+      • 60 FPS sub-pixel smooth animation loop with zero jitter.
+    """
+
+    DEADZONE = 8
+    MAX_SPEED = 320.0
+
+    def __init__(self, root: tk.Tk, canvas: tk.Canvas, content: tk.Frame):
+        self.root = root
+        self.canvas = canvas
+        self.content = content
+        self.active = False
+        self.toggle_mode = False
+        self.origin_x = 0
+        self.origin_y = 0
+        self.current_y = 0
+        self.press_time = 0.0
+        self.dragged = False
+        self.speed = 0.0
+        self.subpixel = 0.0
+        self.tick_job: Optional[str] = None
+        self.target_widget: Optional[tk.Widget] = None
+        self.marker: Optional[tk.Toplevel] = None
+        self._cur_cursor = ""
+
+        # Bind scroll wheel (middle button / Button-2)
+        root.bind_all("<ButtonPress-2>", self.on_press, add="+")
+        root.bind_all("<B2-Motion>", self.on_drag, add="+")
+        root.bind_all("<ButtonRelease-2>", self.on_release, add="+")
+        root.bind_all("<Motion>", self.on_motion, add="+")
+        root.bind_all("<ButtonPress-1>", self.on_interrupt_click, add="+")
+        root.bind_all("<ButtonPress-3>", self.on_interrupt_click, add="+")
+        root.bind_all("<KeyPress>", self.on_key, add="+")
+        root.bind_all("<FocusOut>", self.on_focus_out, add="+")
+
+    def _find_scroll_target(self, widget: Optional[tk.Misc]) -> tk.Widget:
+        w = widget
+        while w is not None and w is not self.root:
+            if isinstance(w, (tk.Text, tk.Listbox)):
+                return w
+            if isinstance(w, tk.Canvas) and w is not self.canvas:
+                try:
+                    first, last = w.yview()
+                    if (first, last) != (0.0, 1.0):
+                        return w
+                except tk.TclError:
+                    pass
+            w = getattr(w, "master", None)
+        return self.canvas
+
+    def on_press(self, event):
+        widget = getattr(event, "widget", None)
+        if not isinstance(widget, tk.Misc):
+            return
+        try:
+            if widget.winfo_toplevel() is not self.root:
+                return  # Don't hijack dialogs
+        except tk.TclError:
+            return
+
+        # If already active in toggle mode, clicking Button-2 stops it
+        if self.active and self.toggle_mode:
+            self.stop()
+            return "break"
+
+        self.active = True
+        self.toggle_mode = False
+        self.origin_x = event.x_root
+        self.origin_y = event.y_root
+        self.current_y = event.y_root
+        self.press_time = time.monotonic()
+        self.dragged = False
+        self.speed = 0.0
+        self.subpixel = 0.0
+        self.target_widget = self._find_scroll_target(widget)
+
+        self._show_marker(self.origin_x, self.origin_y)
+        self._update_cursor("sb_v_double_arrow")
+        self._start_tick()
+        return "break"
+
+    def on_drag(self, event):
+        if not self.active:
+            return
+        self.current_y = event.y_root
+        dy = self.current_y - self.origin_y
+        if abs(dy) > 5:
+            self.dragged = True
+        self._update_speed(dy)
+        return "break"
+
+    def on_release(self, event):
+        if not self.active:
+            return
+        elapsed = time.monotonic() - self.press_time
+        dy = event.y_root - self.origin_y
+
+        # If user held down and dragged/swiped, releasing Button-2 immediately stops
+        if self.dragged or elapsed > 0.35 or abs(dy) > self.DEADZONE:
+            self.stop()
+        else:
+            # Clicked quickly without moving -> enter Chrome-style toggle mode
+            self.toggle_mode = True
+        return "break"
+
+    def on_motion(self, event):
+        if not self.active or not self.toggle_mode:
+            return
+        self.current_y = event.y_root
+        dy = self.current_y - self.origin_y
+        self._update_speed(dy)
+        return "break"
+
+    def on_interrupt_click(self, _event=None):
+        if self.active and self.toggle_mode:
+            self.stop()
+            return "break"
+
+    def on_key(self, _event=None):
+        if self.active:
+            self.stop()
+            return "break"
+
+    def on_focus_out(self, _event=None):
+        if self.active:
+            self.stop()
+
+    def _update_speed(self, dy: float):
+        abs_dy = abs(dy)
+        if abs_dy <= self.DEADZONE:
+            self.speed = 0.0
+            self._update_cursor("sb_v_double_arrow")
+        else:
+            dist = abs_dy - self.DEADZONE
+            # Distance-proportional fast acceleration curve:
+            # 20px drag: ~5 px/frame
+            # 80px drag: ~32 px/frame
+            # 160px drag: ~84 px/frame (blazing fast swipe)
+            # 300px+ drag: ~235 px/frame
+            spd = (dist * 0.28) + ((dist / 22.0) ** 1.95)
+            if spd > self.MAX_SPEED:
+                spd = self.MAX_SPEED
+            self.speed = spd if dy > 0 else -spd
+            self._update_cursor("sb_down_arrow" if dy > 0 else "sb_up_arrow")
+
+    def _start_tick(self):
+        if self.tick_job is None:
+            self._tick()
+
+    def _tick(self):
+        self.tick_job = None
+        if not self.active:
+            return
+
+        try:
+            if not self.canvas.winfo_exists():
+                self.stop()
+                return
+        except tk.TclError:
+            self.stop()
+            return
+
+        if abs(self.speed) > 0.001:
+            target = self.target_widget if (self.target_widget and self.target_widget.winfo_exists()) else self.canvas
+            if isinstance(target, (tk.Text, tk.Listbox)):
+                self.subpixel += (self.speed / 18.0)
+            else:
+                self.subpixel += self.speed
+
+            step = int(self.subpixel)
+            if step != 0:
+                self.subpixel -= step
+                try:
+                    target.yview_scroll(step, "units")
+                except tk.TclError:
+                    pass
+
+        try:
+            self.tick_job = self.root.after(16, self._tick)
+        except tk.TclError:
+            pass
+
+    def _show_marker(self, x: int, y: int):
+        self._hide_marker()
+        try:
+            top = tk.Toplevel(self.root)
+            top.overrideredirect(True)
+            top.attributes("-topmost", True)
+            top.geometry(f"34x34+{x - 17}+{y - 17}")
+            mc = tk.Canvas(top, width=34, height=34, bg=COLORS.get("bg_dark", "#161b22"), highlightthickness=0)
+            mc.pack(fill="both", expand=True)
+
+            accent = COLORS.get("accent", "#58a6ff")
+            text_col = COLORS.get("text_primary", "#ffffff")
+            bg_med = COLORS.get("bg_medium", "#21262d")
+
+            mc.create_oval(2, 2, 32, 32, fill=bg_med, outline=accent, width=2)
+            mc.create_polygon(17, 6, 12, 12, 22, 12, fill=text_col)
+            mc.create_oval(15, 15, 19, 19, fill=accent, outline="")
+            mc.create_polygon(17, 28, 12, 22, 22, 22, fill=text_col)
+
+            # Delegate mouse clicks/drags directly over the marker window
+            mc.bind("<ButtonPress-1>", self.on_interrupt_click)
+            mc.bind("<ButtonPress-2>", self.on_press)
+            mc.bind("<ButtonPress-3>", self.on_interrupt_click)
+            mc.bind("<B2-Motion>", self.on_drag)
+            mc.bind("<ButtonRelease-2>", self.on_release)
+            mc.bind("<Motion>", self.on_motion)
+
+            self.marker = top
+        except Exception:
+            self.marker = None
+
+    def _hide_marker(self):
+        if self.marker is not None:
+            try:
+                self.marker.destroy()
+            except Exception:
+                pass
+            self.marker = None
+
+    def _update_cursor(self, cursor: str):
+        if self._cur_cursor == cursor:
+            return
+        self._cur_cursor = cursor
+        try:
+            self.root.config(cursor=cursor)
+            if self.canvas and self.canvas.winfo_exists():
+                self.canvas.config(cursor=cursor)
+        except tk.TclError:
+            pass
+
+    def _restore_cursor(self):
+        self._cur_cursor = ""
+        try:
+            self.root.config(cursor="")
+            if self.canvas and self.canvas.winfo_exists():
+                self.canvas.config(cursor="")
+        except tk.TclError:
+            pass
+
+    def stop(self):
+        self.active = False
+        self.toggle_mode = False
+        self.speed = 0.0
+        if self.tick_job is not None:
+            try:
+                self.root.after_cancel(self.tick_job)
+            except tk.TclError:
+                pass
+            self.tick_job = None
+        self._hide_marker()
+        self._restore_cursor()
+
+
 # ── Smooth scrolling ──────────────────────────────────────────────────────────
 
-def install_smooth_scroll(root: tk.Tk, canvas: tk.Canvas, content: tk.Frame) -> None:
-    """Instant, buttery-smooth mousewheel and touchpad scrolling.
+def install_smooth_scroll(root: tk.Tk, canvas: tk.Canvas, content: tk.Frame) -> Autoscroller:
+    """Instant, buttery-smooth mousewheel, touchpad scrolling and Chrome-style
+    middle mouse hold-and-drag autoscroll with distance-based speed scaling.
     Zero-lag, responsive, and handles nested scroll areas cleanly."""
     try:
         canvas.configure(yscrollincrement=1)
@@ -154,8 +424,13 @@ def install_smooth_scroll(root: tk.Tk, canvas: tk.Canvas, content: tk.Frame) -> 
         w = widget
         while w is not None and w is not root:
             if isinstance(w, (tk.Text, tk.Listbox)):
-                return w
-            if isinstance(w, tk.Canvas) and w is not canvas:
+                try:
+                    first, last = w.yview()
+                    if (first, last) != (0.0, 1.0):
+                        return w
+                except tk.TclError:
+                    pass
+            elif isinstance(w, tk.Canvas) and w is not canvas:
                 try:
                     first, last = w.yview()
                     if (first, last) != (0.0, 1.0):
@@ -166,7 +441,7 @@ def install_smooth_scroll(root: tk.Tk, canvas: tk.Canvas, content: tk.Frame) -> 
         return None
 
     def on_wheel(event):
-        widget = event.widget
+        widget = getattr(event, "widget", None)
         if not isinstance(widget, tk.Misc):
             return
         try:
@@ -177,23 +452,31 @@ def install_smooth_scroll(root: tk.Tk, canvas: tk.Canvas, content: tk.Frame) -> 
 
         inner = nested_scroll_widget(widget)
         if inner is not None:
-            # Let inner widget scroll cleanly
-            steps = int(-event.delta / 120) * 3 if abs(event.delta) >= 120 else (-1 if event.delta > 0 else 1)
             try:
-                inner.yview_scroll(steps, "units")
+                first, last = inner.yview()
+                can_scroll_down = (event.delta < 0) and (last < 0.999)
+                can_scroll_up = (event.delta > 0) and (first > 0.001)
+                if can_scroll_down or can_scroll_up:
+                    if isinstance(inner, tk.Canvas):
+                        delta = event.delta
+                        pixels = int(-(delta / 120.0) * 55) if abs(delta) >= 120 else (-1 if delta > 0 else 1) * 40
+                        inner.yview_scroll(pixels, "units")
+                    else:
+                        steps = int(-event.delta / 120) * 3 if abs(event.delta) >= 120 else (-1 if event.delta > 0 else 1)
+                        inner.yview_scroll(steps, "units")
+                    return "break"
             except tk.TclError:
                 pass
-            return "break"
 
         delta = event.delta
         if not delta:
             return
 
-        # 45 pixels per standard wheel notch feels perfectly responsive and buttery smooth
+        # 75 pixels per standard wheel notch feels snappy and buttery smooth
         if abs(delta) >= 120:
-            pixels = int(-(delta / 120.0) * 45)
+            pixels = int(-(delta / 120.0) * 75)
         else:
-            pixels = int(-delta * 0.45)
+            pixels = int(-delta * 0.75)
             if pixels == 0:
                 pixels = -1 if delta > 0 else 1
 
@@ -203,20 +486,46 @@ def install_smooth_scroll(root: tk.Tk, canvas: tk.Canvas, content: tk.Frame) -> 
             pass
         return "break"
 
-    def on_wheel_up(_event):
+    def on_wheel_up(event):
+        widget = getattr(event, "widget", None)
+        inner = nested_scroll_widget(widget) if isinstance(widget, tk.Misc) else None
+        if inner is not None:
+            try:
+                first, _ = inner.yview()
+                if first > 0.001:
+                    inner.yview_scroll(-3, "units")
+                    return "break"
+            except tk.TclError:
+                pass
         try:
-            canvas.yview_scroll(-45, "units")
+            canvas.yview_scroll(-75, "units")
         except tk.TclError:
             pass
         return "break"
 
-    def on_wheel_down(_event):
+    def on_wheel_down(event):
+        widget = getattr(event, "widget", None)
+        inner = nested_scroll_widget(widget) if isinstance(widget, tk.Misc) else None
+        if inner is not None:
+            try:
+                _, last = inner.yview()
+                if last < 0.999:
+                    inner.yview_scroll(3, "units")
+                    return "break"
+            except tk.TclError:
+                pass
         try:
-            canvas.yview_scroll(45, "units")
+            canvas.yview_scroll(75, "units")
         except tk.TclError:
             pass
         return "break"
 
-    root.bind_all("<MouseWheel>", on_wheel)
-    root.bind_all("<Button-4>", on_wheel_up)
-    root.bind_all("<Button-5>", on_wheel_down)
+
+    root.bind_all("<MouseWheel>", on_wheel, add="+")
+    root.bind_all("<Button-4>", on_wheel_up, add="+")
+    root.bind_all("<Button-5>", on_wheel_down, add="+")
+
+    # Install Chrome-style autoscroll handler
+    scroller = Autoscroller(root, canvas, content)
+    canvas._autoscroller = scroller  # type: ignore[attr-defined]
+    return scroller
