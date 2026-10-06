@@ -48,18 +48,37 @@ def _clear_token() -> None:
 
 def launch_app():
     """Main entry point — initialise DB and start the GUI."""
-    db.init_db()
+    try:
+        db.init_db()
 
-    # ── Try auto-login from saved token ───────────────────────────────────────
-    token = _load_token()
-    user = None
-    if token:
-        user = db.validate_session_token(token)
+        # ── Try auto-login from saved token ───────────────────────────────────────
+        token = _load_token()
+        user = None
+        if token:
+            user = db.validate_session_token(token)
 
-    if user:
-        _open_dashboard(dict(user))
-    else:
-        _open_login()
+        if user:
+            _open_dashboard(dict(user))
+        else:
+            _open_login()
+    except Exception as exc:
+        import traceback
+        import tkinter as tk
+        from tkinter import messagebox
+        err_msg = traceback.format_exc()
+        try:
+            root = tk.Tk()
+            root.withdraw()
+            messagebox.showerror(
+                "CommitMaster — Error",
+                f"An unexpected error occurred while starting CommitMaster:\n\n{err_msg}",
+                parent=root
+            )
+            root.destroy()
+        except Exception:
+            pass
+        raise
+
 
 
 def _open_login():
