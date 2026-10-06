@@ -23,6 +23,12 @@ if APP_DIR not in sys.path:
 # ── Tray icon ─────────────────────────────────────────────────────────────────
 
 def _tray_image() -> Image.Image:
+    logo_path = os.path.join(APP_DIR, "assets", "logo_64.png")
+    if os.path.exists(logo_path):
+        try:
+            return Image.open(logo_path).convert("RGBA")
+        except Exception:
+            pass
     img = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
     d = ImageDraw.Draw(img)
     # Outer circle — GitHub green
