@@ -317,7 +317,7 @@ class CommitComposer(tk.Frame):
             tk.Label(hdr, text=f" 🛡 {n_iss} issue{'s' if n_iss != 1 else ''} ", font=FONTS["caption"],
                      fg="white", bg="#9e6a03").pack(side="right")
 
-        self._composer_box(inner, path, self.host._gd_drafts.get(path, {}), header=path, height=4)
+        self._composer_box(inner, path, self.host._gd_drafts.get(path, {}), header=path, height=6)
 
     def _composer_box(self, parent, key: str, draft: Dict[str, str], header: Optional[str], height: int) -> None:
         """The GitHub-Desktop-like pair of fields: [avatar][Summary (required)] + Description."""
