@@ -418,7 +418,8 @@ def inspect_file(repo_path: str, rel_path: str) -> List[Dict[str, Any]]:
 
     # 4. Empty files
     if file_size == 0:
-        if base_name not in ("__init__.py", ".gitkeep", ".keep", ".gitignore"):
+        ignored_empty_exts = (".db", ".db-wal", ".db-shm", ".db-journal", ".sqlite", ".sqlite3", ".lock", ".log")
+        if base_name not in ("__init__.py", ".gitkeep", ".keep", ".gitignore") and ext not in ignored_empty_exts:
             issues.append(_issue(
                 rel_path, "warning", "empty_file", "Empty file", 1, 0,
                 "File is empty (0 bytes). Check if content was accidentally cleared.",
@@ -598,19 +599,54 @@ def summarize_issues(issues_by_file: Dict[str, List[Dict[str, Any]]]) -> Dict[st
     return summary
 
 
-def format_issue_report(issues_by_file: Dict[str, List[Dict[str, Any]]]) -> str:
-    """Plain-text report of every issue (used by the 'Copy report' button / for pasting into an AI chat)."""
-    out: List[str] = []
+def format_issue_report(issues_by_file: Dict[str, List[Dict[str, Any]]], repo_name: str = "") -> str:
+    """Format a clean, comprehensive, and professional vulnerability and security audit log."""
+    from datetime import datetime, timezone
+    now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    summary = summarize_issues(issues_by_file)
+    total_files = len(issues_by_file)
+
+    lines = [
+        "=" * 80,
+        "COMMITMASTER PRE-COMMIT HEALTH & VULNERABILITY AUDIT REPORT",
+        f"Generated:   {now_str}",
+        f"Repository:  {repo_name or 'Local Working Tree'}",
+        f"Flagged:     {summary['total']} total issue(s) across {total_files} file(s)",
+        f"Breakdown:   {summary['security']} Security / Secret Leaks | {summary['errors']} Critical / Syntax Errors | {summary['warnings']} Warnings",
+        "=" * 80,
+        "",
+    ]
+
     for path, issues in issues_by_file.items():
-        out.append(f"=== {path} ===")
-        for i in issues:
-            out.append(f"[{i.get('severity', '').upper()}] {i.get('title') or i.get('message')} "
-                       f"(line {i.get('line', 1)}" + (f", {i['reference']}" if i.get("reference") else "") + ")")
-            for c in i.get("context") or []:
-                out.append(f"  {'>' if c['hit'] else ' '} {c['line']:>4} | {c['text']}")
+        lines.append(f"[FILE: {path}] ({len(issues)} issue{'s' if len(issues) != 1 else ''})")
+        lines.append("-" * 80)
+        for idx, i in enumerate(issues, start=1):
+            sev = i.get('severity', 'warning').upper()
+            title = i.get('title') or i.get('message', 'Issue')
+            line_no = i.get('line', 1)
+            ref = f" [{i['reference']}]" if i.get("reference") else ""
+            lines.append(f"  {idx}. [{sev}] {title} (Line {line_no}){ref}")
+
+            ctx = i.get("context") or []
+            if ctx:
+                lines.append("     Code Context:")
+                for c in ctx:
+                    marker = ">" if c.get("hit") else " "
+                    lines.append(f"       {marker} {c.get('line', ''):>4} | {c.get('text', '')}")
+            elif i.get("snippet"):
+                lines.append(f"     Snippet: {i['snippet']}")
+
             if i.get("explanation"):
-                out.append(f"  Why: {i['explanation']}")
+                lines.append(f"     Why it matters: {i['explanation']}")
             if i.get("fix"):
-                out.append("  Fix: " + i["fix"].replace("\n", "\n       "))
-            out.append("")
-    return "\n".join(out).strip()
+                fix_lines = i["fix"].splitlines()
+                lines.append(f"     Recommended Fix: {fix_lines[0]}")
+                for fl in fix_lines[1:]:
+                    lines.append(f"                      {fl}")
+            lines.append("")
+        lines.append("")
+
+    lines.append("=" * 80)
+    lines.append("End of CommitMaster Pre-Commit Vulnerability Log.")
+    lines.append("=" * 80)
+    return "\n".join(lines).strip()
