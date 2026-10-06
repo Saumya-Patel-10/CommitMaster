@@ -353,7 +353,7 @@ def preview_and_commit(
         # Mouse wheel scrolling
         def _on_mousewheel(event):
             canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
-        canvas.bind_all("<MouseWheel>", _on_mousewheel)
+        win.bind("<MouseWheel>", _on_mousewheel)
 
         # ── Group cards ───────────────────────────────────────────────────────
         entries: Dict[str, tk.Entry] = {}
@@ -436,13 +436,11 @@ def preview_and_commit(
             messages = {g: e.get().strip() for g, e in entries.items()
                         if e.get().strip() and not e.get().startswith("⏳")}
             result["action"] = ("commit", messages)
-            canvas.unbind_all("<MouseWheel>")
             win.destroy()
             root.destroy()
             done_evt.set()
 
         def _cancel():
-            canvas.unbind_all("<MouseWheel>")
             win.destroy()
             root.destroy()
             done_evt.set()
@@ -714,6 +712,24 @@ def ask_pre_commit_issues_warning(
                 fg="#ffffff", bg="#9e6a03", font=("Segoe UI", 9, "bold"), padx=6, pady=2
             ).pack(side="left")
 
+        def _do_copy_log(btn_widget):
+            from commitmaster.file_inspector import format_issue_report
+            try:
+                win.clipboard_clear()
+                win.clipboard_append(format_issue_report(issues_by_file, repo_name=repo_name))
+                btn_widget.config(text="✔ Vulnerability Log Copied!")
+                btn_widget.after(2000, lambda: btn_widget.winfo_exists() and btn_widget.config(text="📋 Copy Entire Vulnerability Log"))
+            except tk.TclError:
+                pass
+
+        top_copy_btn = tk.Button(
+            badges_row, text="📋 Copy Entire Vulnerability Log", font=("Segoe UI", 9, "bold"),
+            fg="#ffffff", bg="#8a3b14", activebackground="#a84718", activeforeground="#ffffff",
+            relief="flat", bd=0, cursor="hand2", padx=10, pady=2,
+            command=lambda: _do_copy_log(top_copy_btn)
+        )
+        top_copy_btn.pack(side="right")
+
         # Scrollable issues container
         list_card = tk.Frame(outer, bg=C["bg2"], highlightthickness=1, highlightbackground=C["border"])
         list_card.pack(fill="both", expand=True, pady=(4, 14))
@@ -777,15 +793,6 @@ def ask_pre_commit_issues_warning(
             result["proceed"] = True
             on_finish()
 
-        def _copy_report():
-            from commitmaster.file_inspector import format_issue_report
-            try:
-                win.clipboard_clear()
-                win.clipboard_append(format_issue_report(issues_by_file))
-                copy_all_btn.config(text="✔ Report copied")
-            except tk.TclError:
-                pass
-
         cancel_btn = tk.Button(
             btn_row,
             text="🛑  Cancel Commit & Fix Issues (Recommended)",
@@ -821,9 +828,10 @@ def ask_pre_commit_issues_warning(
         proceed_btn.pack(side="left")
 
         copy_all_btn = tk.Button(
-            btn_row, text="📋 Copy full report", font=("Segoe UI", 9), fg=C["text"], bg=C["btn2_bg"],
-            activebackground=C["border"], activeforeground=C["text"], relief="flat", bd=0,
-            cursor="hand2", padx=12, pady=8, command=_copy_report,
+            btn_row, text="📋 Copy Entire Vulnerability Log", font=("Segoe UI", 9, "bold"),
+            fg="#ffffff", bg="#8a3b14", activebackground="#a84718", activeforeground="#ffffff",
+            relief="flat", bd=0, cursor="hand2", padx=12, pady=8,
+            command=lambda: _do_copy_log(copy_all_btn),
         )
         copy_all_btn.pack(side="right")
 
