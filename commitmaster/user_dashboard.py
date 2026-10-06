@@ -8,7 +8,7 @@ import os
 import threading
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
-from typing import Callable, Dict, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from commitmaster.app_styles import (
     COLORS, FONTS, SIZES, AVATAR_COLORS, THEMES, ACCENTS, FONT_FAMILIES, FONT_SCALES,
@@ -77,7 +77,6 @@ class UserDashboard:
     def _setup_window(self):
         name = self.user.get("full_name") or self.user["username"]
         self.root.title(f"CommitMaster — {name}")
-        self.root.geometry("1100x700")
         self.root.minsize(900, 600)
         self.root.configure(bg=COLORS["bg_darkest"])
         self.root.update_idletasks()
@@ -85,6 +84,8 @@ class UserDashboard:
         sw = self.root.winfo_screenwidth()
         sh = self.root.winfo_screenheight()
         self.root.geometry(f"{w}x{h}+{(sw - w)//2}+{(sh - h)//2}")
+        from commitmaster import windows_integration
+        windows_integration.apply_windows_theme(self.root, f"CommitMaster — {name}")
 
     # ── Layout skeleton ───────────────────────────────────────────────────────
 
@@ -140,30 +141,81 @@ class UserDashboard:
             pass
 
     def _on_frame_configure(self, event):
-        self._content_canvas.configure(
-            scrollregion=self._content_canvas.bbox("all"))
+        bbox = self._content_canvas.bbox("all")
+        if getattr(self, "_last_scrollregion", None) != bbox:
+            self._last_scrollregion = bbox
+            self._content_canvas.configure(scrollregion=bbox)
 
     def _on_canvas_configure(self, event):
-        self._content_canvas.itemconfig(self._content_window, width=event.width)
+        if getattr(self, "_last_canvas_width", None) != event.width:
+            self._last_canvas_width = event.width
+            self._content_canvas.itemconfig(self._content_window, width=event.width)
 
     # ── Sidebar ───────────────────────────────────────────────────────────────
 
     def _build_sidebar(self):
         sb = self._sidebar
 
-        # Logo area
+        # 1. Pinned Top Header (Logo)
         logo_f = tk.Frame(sb, bg=COLORS["bg_sidebar"], height=70)
-        logo_f.pack(fill="x")
+        logo_f.pack(side="top", fill="x")
         logo_f.pack_propagate(False)
-        tk.Label(logo_f, text="⬡ CommitMaster", font=FONTS["heading_sm"],
-                 fg=COLORS["accent"], bg=COLORS["bg_sidebar"]).pack(
-            side="left", padx=16, pady=20)
+        from commitmaster import windows_integration
+        logo_img = windows_integration.get_logo_photo(26)
+        if logo_img:
+            self._sidebar_logo_img = logo_img
+            tk.Label(logo_f, image=logo_img, bg=COLORS["bg_sidebar"]).pack(side="left", padx=(16, 8), pady=20)
+            tk.Label(logo_f, text="CommitMaster", font=FONTS["heading_sm"],
+                     fg=COLORS["text_primary"], bg=COLORS["bg_sidebar"]).pack(side="left", pady=20)
+        else:
+            tk.Label(logo_f, text="⬡ CommitMaster", font=FONTS["heading_sm"],
+                     fg=COLORS["accent"], bg=COLORS["bg_sidebar"]).pack(
+                side="left", padx=16, pady=20)
 
-        # Separator
-        tk.Frame(sb, height=1, bg=COLORS["border"]).pack(fill="x")
+        tk.Frame(sb, height=1, bg=COLORS["border"]).pack(side="top", fill="x")
+
+        # 2. Pinned Bottom Footer (Sign Out)
+        footer_f = tk.Frame(sb, bg=COLORS["bg_sidebar"])
+        footer_f.pack(side="bottom", fill="x")
+        tk.Frame(footer_f, height=1, bg=COLORS["border"]).pack(side="top", fill="x")
+        logout_btn = tk.Button(footer_f, text="  ⏻  Sign Out",
+                               font=FONTS["label"], fg=COLORS["text_secondary"],
+                               bg=COLORS["bg_sidebar"], relief="flat", bd=0,
+                               cursor="hand2", anchor="w",
+                               command=self._do_logout, padx=16, pady=12)
+        logout_btn.pack(side="bottom", fill="x")
+        self._add_hover(logout_btn, COLORS["bg_medium"], COLORS["bg_sidebar"])
+
+        # 3. Scrollable Middle Area
+        middle_f = tk.Frame(sb, bg=COLORS["bg_sidebar"])
+        middle_f.pack(side="top", fill="both", expand=True)
+
+        self._sb_canvas = tk.Canvas(middle_f, bg=COLORS["bg_sidebar"], highlightthickness=0)
+        self._sb_scrollbar = tk.Scrollbar(middle_f, orient="vertical", command=self._sb_canvas.yview)
+        self._sb_canvas.configure(yscrollcommand=self._sb_scrollbar.set)
+
+        self._sb_frame = tk.Frame(self._sb_canvas, bg=COLORS["bg_sidebar"])
+        self._sb_window = self._sb_canvas.create_window((0, 0), window=self._sb_frame, anchor="nw")
+
+        def _on_sb_frame_configure(e):
+            bbox = self._sb_canvas.bbox("all")
+            self._sb_canvas.configure(scrollregion=bbox)
+            if bbox and (bbox[3] - bbox[1]) > self._sb_canvas.winfo_height() and self._sb_canvas.winfo_height() > 50:
+                self._sb_scrollbar.pack(side="right", fill="y")
+            else:
+                self._sb_scrollbar.pack_forget()
+
+        def _on_sb_canvas_configure(e):
+            self._sb_canvas.itemconfig(self._sb_window, width=e.width)
+
+        self._sb_frame.bind("<Configure>", _on_sb_frame_configure)
+        self._sb_canvas.bind("<Configure>", _on_sb_canvas_configure)
+        self._sb_canvas.pack(side="left", fill="both", expand=True)
+
+        target = self._sb_frame
 
         # Avatar + name
-        av_f = tk.Frame(sb, bg=COLORS["bg_sidebar"], pady=16)
+        av_f = tk.Frame(target, bg=COLORS["bg_sidebar"], pady=16)
         av_f.pack(fill="x", padx=16)
         color = self.user.get("avatar_color", AVATAR_COLORS[0])
         initials = self._get_initials()
@@ -178,7 +230,7 @@ class UserDashboard:
         tk.Label(av_f, text=role_tag, font=FONTS["caption"],
                  fg=role_color, bg=COLORS["bg_sidebar"]).pack(anchor="w")
 
-        tk.Frame(sb, height=1, bg=COLORS["border"]).pack(fill="x", pady=(8, 4))
+        tk.Frame(target, height=1, bg=COLORS["border"]).pack(fill="x", pady=(8, 4))
 
         # Nav items
         nav_items = [
@@ -197,19 +249,33 @@ class UserDashboard:
         self._nav_buttons = {}
         self._nav_order = [k for _, _, k in nav_items if k != "admin"]
         for icon, label, key in nav_items:
-            btn = self._make_nav_btn(sb, icon, label, key)
+            btn = self._make_nav_btn(target, icon, label, key)
             self._nav_buttons[key] = btn
 
-        # Spacer + logout
-        tk.Frame(sb, bg=COLORS["bg_sidebar"]).pack(fill="both", expand=True)
-        tk.Frame(sb, height=1, bg=COLORS["border"]).pack(fill="x")
-        logout_btn = tk.Button(sb, text="  ⏻  Sign Out",
-                               font=FONTS["label"], fg=COLORS["text_secondary"],
-                               bg=COLORS["bg_sidebar"], relief="flat", bd=0,
-                               cursor="hand2", anchor="w",
-                               command=self._do_logout, padx=16, pady=12)
-        logout_btn.pack(fill="x")
-        self._add_hover(logout_btn, COLORS["bg_medium"], COLORS["bg_sidebar"])
+        # Bottom padding inside scroll area
+        tk.Frame(target, bg=COLORS["bg_sidebar"], height=16).pack(fill="x")
+
+        # Smooth mousewheel binding
+        def _on_sb_wheel(event):
+            delta = getattr(event, "delta", 0)
+            if not delta:
+                return "break"
+            pixels = int(-(delta / 120.0) * 45) if abs(delta) >= 120 else (-1 if delta > 0 else 1) * 35
+            self._sb_canvas.yview_scroll(pixels, "units")
+            return "break"
+
+        def _bind_sb_mousewheel(widget):
+            try:
+                widget.bind("<MouseWheel>", _on_sb_wheel, add="+")
+                widget.bind("<Button-4>", lambda e: self._sb_canvas.yview_scroll(-35, "units"), add="+")
+                widget.bind("<Button-5>", lambda e: self._sb_canvas.yview_scroll(35, "units"), add="+")
+                for child in widget.winfo_children():
+                    _bind_sb_mousewheel(child)
+            except Exception:
+                pass
+
+        _bind_sb_mousewheel(sb)
+
 
     def _make_nav_btn(self, parent, icon: str, label: str, key: str) -> tk.Button:
         return navigation.make_nav_button(parent, icon, label, lambda k=key: self._go(k))
@@ -273,7 +339,7 @@ class UserDashboard:
                                       fg=COLORS["text_primary"], bg=COLORS["bg_dark"])
         self._header_title.pack(side="left", padx=24, pady=12)
         # Right side: version badge
-        tk.Label(header, text="v2.0", font=FONTS["caption"],
+        tk.Label(header, text="v3.0", font=FONTS["caption"],
                  fg=COLORS["text_muted"], bg=COLORS["bg_dark"]).pack(
             side="right", padx=16)
 
@@ -852,6 +918,23 @@ class UserDashboard:
         self._make_small_btn(dirs_btns, "✕ Remove",
                              self._remove_dir).pack(side="left")
 
+        # ── Desktop Shortcut card ─────────────────────────────────────────────
+        card_desk = self._card(pad, padx=20, pady=16)
+        card_desk.pack(fill="x", pady=(0, 12))
+        tk.Label(card_desk, text="Windows Desktop Integration", font=FONTS["heading_sm"],
+                 fg=COLORS["text_primary"], bg=COLORS["bg_card"]).pack(anchor="w")
+        tk.Label(card_desk,
+                 text="Create 1-click desktop shortcuts with official branding for instant access without terminal commands.",
+                 font=FONTS["caption"], fg=COLORS["text_secondary"],
+                 bg=COLORS["bg_card"]).pack(anchor="w", pady=(2, 10))
+
+        desk_btns = tk.Frame(card_desk, bg=COLORS["bg_card"])
+        desk_btns.pack(anchor="w")
+        desk_btn = tk.Button(desk_btns, text="📌 Create Desktop Shortcuts", font=FONTS["label_bold"],
+                             fg="white", bg=COLORS["info"], relief="flat", bd=0, cursor="hand2",
+                             padx=14, pady=6, command=self._create_desktop_shortcuts)
+        desk_btn.pack(side="left")
+
         # ── Save button ───────────────────────────────────────────────────────
         save_btn = tk.Button(pad, text="  💾  Save Settings",
                              font=FONTS["heading_sm"], fg="white",
@@ -861,6 +944,21 @@ class UserDashboard:
                              command=self._save_settings)
         save_btn.pack(anchor="w", pady=(8, 0))
         self._add_hover(save_btn, COLORS["accent_hover"], COLORS["accent"])
+
+    def _create_desktop_shortcuts(self):
+        from commitmaster import windows_integration
+        target = "both" if self.user.get("role") == "admin" else "user"
+        ok, msg = windows_integration.create_desktop_shortcut(target)
+        if ok:
+            messagebox.showinfo(
+                "Shortcuts Created",
+                "Desktop shortcut created successfully!\n\n"
+                "Placed on your Windows Desktop with the official icon.",
+                parent=self.root
+            )
+        else:
+            messagebox.showerror("Shortcut Error", f"Could not create shortcut:\n{msg}", parent=self.root)
+
 
     def _make_small_btn(self, parent, text: str, cmd) -> tk.Button:
         btn = tk.Button(parent, text=text, font=FONTS["label"],
@@ -1496,8 +1594,9 @@ class UserDashboard:
                      font=FONTS["body_sm"], fg=COLORS["success"], bg=COLORS["bg_card"],
                      justify="center", padx=16, pady=24).pack(fill="x")
         else:
+            cached_issues = file_inspector.inspect_files(self._gd_selected_repo, [p for _, p in changes]) if self._gd_selected_repo else {}
             for status, path in changes:
-                self._gd_build_file_row(files_frame, status, path)
+                self._gd_build_file_row(files_frame, status, path, issues=cached_issues.get(path, []))
 
         # Right Panel (Diff Viewer & AI File Commentary)
         right_p = tk.Frame(ws, bg=COLORS["bg_dark"])
@@ -1570,7 +1669,7 @@ class UserDashboard:
         for v in vars_:
             v.set(target)
 
-    def _gd_build_file_row(self, parent, status: str, path: str):
+    def _gd_build_file_row(self, parent, status: str, path: str, issues: Optional[List[Dict[str, Any]]] = None):
         row = tk.Frame(parent, bg=COLORS["bg_card"], padx=6, pady=4)
         row.pack(fill="x")
 
@@ -1602,15 +1701,16 @@ class UserDashboard:
         lbl.pack(side="left", fill="x", expand=True)
 
         # Inline issue badge if problems detected in this file
-        if self._gd_selected_repo:
-            file_issues = file_inspector.inspect_file(self._gd_selected_repo, path)
-            if file_issues:
-                top_iss = file_issues[0]
-                sev = top_iss.get("severity")
-                l_no = top_iss.get("line", 1)
-                b_text = f"❌ Error (L{l_no})" if sev == "error" else (f"🛡️ Secret (L{l_no})" if sev == "security" else f"⚠️ Warning (L{l_no})")
-                b_bg = "#da3633" if sev == "error" else ("#d29922" if sev == "security" else "#9e6a03")
-                tk.Label(row, text=f" {b_text} ", font=FONTS["caption"], fg="#ffffff", bg=b_bg).pack(side="right", padx=(4, 2))
+        if issues is None and self._gd_selected_repo:
+            issues = file_inspector.inspect_file(self._gd_selected_repo, path)
+
+        if issues:
+            top_iss = issues[0]
+            sev = top_iss.get("severity")
+            l_no = top_iss.get("line", 1)
+            b_text = f"❌ Error (L{l_no})" if sev == "error" else (f"🛡️ Secret (L{l_no})" if sev == "security" else f"⚠️ Warning (L{l_no})")
+            b_bg = "#da3633" if sev == "error" else ("#d29922" if sev == "security" else "#9e6a03")
+            tk.Label(row, text=f" {b_text} ", font=FONTS["caption"], fg="#ffffff", bg=b_bg).pack(side="right", padx=(4, 2))
 
         def on_click(e):
             self._gd_select_file(path)
