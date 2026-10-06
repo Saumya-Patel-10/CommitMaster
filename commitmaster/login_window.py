@@ -52,6 +52,8 @@ class LoginWindow:
         y = max(0, (sh - 540) // 2)
         self.root.geometry(f"460x540+{x}+{y}")
         self.root.protocol("WM_DELETE_WINDOW", self.root.destroy)
+        from commitmaster import windows_integration
+        windows_integration.apply_windows_theme(self.root, "CommitMaster — Sign In")
 
     # ── UI construction ───────────────────────────────────────────────────────
 
@@ -67,7 +69,7 @@ class LoginWindow:
         self._canvas.bind("<Configure>", self._on_canvas_configure)
 
         # Mousewheel scroll support
-        self._canvas.bind_all("<MouseWheel>", self._on_mousewheel)
+        self.root.bind("<MouseWheel>", self._on_mousewheel)
 
         outer = tk.Frame(self._content, bg=COLORS["bg_darkest"])
         outer.pack(fill="both", expand=True, padx=36, pady=20)
@@ -372,9 +374,18 @@ class LoginWindow:
 
     # ── Logo animation ────────────────────────────────────────────────────────
 
-    def _draw_logo(self, angle: float):
+    def _draw_logo(self, angle: float = 0):
         c = self._logo_canvas
         c.delete("all")
+        from commitmaster import windows_integration
+        photo = getattr(self, "_logo_photo", None)
+        if photo is None:
+            photo = windows_integration.get_logo_photo(64)
+            self._logo_photo = photo
+        if photo:
+            c.create_image(32, 32, image=photo, anchor="center")
+            return
+
         cx, cy, r = 32, 32, 28
         import math
         # Glow
@@ -399,6 +410,9 @@ class LoginWindow:
         try:
             if not self.root.winfo_exists():
                 return
+            if getattr(self, "_logo_photo", None):
+                self._draw_logo(0)
+                return  # Static high-res logo doesn't need CPU timer loops
             self._draw_logo(angle)
             self.root.after(50, lambda: self._animate_logo((angle + 3) % 360))
         except Exception:
