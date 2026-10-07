@@ -24,7 +24,7 @@ if APP_DIR not in sys.path:
 from commitmaster import database as db
 from commitmaster import commit_engine, ai_messages, ui, github_service, file_inspector
 from commitmaster import commit_composer, charts, navigation, issue_view
-from commitmaster.config import load_config
+from commitmaster.config import load_config, save_config
 from commitmaster.app_styles import (
     COLORS, FONTS, SIZES, AVATAR_COLORS, THEMES, ACCENTS, FONT_FAMILIES, FONT_SCALES,
     apply_customization, get_active_customization
@@ -2158,13 +2158,81 @@ class AdminApp:
         # AI card
         ai_card = self._card(p, padx=20, pady=16)
         ai_card.pack(fill="x", pady=(0, 12))
-        tk.Label(ai_card, text="AI / LM Studio",
+        tk.Label(ai_card, text="AI Providers & API Keys",
                  font=FONTS["heading_sm"], fg=COLORS["text_primary"],
                  bg=COLORS["bg_card"]).pack(anchor="w")
-        self._ai_url_var   = tk.StringVar(value=prefs.get("ai_base_url", "http://localhost:1234/v1"))
-        self._ai_model_var = tk.StringVar(value=prefs.get("ai_model", ""))
-        self._entry_row(ai_card, "Server URL:", self._ai_url_var, width=16)
+        tk.Label(ai_card, text="Configure OpenAI, Claude, Google Gemini, or local models (LM Studio / Ollama).",
+                 font=FONTS["caption"], fg=COLORS["text_secondary"], bg=COLORS["bg_card"]).pack(anchor="w", pady=(2, 8))
+
+        self._admin_prov_map = {
+            "OpenAI": "openai",
+            "Anthropic Claude": "claude",
+            "Google Gemini": "gemini",
+            "Local (Bionic / LM Studio)": "bionic",
+            "Local (Ollama)": "ollama",
+        }
+        self._admin_rev_prov_map = {v: k for k, v in self._admin_prov_map.items()}
+
+        cfg = load_config()
+        current_prov = prefs.get("ai_provider") or cfg.get("ai", {}).get("provider", "bionic")
+        self._ai_provider_var = tk.StringVar(value=self._admin_rev_prov_map.get(current_prov, "Local (Bionic / LM Studio)"))
+
+        prov_row = tk.Frame(ai_card, bg=COLORS["bg_card"])
+        prov_row.pack(fill="x", pady=(4, 8))
+        tk.Label(prov_row, text="Active Provider:", font=FONTS["label_bold"],
+                 fg=COLORS["text_secondary"], bg=COLORS["bg_card"], width=16, anchor="w").pack(side="left")
+        prov_menu = tk.OptionMenu(prov_row, self._ai_provider_var, *self._admin_prov_map.keys())
+        prov_menu.config(font=FONTS["body_md"], bg=COLORS["bg_input"], fg=COLORS["text_primary"],
+                         activebackground=COLORS["bg_card_hover"], activeforeground=COLORS["text_primary"],
+                         relief="flat", bd=0, highlightthickness=1, highlightbackground=COLORS["border"])
+        prov_menu["menu"].config(bg=COLORS["bg_card"], fg=COLORS["text_primary"], font=FONTS["body_md"])
+        prov_menu.pack(side="left")
+
+        self._openai_key_var = tk.StringVar(value=prefs.get("openai_api_key") or cfg.get("ai", {}).get("openai_api_key", ""))
+        self._claude_key_var = tk.StringVar(value=prefs.get("claude_api_key") or cfg.get("ai", {}).get("claude_api_key", ""))
+        self._gemini_key_var = tk.StringVar(value=prefs.get("gemini_api_key") or cfg.get("ai", {}).get("gemini_api_key", ""))
+        self._ai_model_var = tk.StringVar(value=prefs.get("ai_model") or cfg.get("ai", {}).get("model", ""))
+        self._ai_url_var   = tk.StringVar(value=prefs.get("ai_base_url") or cfg.get("ai", {}).get("base_url", "http://localhost:1234/v1"))
+
+        self._entry_row(ai_card, "OpenAI Key:", self._openai_key_var, width=16, show="•")
+        self._entry_row(ai_card, "Claude Key:", self._claude_key_var, width=16, show="•")
+        self._entry_row(ai_card, "Gemini Key:", self._gemini_key_var, width=16, show="•")
         self._entry_row(ai_card, "Model name:", self._ai_model_var, width=16)
+        self._entry_row(ai_card, "Server URL:", self._ai_url_var, width=16)
+
+        # Test connection button
+        test_f = tk.Frame(ai_card, bg=COLORS["bg_card"])
+        test_f.pack(fill="x", pady=(4, 0))
+        self._admin_test_lbl = tk.Label(test_f, text="", font=FONTS["caption"], bg=COLORS["bg_card"], fg=COLORS["text_secondary"])
+
+        def _test_ai_admin():
+            self._admin_test_lbl.config(text="Testing connection...", fg=COLORS["info"])
+            self.root.update_idletasks()
+            prov = self._admin_prov_map.get(self._ai_provider_var.get(), "bionic")
+            m_val = self._ai_model_var.get().strip()
+            tmp_cfg = {
+                "ai": {
+                    "provider": prov,
+                    "base_url": self._ai_url_var.get().strip(),
+                    "model": m_val,
+                    "openai_api_key": self._openai_key_var.get().strip(),
+                    "claude_api_key": self._claude_key_var.get().strip(),
+                    "gemini_api_key": self._gemini_key_var.get().strip(),
+                    "openai_model": m_val or "gpt-4o-mini",
+                    "claude_model": m_val or "claude-3-5-haiku-20241022",
+                    "gemini_model": m_val or "gemini-1.5-flash",
+                    "timeout_seconds": 10,
+                }
+            }
+            ok, msg = ai_messages.test_connection(tmp_cfg)
+            color = COLORS["success"] if ok else COLORS["error"]
+            self._admin_test_lbl.config(text=("✔ " if ok else "✖ ") + msg.split("\n")[0], fg=color)
+
+        tk.Button(test_f, text="🔌 Test AI Connection", font=FONTS["label"],
+                  fg=COLORS["text_primary"], bg=COLORS["bg_medium"],
+                  activebackground=COLORS["bg_card_hover"], activeforeground=COLORS["text_primary"],
+                  relief="flat", bd=0, cursor="hand2", padx=10, pady=4, command=_test_ai_admin).pack(side="left")
+        self._admin_test_lbl.pack(side="left", padx=(10, 0))
 
         # Folders card
         dirs_card = self._card(p, padx=20, pady=16)
@@ -2236,16 +2304,40 @@ class AdminApp:
 
     def _save_settings(self):
         dirs = list(self._dirs_lb.get(0, "end"))
+        prov = getattr(self, "_admin_prov_map", {}).get(self._ai_provider_var.get(), "bionic")
+        m_val = self._ai_model_var.get().strip()
         db.update_preferences(
             self.user["id"],
             auto_commit=int(self._auto_var.get()),
             skip_sensitive=int(self._skip_var.get()),
             notifications=int(self._notif_var.get()),
             session_end_grace=int(self._grace_var.get() or 120),
-            ai_base_url=self._ai_url_var.get(),
-            ai_model=self._ai_model_var.get(),
+            ai_provider=prov,
+            openai_api_key=self._openai_key_var.get().strip(),
+            claude_api_key=self._claude_key_var.get().strip(),
+            gemini_api_key=self._gemini_key_var.get().strip(),
+            openai_model=m_val if prov == "openai" else "gpt-4o-mini",
+            claude_model=m_val if prov == "claude" else "claude-3-5-haiku-20241022",
+            gemini_model=m_val if prov == "gemini" else "gemini-1.5-flash",
+            ai_base_url=self._ai_url_var.get().strip(),
+            ai_model=m_val,
             projects_dirs=json.dumps(dirs),
         )
+        cfg = load_config()
+        cfg.setdefault("ai", {})
+        cfg["ai"]["provider"] = prov
+        cfg["ai"]["openai_api_key"] = self._openai_key_var.get().strip()
+        cfg["ai"]["claude_api_key"] = self._claude_key_var.get().strip()
+        cfg["ai"]["gemini_api_key"] = self._gemini_key_var.get().strip()
+        cfg["ai"]["base_url"] = self._ai_url_var.get().strip()
+        cfg["ai"]["model"] = m_val if prov in ("bionic", "ollama") else ""
+        if prov == "openai" and m_val:
+            cfg["ai"]["openai_model"] = m_val
+        elif prov == "claude" and m_val:
+            cfg["ai"]["claude_model"] = m_val
+        elif prov == "gemini" and m_val:
+            cfg["ai"]["gemini_model"] = m_val
+        save_config(cfg)
         messagebox.showinfo("Saved", "Settings saved!", parent=self.root)
 
     def _page_profile(self):
