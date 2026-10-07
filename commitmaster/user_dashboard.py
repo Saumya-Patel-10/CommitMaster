@@ -441,16 +441,24 @@ class UserDashboard:
         ).pack(side="left")
 
         ai_url = cfg.get("ai", {}).get("base_url", "http://localhost:1234/v1")
-        cfg_model = cfg.get("ai", {}).get("model")
-        cached_model = cfg_model or (ai_messages._MODEL_CACHE["models"][0] if ai_messages._MODEL_CACHE["models"] else None)
-        status_text = f"⚡ Local AI: {cached_model or 'Online'} ({ai_url})" if cached_model else f"⚡ Local AI Server: {ai_url}"
+        prov = ai_messages.get_active_provider(cfg)
+        prov_label = ai_messages.get_provider_label(cfg)
+        prov_model = ai_messages.resolve_active_model(cfg)
+        if prov in ("openai", "claude", "gemini"):
+            status_text = f"⚡ {prov_label}: {prov_model}" if prov_model else f"⚡ {prov_label}: (Needs API Key)"
+            status_color = COLORS["accent"] if prov_model else COLORS["text_secondary"]
+        else:
+            cached_model = prov_model or (ai_messages._MODEL_CACHE["models"][0] if ai_messages._MODEL_CACHE["models"] else None)
+            status_text = f"⚡ {prov_label}: {cached_model or 'Online'} ({ai_url})" if cached_model else f"⚡ {prov_label}: {ai_url}"
+            status_color = COLORS["accent"] if cached_model else COLORS["text_muted"]
+
         ai_status_lbl = tk.Label(
             hdr_row, text=status_text, font=FONTS["caption"],
-            fg=COLORS["accent"] if cached_model else COLORS["text_muted"], bg=COLORS["bg_card"]
+            fg=status_color, bg=COLORS["bg_card"]
         )
         ai_status_lbl.pack(side="right")
 
-        if not cached_model and not cfg_model:
+        if prov not in ("openai", "claude", "gemini") and not cached_model and not prov_model:
             def _async_detect():
                 m = ai_messages.detect_model(cfg, force=False)
                 if m:
@@ -458,7 +466,7 @@ class UserDashboard:
                         try:
                             if ai_status_lbl.winfo_exists():
                                 ai_status_lbl.config(
-                                    text=f"⚡ Local AI: {m} ({ai_url})",
+                                    text=f"⚡ {prov_label}: {m} ({ai_url})",
                                     fg=COLORS["accent"]
                                 )
                         except tk.TclError:
@@ -844,58 +852,144 @@ class UserDashboard:
 
         for text, var in [
             ("Auto-commit without preview", self._auto_commit_var),
-            ("Skip sensitive files (.env, .pem, etc.)", self._skip_sensitive_var),
-            ("Show desktop notifications", self._notif_var),
-            ("Ask for confirmation before pushing to GitHub", self._ask_push_var),
+            ("Skip sensitive files (.env, keys, certs)", self._skip_sensitive_var),
+            ("Desktop notifications on commit", self._notif_var),
+            ("Ask before git push", self._ask_push_var),
         ]:
             cb = tk.Checkbutton(card, text=text, variable=var,
-                                font=FONTS["body_md"], fg=COLORS["text_primary"],
-                                bg=COLORS["bg_card"], selectcolor=COLORS["bg_input"],
+                                font=FONTS["body_sm"], fg=COLORS["text_secondary"],
+                                bg=COLORS["bg_card"], selectcolor=COLORS["bg_dark"],
                                 activebackground=COLORS["bg_card"],
                                 activeforeground=COLORS["text_primary"])
-            cb.pack(anchor="w", pady=4)
+            cb.pack(anchor="w", pady=2)
 
         # Grace period
-        gf = tk.Frame(card, bg=COLORS["bg_card"])
-        gf.pack(anchor="w", pady=(8, 0))
-        tk.Label(gf, text="Session end grace period (seconds): ",
-                 font=FONTS["body_md"], fg=COLORS["text_primary"],
-                 bg=COLORS["bg_card"]).pack(side="left")
+        grace_f = tk.Frame(card, bg=COLORS["bg_card"])
+        grace_f.pack(fill="x", pady=(6, 0))
+        tk.Label(grace_f, text="Session End Grace Period (s):", font=FONTS["body_sm"],
+                 fg=COLORS["text_secondary"], bg=COLORS["bg_card"]).pack(side="left")
         self._grace_var = tk.StringVar(value=str(prefs.get("session_end_grace", 120)))
-        grace_e = tk.Entry(gf, textvariable=self._grace_var, width=6,
-                           font=FONTS["body_md"], bg=COLORS["bg_input"],
-                           fg=COLORS["text_primary"], relief="flat",
-                           highlightthickness=1, highlightbackground=COLORS["border"])
-        grace_e.pack(side="left", ipady=4)
+        tk.Entry(grace_f, textvariable=self._grace_var, width=6, font=FONTS["mono"],
+                 bg=COLORS["bg_input"], fg=COLORS["text_primary"], relief="flat",
+                 highlightthickness=1, highlightbackground=COLORS["border"]).pack(side="left", padx=8)
 
         # ── AI settings card ──────────────────────────────────────────────────
         card2 = self._card(pad, padx=20, pady=16)
         card2.pack(fill="x", pady=(0, 12))
-        tk.Label(card2, text="AI / LM Studio", font=FONTS["heading_sm"],
+        tk.Label(card2, text="AI Providers & API Keys", font=FONTS["heading_sm"],
                  fg=COLORS["text_primary"], bg=COLORS["bg_card"]).pack(anchor="w")
+        tk.Label(card2, text="Connect OpenAI, Claude, Google Gemini, or local models for commit generation.",
+                 font=FONTS["caption"], fg=COLORS["text_secondary"], bg=COLORS["bg_card"]).pack(anchor="w", pady=(2, 8))
 
-        url_f = tk.Frame(card2, bg=COLORS["bg_card"])
-        url_f.pack(fill="x", pady=(8, 0))
-        tk.Label(url_f, text="Server URL:", font=FONTS["body_sm"],
-                 fg=COLORS["text_secondary"], bg=COLORS["bg_card"], width=14,
-                 anchor="w").pack(side="left")
-        self._ai_url_var = tk.StringVar(
-            value=prefs.get("ai_base_url", "http://localhost:1234/v1"))
-        tk.Entry(url_f, textvariable=self._ai_url_var, font=FONTS["mono"],
+        self._provider_map = {
+            "OpenAI": "openai",
+            "Anthropic Claude": "claude",
+            "Google Gemini": "gemini",
+            "Local (Bionic / LM Studio)": "bionic",
+            "Local (Ollama)": "ollama",
+        }
+        self._reverse_provider_map = {v: k for k, v in self._provider_map.items()}
+
+        prov_row = tk.Frame(card2, bg=COLORS["bg_card"])
+        prov_row.pack(fill="x", pady=(4, 0))
+        tk.Label(prov_row, text="Active Provider:", font=FONTS["body_sm"],
+                 fg=COLORS["text_secondary"], bg=COLORS["bg_card"], width=16, anchor="w").pack(side="left")
+
+        cfg = load_config()
+        current_prov = prefs.get("ai_provider") or cfg.get("ai", {}).get("provider", "bionic")
+        self._ai_provider_var = tk.StringVar(value=self._reverse_provider_map.get(current_prov, "Local (Bionic / LM Studio)"))
+
+        prov_menu = tk.OptionMenu(prov_row, self._ai_provider_var, *self._provider_map.keys())
+        prov_menu.config(font=FONTS["body_sm"], bg=COLORS["bg_input"], fg=COLORS["text_primary"],
+                         activebackground=COLORS["bg_card_hover"], activeforeground=COLORS["text_primary"],
+                         relief="flat", bd=0, highlightthickness=1, highlightbackground=COLORS["border"])
+        prov_menu["menu"].config(bg=COLORS["bg_card"], fg=COLORS["text_primary"], font=FONTS["body_sm"])
+        prov_menu.pack(side="left", padx=4)
+
+        # Cloud API Keys
+        # OpenAI Key
+        oa_row = tk.Frame(card2, bg=COLORS["bg_card"])
+        oa_row.pack(fill="x", pady=(6, 0))
+        tk.Label(oa_row, text="OpenAI Key:", font=FONTS["body_sm"],
+                 fg=COLORS["text_secondary"], bg=COLORS["bg_card"], width=16, anchor="w").pack(side="left")
+        self._openai_key_var = tk.StringVar(value=prefs.get("openai_api_key") or cfg.get("ai", {}).get("openai_api_key", ""))
+        tk.Entry(oa_row, textvariable=self._openai_key_var, show="•", font=FONTS["mono"],
                  bg=COLORS["bg_input"], fg=COLORS["text_primary"], relief="flat",
-                 highlightthickness=1, highlightbackground=COLORS["border"]).pack(
-            side="left", fill="x", expand=True, ipady=4)
+                 highlightthickness=1, highlightbackground=COLORS["border"]).pack(side="left", fill="x", expand=True, ipady=4)
 
+        # Claude Key
+        cl_row = tk.Frame(card2, bg=COLORS["bg_card"])
+        cl_row.pack(fill="x", pady=(6, 0))
+        tk.Label(cl_row, text="Claude Key:", font=FONTS["body_sm"],
+                 fg=COLORS["text_secondary"], bg=COLORS["bg_card"], width=16, anchor="w").pack(side="left")
+        self._claude_key_var = tk.StringVar(value=prefs.get("claude_api_key") or cfg.get("ai", {}).get("claude_api_key", ""))
+        tk.Entry(cl_row, textvariable=self._claude_key_var, show="•", font=FONTS["mono"],
+                 bg=COLORS["bg_input"], fg=COLORS["text_primary"], relief="flat",
+                 highlightthickness=1, highlightbackground=COLORS["border"]).pack(side="left", fill="x", expand=True, ipady=4)
+
+        # Gemini Key
+        gm_row = tk.Frame(card2, bg=COLORS["bg_card"])
+        gm_row.pack(fill="x", pady=(6, 0))
+        tk.Label(gm_row, text="Gemini Key:", font=FONTS["body_sm"],
+                 fg=COLORS["text_secondary"], bg=COLORS["bg_card"], width=16, anchor="w").pack(side="left")
+        self._gemini_key_var = tk.StringVar(value=prefs.get("gemini_api_key") or cfg.get("ai", {}).get("gemini_api_key", ""))
+        tk.Entry(gm_row, textvariable=self._gemini_key_var, show="•", font=FONTS["mono"],
+                 bg=COLORS["bg_input"], fg=COLORS["text_primary"], relief="flat",
+                 highlightthickness=1, highlightbackground=COLORS["border"]).pack(side="left", fill="x", expand=True, ipady=4)
+
+        # Model name
         model_f = tk.Frame(card2, bg=COLORS["bg_card"])
-        model_f.pack(fill="x", pady=(8, 0))
-        tk.Label(model_f, text="Model name:", font=FONTS["body_sm"],
-                 fg=COLORS["text_secondary"], bg=COLORS["bg_card"], width=14,
-                 anchor="w").pack(side="left")
-        self._ai_model_var = tk.StringVar(value=prefs.get("ai_model", ""))
+        model_f.pack(fill="x", pady=(6, 0))
+        tk.Label(model_f, text="Model Name:", font=FONTS["body_sm"],
+                 fg=COLORS["text_secondary"], bg=COLORS["bg_card"], width=16, anchor="w").pack(side="left")
+        self._ai_model_var = tk.StringVar(value=prefs.get("ai_model") or cfg.get("ai", {}).get("model", ""))
         tk.Entry(model_f, textvariable=self._ai_model_var, font=FONTS["mono"],
                  bg=COLORS["bg_input"], fg=COLORS["text_primary"], relief="flat",
-                 highlightthickness=1, highlightbackground=COLORS["border"]).pack(
-            side="left", fill="x", expand=True, ipady=4)
+                 highlightthickness=1, highlightbackground=COLORS["border"]).pack(side="left", fill="x", expand=True, ipady=4)
+
+        # Server URL
+        url_f = tk.Frame(card2, bg=COLORS["bg_card"])
+        url_f.pack(fill="x", pady=(6, 0))
+        tk.Label(url_f, text="Server URL:", font=FONTS["body_sm"],
+                 fg=COLORS["text_secondary"], bg=COLORS["bg_card"], width=16, anchor="w").pack(side="left")
+        self._ai_url_var = tk.StringVar(value=prefs.get("ai_base_url") or cfg.get("ai", {}).get("base_url", "http://localhost:1234/v1"))
+        tk.Entry(url_f, textvariable=self._ai_url_var, font=FONTS["mono"],
+                 bg=COLORS["bg_input"], fg=COLORS["text_primary"], relief="flat",
+                 highlightthickness=1, highlightbackground=COLORS["border"]).pack(side="left", fill="x", expand=True, ipady=4)
+
+        # Test Connection button & status
+        test_f = tk.Frame(card2, bg=COLORS["bg_card"])
+        test_f.pack(fill="x", pady=(10, 0))
+        self._ai_test_lbl = tk.Label(test_f, text="", font=FONTS["caption"], bg=COLORS["bg_card"], fg=COLORS["text_secondary"])
+
+        def _test_ai():
+            self._ai_test_lbl.config(text="Testing connection...", fg=COLORS["info"])
+            self.root.update_idletasks()
+            prov = self._provider_map.get(self._ai_provider_var.get(), "bionic")
+            m_val = self._ai_model_var.get().strip()
+            tmp_cfg = {
+                "ai": {
+                    "provider": prov,
+                    "base_url": self._ai_url_var.get().strip(),
+                    "model": m_val,
+                    "openai_api_key": self._openai_key_var.get().strip(),
+                    "claude_api_key": self._claude_key_var.get().strip(),
+                    "gemini_api_key": self._gemini_key_var.get().strip(),
+                    "openai_model": m_val or "gpt-4o-mini",
+                    "claude_model": m_val or "claude-3-5-haiku-20241022",
+                    "gemini_model": m_val or "gemini-1.5-flash",
+                    "timeout_seconds": 10,
+                }
+            }
+            ok, msg = ai_messages.test_connection(tmp_cfg)
+            color = COLORS["success"] if ok else COLORS["error"]
+            self._ai_test_lbl.config(text=("✔ " if ok else "✖ ") + msg.split("\n")[0], fg=color)
+
+        tk.Button(test_f, text="🔌 Test AI Connection", font=FONTS["label"],
+                  fg=COLORS["text_primary"], bg=COLORS["bg_medium"],
+                  activebackground=COLORS["bg_card_hover"], activeforeground=COLORS["text_primary"],
+                  relief="flat", bd=0, cursor="hand2", padx=10, pady=4, command=_test_ai).pack(side="left")
+        self._ai_test_lbl.pack(side="left", padx=(10, 0))
 
         # ── Project folders card ──────────────────────────────────────────────
         card3 = self._card(pad, padx=20, pady=16)
@@ -982,17 +1076,41 @@ class UserDashboard:
 
     def _save_settings(self):
         dirs = list(self._dirs_listbox.get(0, "end"))
+        prov = self._provider_map.get(self._ai_provider_var.get(), "bionic")
+        m_val = self._ai_model_var.get().strip()
         db.update_preferences(
             self.user["id"],
             auto_commit=int(self._auto_commit_var.get()),
             skip_sensitive=int(self._skip_sensitive_var.get()),
             notifications=int(self._notif_var.get()),
             session_end_grace=int(self._grace_var.get() or 120),
-            ai_base_url=self._ai_url_var.get(),
-            ai_model=self._ai_model_var.get(),
+            ai_provider=prov,
+            openai_api_key=self._openai_key_var.get().strip(),
+            claude_api_key=self._claude_key_var.get().strip(),
+            gemini_api_key=self._gemini_key_var.get().strip(),
+            openai_model=m_val if prov == "openai" else "gpt-4o-mini",
+            claude_model=m_val if prov == "claude" else "claude-3-5-haiku-20241022",
+            gemini_model=m_val if prov == "gemini" else "gemini-1.5-flash",
+            ai_base_url=self._ai_url_var.get().strip(),
+            ai_model=m_val,
             ask_before_push=int(self._ask_push_var.get()),
             projects_dirs=json.dumps(dirs),
         )
+        # Sync to config.json
+        cfg = load_config()
+        cfg["ai"]["provider"] = prov
+        cfg["ai"]["openai_api_key"] = self._openai_key_var.get().strip()
+        cfg["ai"]["claude_api_key"] = self._claude_key_var.get().strip()
+        cfg["ai"]["gemini_api_key"] = self._gemini_key_var.get().strip()
+        cfg["ai"]["base_url"] = self._ai_url_var.get().strip()
+        cfg["ai"]["model"] = m_val if prov in ("bionic", "ollama") else ""
+        if prov == "openai" and m_val:
+            cfg["ai"]["openai_model"] = m_val
+        elif prov == "claude" and m_val:
+            cfg["ai"]["claude_model"] = m_val
+        elif prov == "gemini" and m_val:
+            cfg["ai"]["gemini_model"] = m_val
+        save_config(cfg)
         messagebox.showinfo("Saved", "Settings saved successfully!", parent=self.root)
 
     def _page_profile(self):
