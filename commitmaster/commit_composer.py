@@ -16,6 +16,7 @@ from typing import Dict, List, Optional, Tuple
 from commitmaster import ai_messages, commit_engine, file_inspector, ui
 from commitmaster import database as db
 from commitmaster.app_styles import COLORS, FONTS
+from commitmaster.config import load_config
 
 COMMIT_BTN = "#3a56b0"
 COMMIT_BTN_HOVER = "#4a69cc"
@@ -443,7 +444,7 @@ class CommitComposer(tk.Frame):
         if self.winfo_exists():
             self.result_lbl.config(text=text, fg=color or COLORS["text_secondary"])
 
-    # ── AI generation ─────────────────────────────────────────────────────────
+        # AI generation ─────────────────────────────────────────────────────────
     def generate(self, only: Optional[List[str]] = None) -> None:
         sel = selected_paths(self.host)
         files = [f for f in (only or sel) if f in sel] or sel
@@ -453,6 +454,27 @@ class CommitComposer(tk.Frame):
             return
         if self._busy:
             return
+
+        # Refresh config dynamically so changes in API keys or provider take effect immediately
+        try:
+            cfg = load_config()
+            user_id = getattr(getattr(self.host, "user", None), "get", lambda k, d=None: None)("id") if hasattr(self.host, "user") else None
+            if user_id:
+                prefs = db.get_preferences(user_id) or {}
+                if prefs.get("ai_provider"):
+                    cfg.setdefault("ai", {})["provider"] = prefs["ai_provider"]
+                for k in ("openai_api_key", "claude_api_key", "gemini_api_key", "openai_model", "claude_model", "gemini_model", "ai_base_url", "ai_model"):
+                    if prefs.get(k):
+                        if k == "ai_base_url":
+                            cfg.setdefault("ai", {})["base_url"] = prefs[k]
+                        elif k == "ai_model":
+                            cfg.setdefault("ai", {})["model"] = prefs[k]
+                        else:
+                            cfg.setdefault("ai", {})[k] = prefs[k]
+            self.cfg = cfg
+        except Exception:
+            pass
+
         self._harvest()
         self._busy = True
         self.gen_btn.config(state="disabled")
