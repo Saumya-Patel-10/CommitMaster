@@ -38,6 +38,7 @@ FALLBACK_MESSAGES = {
 SYSTEM_PROMPT = (
     "You are a senior software engineer writing git commit messages. "
     "Follow the Conventional Commits specification exactly. "
+    "Do NOT use backticks, single quotes, or double quotes in commit messages. "
     "Reply ONLY with a valid JSON array — no markdown fences, no prose."
 )
 
@@ -57,6 +58,7 @@ Branch: {branch}
 Write ONE commit message per group.
 Format: {{"group": "<group_name>", "message": "<type>: <imperative summary, ≤72 chars>"}}
 Use types: feat, fix, refactor, docs, test, chore.
+Do not use backticks or quotes in the message string.
 Reply with a JSON array of those objects, nothing else.
 """
 
@@ -71,6 +73,74 @@ _MODEL_CACHE: Dict[str, Any] = {
     "base_url": "",
     "models": [],
 }
+
+
+def get_active_provider(cfg: dict) -> str:
+    """Return normalized provider identifier ('bionic', 'openai', 'claude', 'gemini', 'ollama')."""
+    prov = cfg.get("ai", {}).get("provider", "bionic").lower().strip()
+    if prov in ("anthropic", "claude"):
+        return "claude"
+    if prov in ("lmstudio", "bionic"):
+        return "bionic"
+    return prov if prov in ("openai", "claude", "gemini", "ollama") else "bionic"
+
+
+def get_provider_label(cfg: Any) -> str:
+    """Return friendly display name of the current AI provider."""
+    names = {
+        "bionic": "Local (Bionic / LM Studio)",
+        "openai": "OpenAI",
+        "claude": "Anthropic Claude",
+        "gemini": "Google Gemini",
+        "ollama": "Local (Ollama)",
+    }
+    if isinstance(cfg, dict):
+        p = get_active_provider(cfg)
+    else:
+        p = str(cfg or "bionic").lower().strip()
+    return names.get(p, "AI")
+
+
+def get_provider_key(cfg: dict, provider: Optional[str] = None) -> str:
+    """Retrieve API key for given or active provider, checking config and env vars."""
+    ai = cfg.get("ai", {}) if isinstance(cfg, dict) else {}
+    prov = (provider or get_active_provider(cfg)).lower()
+    if prov == "openai":
+        return (ai.get("openai_api_key") or os.environ.get("OPENAI_API_KEY") or ai.get("api_key") or "").strip()
+    if prov in ("claude", "anthropic"):
+        return (ai.get("claude_api_key") or os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("CLAUDE_API_KEY") or ai.get("api_key") or "").strip()
+    if prov == "gemini":
+        return (ai.get("gemini_api_key") or os.environ.get("GEMINI_API_KEY") or ai.get("api_key") or "").strip()
+    return (ai.get("api_key") or "").strip()
+
+
+def get_provider_model(cfg: dict, provider: Optional[str] = None) -> str:
+    """Return model configured for given provider or standard recommended default."""
+    ai = cfg.get("ai", {}) if isinstance(cfg, dict) else {}
+    prov = (provider or get_active_provider(cfg)).lower()
+    cfg_model = (ai.get("model") or "").strip()
+    if cfg_model and not cfg_model.startswith("("):
+        return cfg_model
+    if prov == "openai":
+        return (ai.get("openai_model") or "gpt-4o-mini").strip()
+    if prov in ("claude", "anthropic"):
+        return (ai.get("claude_model") or "claude-3-5-haiku-20241022").strip()
+    if prov == "gemini":
+        return (ai.get("gemini_model") or "gemini-1.5-flash").strip()
+    if prov == "ollama":
+        return (ai.get("model") or "llama3.2").strip()
+    return cfg_model
+
+
+def resolve_active_model(cfg: dict) -> Optional[str]:
+    """Resolve active model name if available, else None."""
+    prov = get_active_provider(cfg)
+    if prov in ("openai", "claude", "gemini"):
+        key = get_provider_key(cfg, prov)
+        if not key:
+            return None
+        return get_provider_model(cfg, prov)
+    return cfg.get("ai", {}).get("model") or detect_model(cfg)
 
 
 def list_models(cfg: dict, force: bool = False) -> List[str]:
@@ -99,7 +169,7 @@ def list_models(cfg: dict, force: bool = False) -> List[str]:
 def detect_model(cfg: dict, force: bool = False) -> Optional[str]:
     """Return the first model loaded in Bionic / LM Studio, or None."""
     cfg_model = cfg.get("ai", {}).get("model")
-    if cfg_model:
+    if cfg_model and not cfg_model.startswith("("):
         return cfg_model
     models = list_models(cfg, force=force)
     if models:
@@ -110,14 +180,80 @@ def detect_model(cfg: dict, force: bool = False) -> Optional[str]:
 
 def test_connection(cfg: dict) -> tuple[bool, str]:
     """Returns (ok, message) for the Settings 'Test connection' button."""
-    model = cfg.get("ai", {}).get("model") or detect_model(cfg, force=True)
-    if model:
-        return True, f"Connected ✔\nModel in use: {model}"
-    base = cfg.get("ai", {}).get("base_url", "http://localhost:1234/v1")
-    return False, (
-        f"Could not reach the AI server at {base}.\n\n"
-        "Make sure Bionic / LM Studio is running and the local server is started."
-    )
+    provider = get_active_provider(cfg)
+
+    if provider == "openai":
+        key = get_provider_key(cfg, "openai")
+        if not key:
+            return False, "OpenAI API key missing. Please enter your key in Settings."
+        model = get_provider_model(cfg, "openai")
+        base = cfg.get("ai", {}).get("openai_base_url") or "https://api.openai.com/v1"
+        try:
+            r = requests.get(
+                f"{base.rstrip('/')}/models",
+                headers={"Authorization": f"Bearer {key}"},
+                timeout=8.0,
+            )
+            if r.status_code == 401:
+                return False, "Invalid OpenAI API key. Please check your key."
+            r.raise_for_status()
+            return True, f"OpenAI connected ✔\nModel: {model}"
+        except Exception as exc:
+            return False, f"Could not reach OpenAI: {exc}"
+
+    elif provider == "claude":
+        key = get_provider_key(cfg, "claude")
+        if not key:
+            return False, "Claude API key missing. Please enter your Anthropic key in Settings."
+        model = get_provider_model(cfg, "claude")
+        try:
+            r = requests.post(
+                "https://api.anthropic.com/v1/messages",
+                headers={
+                    "x-api-key": key,
+                    "anthropic-version": "2023-06-01",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": model,
+                    "max_tokens": 5,
+                    "messages": [{"role": "user", "content": "ping"}],
+                },
+                timeout=10.0,
+            )
+            if r.status_code == 401:
+                return False, "Invalid Claude API key. Please check your key."
+            r.raise_for_status()
+            return True, f"Claude connected ✔\nModel: {model}"
+        except Exception as exc:
+            return False, f"Could not reach Claude: {exc}"
+
+    elif provider == "gemini":
+        key = get_provider_key(cfg, "gemini")
+        if not key:
+            return False, "Gemini API key missing. Please enter your Google Gemini key in Settings."
+        model = get_provider_model(cfg, "gemini")
+        try:
+            r = requests.get(
+                f"https://generativelanguage.googleapis.com/v1beta/models?key={key}",
+                timeout=10.0,
+            )
+            if r.status_code in (400, 401, 403):
+                return False, "Invalid Google Gemini API key. Please check your key."
+            r.raise_for_status()
+            return True, f"Google Gemini connected ✔\nModel: {model}"
+        except Exception as exc:
+            return False, f"Could not reach Google Gemini: {exc}"
+
+    else:
+        model = cfg.get("ai", {}).get("model") or detect_model(cfg, force=True)
+        if model:
+            return True, f"Connected ✔\nModel in use: {model}"
+        base = cfg.get("ai", {}).get("base_url", "http://localhost:1234/v1")
+        return False, (
+            f"Could not reach local AI server at {base}.\n\n"
+            "Make sure Bionic / LM Studio / Ollama is running and server is active."
+        )
 
 
 def generate_messages(cfg: dict, repo_path: str, groups: Dict[str, List[str]]) -> Dict[str, str]:
@@ -131,7 +267,7 @@ def generate_messages(cfg: dict, repo_path: str, groups: Dict[str, List[str]]) -
     result = {g: FALLBACK_MESSAGES.get(g, "chore: update files")
               for g in groups if g != "sensitive"}
 
-    model = cfg["ai"].get("model") or detect_model(cfg)
+    model = resolve_active_model(cfg)
     if not model:
         log.warning("No AI model available — using fallback messages.")
         return result
@@ -159,33 +295,11 @@ def generate_messages(cfg: dict, repo_path: str, groups: Dict[str, List[str]]) -
         groups=groups_block,
     )
 
-    base = cfg["ai"]["base_url"].rstrip("/")
-    payload = {
-        "model": model,
-        "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user",   "content": prompt},
-        ],
-        "temperature": 0.2,
-        "max_tokens": 600,
-        "stream": False,
-    }
-
     for attempt in range(1, _MAX_RETRIES + 1):
         try:
-            log.info("Calling AI model '%s' (attempt %d)…", model, attempt)
-            resp = requests.post(
-                f"{base}/chat/completions",
-                json=payload,
-                timeout=cfg["ai"]["timeout_seconds"],
-            )
-            resp.raise_for_status()
-            msg_obj = resp.json()["choices"][0]["message"]
-            raw = (msg_obj.get("content") or "").strip()
-            if not raw and "reasoning_content" in msg_obj:
-                raw = (msg_obj.get("reasoning_content") or "").strip()
-            log.debug("Raw AI response: %s", raw[:500])
-            parsed = _parse_json(raw)
+            log.info("Calling AI provider '%s' with model '%s' (attempt %d)…",
+                     get_active_provider(cfg), model, attempt)
+            parsed = _chat_json_array(cfg, model, SYSTEM_PROMPT, prompt, max_tokens=600)
             _apply_parsed(parsed, groups, result)
             log.info("AI messages generated successfully.")
             return result
@@ -193,11 +307,8 @@ def generate_messages(cfg: dict, repo_path: str, groups: Dict[str, List[str]]) -
             log.warning("AI request timed out (attempt %d/%d).", attempt, _MAX_RETRIES)
             if attempt < _MAX_RETRIES:
                 time.sleep(2)
-        except requests.RequestException as exc:
+        except Exception as exc:
             log.error("AI request failed: %s", exc)
-            break
-        except (KeyError, IndexError, ValueError) as exc:
-            log.error("Could not parse AI response: %s", exc)
             break
 
     log.warning("Returning fallback commit messages.")
@@ -224,6 +335,9 @@ def _apply_parsed(parsed: list, groups: Dict[str, List[str]], result: Dict[str, 
         message = item.get("message", "").strip()
         if not message:
             continue
+        # Clean any backticks or junk quotes in summary
+        message = message.replace("`", "").replace('"', '').replace("'", "")
+        message = re.sub(r"\s+", " ", message).strip()
         if group in result:
             result[group] = message
         else:
@@ -243,9 +357,15 @@ def _apply_parsed(parsed: list, groups: Dict[str, List[str]], result: Dict[str, 
 # of ONE file, so a message can never be mixed up with another file's changes.
 
 FILE_SYSTEM_PROMPT = (
-    "You are a senior software engineer who writes precise, professional git commit messages. "
-    "You describe ONLY what is visible in the diff you are given. "
-    "Reply ONLY with a valid JSON object - no markdown fences, no extra prose."
+    "You are a senior software engineer who writes concise, professional git commit messages following Conventional Commits. "
+    "Output rules:\n"
+    "1. Never use backticks, single quotes, or double quotes in the summary headline.\n"
+    "2. Never repeat the summary headline or rephrase it inside description bullet points.\n"
+    "3. Never repeat the scope or filename inside the summary highlight. Write 'refactor: enhance live browser page and its logic' or 'refactor(live-browser): enhance component and its logic', NEVER 'refactor(live-browser-page): enhance live browser page logic'.\n"
+    "4. Never include diff stats or line counts like (+4/-4 lines) in the headline.\n"
+    "5. Avoid junk characters: do not use excessive quotation marks ('' or \"\"), escaped quotes, or backticks around plain words.\n"
+    "6. In the description, provide concrete technical details describing what actually changed in the diff. Never use generic filler like 'Updates logic in X' or 'Refines implementation details in Y.tsx'. Mention each concept only once.\n"
+    "7. Reply ONLY with a valid JSON object - no markdown fences, no extra prose."
 )
 
 FILE_USER_PROMPT = """\
@@ -259,23 +379,30 @@ Change type: {status}
 {diff}
 
 {others}Write:
-  "summary":     a Conventional Commit headline, <= 72 chars, format "<type>(<scope>): <imperative highlight>".
-                 State the PURPOSE / OUTCOME of the change clearly (imperative mood), not just naming the file.
-                 Good: "feat(auth): add token refresh with retry on 401"
-                 Bad:  "refactor(login): update login_window"
+  "summary":     a Conventional Commit headline, <= 72 chars, format "<type>(<scope>): <imperative highlight>" or "<type>: <imperative highlight>".
+                 State the PURPOSE / OUTCOME of the change clearly and concisely.
+                 CRITICAL: Do NOT repeat the scope or filename twice.
+                 BAD:  "refactor(live-browser-page): enhance live browser page logic"
+                 GOOD: "refactor: enhance live browser page and its logic"
+                 Never include diff stats or line counts (like +4/-4) in the summary.
+                 Do NOT include backticks or quotes in the summary.
                  Types: feat, fix, refactor, perf, docs, test, chore, style.
   "description": Professional markdown description formatted with clear subsections:
-                 - If new features/classes/functions/capabilities were added, MUST include a dedicated subsection:
+                 - If new features/classes/functions/capabilities were added, MUST include:
                    "### New Features"
                    followed by concise bullet points ("- ...") describing each new capability.
                  - For modifications or refactoring to existing logic, include:
                    "### Changes & Improvements"
                    followed by concise bullet points ("- ...") explaining the updates.
+                   CRITICAL RULES:
+                   • Do NOT repeat the summary headline in the bullet points.
+                   • Do NOT repeat the filename (never say "Refines implementation details in filename.tsx").
+                   • State each update once with professional engineering precision.
                  - For bug or security fixes, include:
                    "### Bug Fixes & Security"
                  - For deletions, include:
                    "### Removals"
-                 Never mention other files. Keep bullets concise, informative, and professional.
+                 Never mention other files. Keep bullets concise, informative, professional, and free of junk quotes or backticks.
 
 Reply with JSON only:
 {{"summary": "...", "description": "### New Features\\n- ...\\n\\n### Changes & Improvements\\n- ..."}}
@@ -288,7 +415,7 @@ These files are being committed together. Per-file summaries:
 {items}
 
 Write ONE Conventional Commit headline (<= 72 chars, "<type>(<scope>): <imperative highlight>") that captures the
-overall purpose of the whole change. Do not list file names.
+overall purpose of the whole change. Do not list file names, quotes, or backticks.
 Reply with JSON only: {{"summary": "..."}}
 """
 
@@ -347,9 +474,9 @@ def generate_file_comments(
         return {"headline": "chore: update repository", "description": "No modified files found.",
                 "file_comments": {}, "file_descriptions": {}}
 
-    model = cfg.get("ai", {}).get("model") or detect_model(cfg)
+    model = resolve_active_model(cfg)
     if not model:
-        log.info("Local AI offline or not detected - using diff-based heuristic messages.")
+        log.info("%s offline or not detected - using diff-based heuristic messages.", get_provider_label(cfg))
 
     repo = commit_engine.repo_name(repo_path)
     branch = commit_engine.current_branch(repo_path)
@@ -394,29 +521,235 @@ def generate_file_comments(
     }
 
 
-# ── AI calls ──────────────────────────────────────────────────────────────────
+# ── AI calls (Multi-Provider Support) ─────────────────────────────────────────
 
-def _chat_json(cfg: dict, model: str, system: str, user: str, max_tokens: int) -> dict:
-    base = cfg.get("ai", {}).get("base_url", "http://localhost:1234/v1").rstrip("/")
+def _call_openai(cfg: dict, model: str = "", system: str = "", user: str = "", max_tokens: int = 500, timeout: int = 60) -> dict:
+    key = get_provider_key(cfg, "openai")
+    if not key:
+        raise _AIUnavailable("OpenAI API key is missing. Please configure it in Settings.")
+    base = cfg.get("ai", {}).get("openai_base_url") or "https://api.openai.com/v1"
+    url = f"{base.rstrip('/')}/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {key}",
+        "Content-Type": "application/json",
+    }
+    m = model or get_provider_model(cfg, "openai")
     payload = {
-        "model": model,
+        "model": m,
+        "messages": [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ],
+        "temperature": 0.2,
+        "max_tokens": max_tokens,
+    }
+    try:
+        resp = requests.post(url, headers=headers, json=payload, timeout=timeout)
+        if resp.status_code == 401:
+            raise _AIUnavailable("Invalid OpenAI API key. Check settings.")
+        resp.raise_for_status()
+    except (requests.ConnectionError, requests.Timeout) as exc:
+        raise _AIUnavailable(str(exc))
+    except requests.RequestException as exc:
+        raise _AIUnavailable(f"OpenAI error: {exc}")
+
+    msg_obj = resp.json()["choices"][0]["message"]
+    raw = (msg_obj.get("content") or "").strip()
+    return _extract_json_object(raw)
+
+
+def _call_claude(cfg: dict, model: str = "", system: str = "", user: str = "", max_tokens: int = 500, timeout: int = 60) -> dict:
+    key = get_provider_key(cfg, "claude")
+    if not key:
+        raise _AIUnavailable("Claude API key is missing. Please configure it in Settings.")
+    url = "https://api.anthropic.com/v1/messages"
+    headers = {
+        "x-api-key": key,
+        "anthropic-version": "2023-06-01",
+        "Content-Type": "application/json",
+    }
+    m = model or get_provider_model(cfg, "claude")
+    payload = {
+        "model": m,
+        "system": system,
+        "messages": [{"role": "user", "content": user}],
+        "temperature": 0.2,
+        "max_tokens": max_tokens,
+    }
+    try:
+        resp = requests.post(url, headers=headers, json=payload, timeout=timeout)
+        if resp.status_code == 401:
+            raise _AIUnavailable("Invalid Claude API key. Check settings.")
+        resp.raise_for_status()
+    except (requests.ConnectionError, requests.Timeout) as exc:
+        raise _AIUnavailable(str(exc))
+    except requests.RequestException as exc:
+        raise _AIUnavailable(f"Claude error: {exc}")
+
+    data = resp.json()
+    raw = ""
+    for item in data.get("content", []):
+        if item.get("type") == "text" or "text" in item:
+            raw += item.get("text", "")
+    return _extract_json_object(raw)
+
+
+def _call_gemini(cfg: dict, model: str = "", system: str = "", user: str = "", max_tokens: int = 500, timeout: int = 60) -> dict:
+    key = get_provider_key(cfg, "gemini")
+    if not key:
+        raise _AIUnavailable("Google Gemini API key is missing. Please configure it in Settings.")
+    m = model or get_provider_model(cfg, "gemini")
+    if m.startswith("models/"):
+        m = m[len("models/"):]
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{m}:generateContent?key={key}"
+    headers = {"Content-Type": "application/json"}
+    payload = {
+        "systemInstruction": {"parts": [{"text": system}]},
+        "contents": [{"parts": [{"text": user}]}],
+        "generationConfig": {
+            "temperature": 0.2,
+            "maxOutputTokens": max_tokens,
+        },
+    }
+    try:
+        resp = requests.post(url, headers=headers, json=payload, timeout=timeout)
+        if resp.status_code in (400, 401, 403):
+            err_msg = ""
+            try:
+                err_msg = resp.json().get("error", {}).get("message", "")
+            except Exception:
+                pass
+            raise _AIUnavailable(f"Google Gemini error: {err_msg or resp.status_code}")
+        resp.raise_for_status()
+    except (requests.ConnectionError, requests.Timeout) as exc:
+        raise _AIUnavailable(str(exc))
+    except requests.RequestException as exc:
+        raise _AIUnavailable(f"Gemini error: {exc}")
+
+    data = resp.json()
+    candidates = data.get("candidates", [])
+    if not candidates:
+        raise ValueError(f"No response candidates from Gemini: {data}")
+    parts = candidates[0].get("content", {}).get("parts", [])
+    raw = "".join(p.get("text", "") for p in parts)
+    return _extract_json_object(raw)
+
+
+def _call_local(cfg: dict, model: str = "", system: str = "", user: str = "", max_tokens: int = 500, timeout: int = 60) -> dict:
+    base = cfg.get("ai", {}).get("base_url", "http://localhost:1234/v1").rstrip("/")
+    api_key = cfg.get("ai", {}).get("api_key", "")
+    headers = {"Content-Type": "application/json"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+    m = model or detect_model(cfg)
+    if not m:
+        raise _AIUnavailable(f"No model detected on {base}")
+    payload = {
+        "model": m,
         "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
         "temperature": 0.2,
         "max_tokens": max_tokens,
         "stream": False,
     }
-    timeout = cfg.get("ai", {}).get("timeout_seconds", 120)
     try:
-        resp = requests.post(f"{base}/chat/completions", json=payload, timeout=timeout)
+        resp = requests.post(f"{base}/chat/completions", headers=headers, json=payload, timeout=timeout)
         resp.raise_for_status()
     except (requests.ConnectionError, requests.Timeout) as exc:
         raise _AIUnavailable(str(exc))
+    except requests.RequestException as exc:
+        raise _AIUnavailable(f"AI error: {exc}")
+
     msg_obj = resp.json()["choices"][0]["message"]
     raw = (msg_obj.get("content") or "").strip()
     if not raw and msg_obj.get("reasoning_content"):
         raw = msg_obj["reasoning_content"].strip()
     log.debug("Raw AI response: %s", raw[:300])
     return _extract_json_object(raw)
+
+
+def _chat_json(cfg: dict, model: str, system: str, user: str, max_tokens: int) -> dict:
+    provider = get_active_provider(cfg)
+    timeout = cfg.get("ai", {}).get("timeout_seconds", 60)
+    if provider == "openai":
+        return _call_openai(cfg, model, system, user, max_tokens, timeout)
+    elif provider == "claude":
+        return _call_claude(cfg, model, system, user, max_tokens, timeout)
+    elif provider == "gemini":
+        return _call_gemini(cfg, model, system, user, max_tokens, timeout)
+    return _call_local(cfg, model, system, user, max_tokens, timeout)
+
+
+def _chat_json_array(cfg: dict, model: str, system: str, user: str, max_tokens: int) -> list:
+    provider = get_active_provider(cfg)
+    timeout = cfg.get("ai", {}).get("timeout_seconds", 60)
+    raw = ""
+    if provider == "openai":
+        key = get_provider_key(cfg, "openai")
+        if not key:
+            raise _AIUnavailable("OpenAI API key missing")
+        base = cfg.get("ai", {}).get("openai_base_url") or "https://api.openai.com/v1"
+        resp = requests.post(
+            f"{base.rstrip('/')}/chat/completions",
+            headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+            json={"model": model or get_provider_model(cfg, "openai"),
+                  "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
+                  "temperature": 0.2, "max_tokens": max_tokens},
+            timeout=timeout,
+        )
+        resp.raise_for_status()
+        raw = resp.json()["choices"][0]["message"]["content"]
+    elif provider == "claude":
+        key = get_provider_key(cfg, "claude")
+        if not key:
+            raise _AIUnavailable("Claude API key missing")
+        resp = requests.post(
+            "https://api.anthropic.com/v1/messages",
+            headers={"x-api-key": key, "anthropic-version": "2023-06-01", "Content-Type": "application/json"},
+            json={"model": model or get_provider_model(cfg, "claude"),
+                  "system": system, "messages": [{"role": "user", "content": user}],
+                  "temperature": 0.2, "max_tokens": max_tokens},
+            timeout=timeout,
+        )
+        resp.raise_for_status()
+        for item in resp.json().get("content", []):
+            if item.get("type") == "text":
+                raw += item.get("text", "")
+    elif provider == "gemini":
+        key = get_provider_key(cfg, "gemini")
+        if not key:
+            raise _AIUnavailable("Gemini API key missing")
+        m = model or get_provider_model(cfg, "gemini")
+        if m.startswith("models/"):
+            m = m[len("models/"):]
+        resp = requests.post(
+            f"https://generativelanguage.googleapis.com/v1beta/models/{m}:generateContent?key={key}",
+            headers={"Content-Type": "application/json"},
+            json={"systemInstruction": {"parts": [{"text": system}]},
+                  "contents": [{"parts": [{"text": user}]}],
+                  "generationConfig": {"temperature": 0.2, "maxOutputTokens": max_tokens}},
+            timeout=timeout,
+        )
+        resp.raise_for_status()
+        parts = resp.json().get("candidates", [])[0].get("content", {}).get("parts", [])
+        raw = "".join(p.get("text", "") for p in parts)
+    else:
+        base = cfg.get("ai", {}).get("base_url", "http://localhost:1234/v1").rstrip("/")
+        api_key = cfg.get("ai", {}).get("api_key", "")
+        headers = {"Content-Type": "application/json"}
+        if api_key:
+            headers["Authorization"] = f"Bearer {api_key}"
+        resp = requests.post(
+            f"{base}/chat/completions",
+            headers=headers,
+            json={"model": model or detect_model(cfg),
+                  "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
+                  "temperature": 0.2, "max_tokens": max_tokens},
+            timeout=timeout,
+        )
+        resp.raise_for_status()
+        msg_obj = resp.json()["choices"][0]["message"]
+        raw = msg_obj.get("content") or msg_obj.get("reasoning_content") or ""
+    return _parse_json(raw)
 
 
 def _extract_json_object(text: str) -> dict:
@@ -444,7 +777,7 @@ def _ai_message_for_file(cfg, model, repo, branch, path, status, diff, all_files
     desc = data.get("description", "")
     if isinstance(desc, list):
         desc = "\n".join(str(d) for d in desc)
-    desc = _clean_description(str(desc), path, other_names)
+    desc = _clean_description(str(desc), path, other_names, summary_headline=summary)
     fallback = _heuristic_message(path, status, facts)
     if not summary or _GENERIC_SUMMARY.match(summary):
         summary = fallback["summary"]
@@ -510,19 +843,44 @@ def _truncate(text: str, limit: int) -> str:
     return cut.rstrip(" ,;:-") + "…"
 
 
-def _clean_summary(text: str, path: str, facts: dict) -> str:
+def _clean_summary(text: str, path: str = "", facts: Optional[dict] = None) -> str:
+    facts = facts or {}
     s = text.strip().splitlines()[0].strip() if text.strip() else ""
-    s = s.strip("`\"' ").rstrip(".")
+    # Strip backticks, quotes, and junk wrapping characters from summary
+    s = s.replace("`", "").replace('"', '').replace("'", "")
+    s = re.sub(r"\s+", " ", s).strip().rstrip(".")
+    # Strip any diff counters like (+4/-4 lines) or (+1/-1...)
+    s = re.sub(r"\s*\(\s*[+\-]?\d+[\s\w/+\-…\.]*\)", "", s).strip()
     if not s:
         return ""
     if path and not _CONVENTIONAL.match(s):
         ftype, scope = _guess_type(path, facts.get("status", "M"), facts), _scope_for(path)
         s = f"{ftype}({scope}): {s[0].lower() + s[1:]}"
+
+    # Eliminate scope redundancy: if headline has format type(scope): ... and scope is repeated in message body
+    m = re.match(r"^(\w+)\(([^)]+)\):\s*(.+)$", s)
+    if m:
+        c_type, c_scope, c_msg = m.group(1), m.group(2).strip(), m.group(3).strip()
+        scope_phrase = c_scope.replace("-", " ").replace("_", " ").strip().lower()
+        if scope_phrase and re.search(r'\b' + re.escape(scope_phrase) + r'\b', c_msg.lower()):
+            clean_msg = c_msg
+            if clean_msg.lower().endswith(" logic"):
+                clean_msg = clean_msg[:-6].strip() + " and its logic"
+            s = f"{c_type}: {clean_msg[0].lower() + clean_msg[1:]}"
+
     return _truncate(s, 72)
 
 
-def _clean_description(text: str, path: str, other_basenames: List[str]) -> str:
+def _clean_description(text: str, path: str = "", other_basenames: Optional[List[str]] = None, summary_headline: str = "", summary: str = "") -> str:
+    other_basenames = other_basenames or []
+    summary_headline = summary_headline or summary
     lines = []
+    seen_bullets = set()
+    summary_lower = summary_headline.lower().strip()
+    summary_core = ""
+    if ":" in summary_lower:
+        summary_core = summary_lower.split(":", 1)[1].strip()
+
     for raw in text.replace("\\n", "\n").splitlines():
         line = raw.strip()
         if not line:
@@ -534,12 +892,60 @@ def _clean_description(text: str, path: str, other_basenames: List[str]) -> str:
         if line.startswith("#"):
             lines.append(line)
         else:
-            cleaned = re.sub(r"^[\-\*\u2022\d.\)\s]+", "", line).strip()
-            if cleaned:
-                lines.append("- " + cleaned[0].upper() + cleaned[1:])
-    while lines and lines[-1] == "":
-        lines.pop()
-    return "\n".join(lines[:25])
+            line_clean = line.strip().strip('"\'')
+            cleaned = re.sub(r"^[\-\*\u2022\d.\)\s]+", "", line_clean).strip()
+            # Clean junk characters: escaped quotes, doubled quotes, excessive quotes
+            cleaned = cleaned.replace('\\"', '"').replace("\\'", "'")
+            cleaned = re.sub(r'["\']{2,}', '', cleaned)  # remove "" or ''
+            cleaned = re.sub(r'^["\']|["\']$', '', cleaned).strip()
+            cleaned = re.sub(r'\s*"\s*([^"]+?)\s*"\s*', r' \1 ', cleaned)
+            cleaned = re.sub(r'\s+', ' ', cleaned).strip()
+
+            if not cleaned:
+                continue
+
+            c_no_ticks = cleaned.replace("`", "").strip()
+            c_low = c_no_ticks.lower()
+
+            # Remove generic filler / boilerplate
+            if any(c_low == b or c_low.startswith(b) for b in [
+                "minor changes and updates",
+                "minor changes",
+                "misc changes",
+                "miscellaneous changes",
+                "small fixes",
+                "small tweaks",
+            ]):
+                continue
+
+            # Prevent duplicate bullets (ignoring backticks, quotes, and punctuation)
+            norm_key = re.sub(r"[^a-z0-9]", "", c_low)
+            if norm_key in seen_bullets:
+                continue
+
+            # Prevent repeating the summary headline in description bullets
+            if summary_headline:
+                if summary_core and (c_low == summary_core or c_low == f"updates {summary_core}" or c_low == f"refine {summary_core}"):
+                    continue
+                if "updates logic in" in c_low:
+                    subject = c_low.replace("updates logic in", "").strip()
+                    if subject and (subject in summary_lower or subject in summary_core):
+                        continue
+                if summary_core and summary_core in c_low and len(c_low) <= len(summary_core) + 12:
+                    continue
+
+            seen_bullets.add(norm_key)
+            lines.append("- " + cleaned[0].upper() + cleaned[1:])
+
+    # Clean redundant blank lines
+    result_lines = []
+    for l in lines:
+        if l == "" and (not result_lines or result_lines[-1] == "" or result_lines[-1].startswith("#")):
+            continue
+        result_lines.append(l)
+    while result_lines and result_lines[-1] == "":
+        result_lines.pop()
+    return "\n".join(result_lines[:25])
 
 
 # ── Diff analysis + heuristic fallback ───────────────────────────────────────
@@ -551,12 +957,20 @@ _HUNK_RX = re.compile(r"^@@[^@]*@@\s*(?:async\s+)?(?:export\s+)?(?:(def|class|fu
 _HEADING_RX = re.compile(r"^([+-])\s{0,3}#{1,4}\s+(.+)$")
 
 
-def _analyze_diff(diff: str, path: str, status: str) -> dict:
+def _analyze_diff(diff: str, path: str, status: str = "M") -> dict:
     added = removed = 0
     add_syms: List[tuple] = []
     rem_syms: List[tuple] = []
     ctx_syms: List[str] = []
     headings_added: List[str] = []
+    has_jsx = False
+    has_hooks = False
+    has_events = False
+    has_props = False
+    has_imports = False
+    has_async = False
+    has_styles = False
+
     for line in diff.splitlines():
         if line.startswith("+++") or line.startswith("---"):
             continue
@@ -564,6 +978,25 @@ def _analyze_diff(diff: str, path: str, status: str) -> dict:
             added += 1
         elif line.startswith("-"):
             removed += 1
+        else:
+            continue
+
+        low = line.lower()
+        if "<" in line and (">" in line or "class" in low or "div" in low or "button" in low):
+            has_jsx = True
+        if any(k in line for k in ("useState", "useEffect", "useCallback", "useMemo", "useRef", "useContext")):
+            has_hooks = True
+        if any(k in line for k in ("onClick", "onChange", "onSubmit", "handle")):
+            has_events = True
+        if any(k in line for k in ("props", "interface ", "type ", "Prop")):
+            has_props = True
+        if line.startswith(("+import ", "-import ", "+from ", "-from ")):
+            has_imports = True
+        if any(k in line for k in ("async ", "await ", "fetch(", "axios.")):
+            has_async = True
+        if any(k in low for k in ("style=", "classname=", ".css", "color:", "background:")):
+            has_styles = True
+
         m = _SYM_RX.match(line)
         if m:
             kind = m.group(1) or "function"
@@ -577,6 +1010,7 @@ def _analyze_diff(diff: str, path: str, status: str) -> dict:
         hd = _HEADING_RX.match(line)
         if hd and hd.group(1) == "+" and path.lower().endswith(_DOC_EXTS):
             headings_added.append(hd.group(2).strip())
+
     added_names = {n for _, n in add_syms}
     removed_names = {n for _, n in rem_syms}
     return {
@@ -589,6 +1023,15 @@ def _analyze_diff(diff: str, path: str, status: str) -> dict:
             [n for _, n in add_syms if n in removed_names] +
             [n for n in ctx_syms if n not in added_names and n not in removed_names])),
         "headings": headings_added,
+        "signals": {
+            "jsx": has_jsx,
+            "hooks": has_hooks,
+            "events": has_events,
+            "props": has_props,
+            "imports": has_imports,
+            "async": has_async,
+            "styles": has_styles,
+        },
     }
 
 
@@ -630,7 +1073,21 @@ def _names(items, limit=2) -> str:
     return shown[0] if shown else ""
 
 
-def _heuristic_message(path: str, status: str, facts: dict) -> Dict[str, str]:
+def _clean_names(items, limit=2) -> str:
+    """Return clean identifier names without backticks or quotes for commit headlines."""
+    names = [n for _, n in items] if items and isinstance(items[0], tuple) else list(items)
+    shown = [str(n).strip("`\"' ") for n in names[:limit]]
+    if len(names) > limit:
+        shown.append(f"{len(names) - limit} more")
+    if len(shown) > 1:
+        return ", ".join(shown[:-1]) + " and " + shown[-1]
+    return shown[0] if shown else ""
+
+
+def _heuristic_message(path: str, status: Any = "M", facts: Optional[dict] = None) -> Dict[str, str]:
+    if isinstance(status, dict):
+        facts = status
+        status = facts.get("status", "M")
     facts = dict(facts or {})
     facts.setdefault("status", status)
     ftype = _guess_type(path, status, facts)
@@ -639,6 +1096,8 @@ def _heuristic_message(path: str, status: str, facts: dict) -> Dict[str, str]:
     new_syms, touched, gone = facts.get("new_syms", []), facts.get("touched", []), facts.get("gone_syms", [])
     added, removed = facts.get("added", 0), facts.get("removed", 0)
     is_new = status in ("??", "A", "AM")
+    sigs = facts.get("signals", {})
+    is_ui_file = path.lower().endswith((".tsx", ".jsx", ".vue", ".svelte")) or sigs.get("jsx")
 
     def _is_dunder(name: str) -> bool:
         return name.startswith("__") and name.endswith("__")
@@ -660,8 +1119,8 @@ def _heuristic_message(path: str, status: str, facts: dict) -> Dict[str, str]:
             if major_new:
                 classes = [n for k, n in major_new if k == "class"]
                 if classes:
-                    return f"implement `{classes[0]}` component"
-                return f"add {_names(major_new, limit)}"
+                    return f"implement {classes[0]} component"
+                return f"add {_clean_names(major_new, limit)}"
             return f"introduce {human}"
         if ftype == "docs":
             heads = facts.get("headings") or []
@@ -669,31 +1128,46 @@ def _heuristic_message(path: str, status: str, facts: dict) -> Dict[str, str]:
         if major_new:
             classes = [n for k, n in major_new if k == "class"]
             if classes:
-                return f"implement `{classes[0]}` component"
-            return f"add {_names(major_new, limit)}"
+                return f"implement {classes[0]} component"
+            return f"add {_clean_names(major_new, limit)}"
         if meaningful_touched:
-            names_str = _names(meaningful_touched, limit)
+            names_str = _clean_names(meaningful_touched, limit)
+            if sigs.get("hooks"):
+                return f"adjust state management in {names_str}"
+            elif sigs.get("events"):
+                return f"update event handlers in {names_str}"
+            elif sigs.get("jsx") or is_ui_file:
+                return f"enhance UI rendering in {names_str}"
+            elif sigs.get("props"):
+                return f"update component props in {names_str}"
+            elif sigs.get("async"):
+                return f"streamline async operations in {names_str}"
             return f"refine {names_str} logic"
         if ftype == "chore":
             return f"update {human} configuration"
         if ftype == "test":
             return f"update {human} tests"
-        return f"enhance {human} logic (+{added}/-{removed} lines)"
+        return f"enhance {human} and its logic"
 
     if status == "D":
         ftype = "chore"
     summary = ""
+    scope_phrase = scope.replace("-", " ").replace("_", " ").strip().lower()
     for limit in (2, 1):
-        summary = f"{ftype}({scope}): {build(limit)}"
+        built = build(limit)
+        if scope_phrase and re.search(r'\b' + re.escape(scope_phrase) + r'\b', built.lower()):
+            summary = f"{ftype}: {built}"
+        else:
+            summary = f"{ftype}({scope}): {built}"
         if len(summary) <= 72:
             break
-    summary = _truncate(summary, 72)
+    summary = _clean_summary(summary, path, facts)
 
     sections: List[str] = []
     base = os.path.basename(path)
     kind_word = {"def": "function", "function": "function", "class": "class"}
 
-    # Subsection 1: New Features (Prominently highlighted if present)
+    # Subsection 1: New Features
     new_feature_bullets = []
     if is_new:
         new_feature_bullets.append(f"Introduces `{base}` module ({added} line{'s' if added != 1 else ''})")
@@ -712,11 +1186,39 @@ def _heuristic_message(path: str, status: str, facts: dict) -> Dict[str, str]:
     # Subsection 2: Changes & Improvements
     change_bullets = []
     for name in meaningful_touched[:5]:
-        change_bullets.append(f"Updates logic in `{name}`")
+        clean_name = str(name).strip("`\"' ")
+        if is_ui_file:
+            change_bullets.append(f"Updates component layout and rendering in {clean_name}")
+            if sigs.get("events"):
+                change_bullets.append("Refines event handlers and user interactions")
+            elif sigs.get("hooks"):
+                change_bullets.append("Adjusts internal hook dependencies and state flow")
+        else:
+            change_bullets.append(f"Updates logic in `{name}`")
     for h in (facts.get("headings") or [])[:3]:
-        change_bullets.append(f"Documents \"{h[:60]}\"")
+        clean_h = h.strip("`\"' ")[:60]
+        change_bullets.append(f"Documents {clean_h}")
     if not new_feature_bullets and not change_bullets and status != "D":
-        change_bullets.append(f"Refines implementation details in `{base}`")
+        if is_ui_file:
+            if sigs.get("hooks"):
+                change_bullets.append("Updates component state management and hook dependencies")
+            elif sigs.get("events"):
+                change_bullets.append("Refines interactive event handlers and user triggers")
+            elif sigs.get("props"):
+                change_bullets.append("Updates component props and parameter contracts")
+            elif sigs.get("styles"):
+                change_bullets.append("Updates layout styles and component presentation")
+            elif sigs.get("jsx"):
+                change_bullets.append("Refines view layout and JSX markup structure")
+            else:
+                change_bullets.append("Enhances component logic and internal handling")
+        else:
+            if added > removed:
+                change_bullets.append("Expands internal routines and helper logic")
+            elif removed > added:
+                change_bullets.append("Streamlines routines and simplifies code paths")
+            else:
+                change_bullets.append("Refines execution logic and operational flow")
 
     if change_bullets:
         sections.append("### Changes & Improvements\n" + "\n".join(f"- {b}" for b in change_bullets))
@@ -739,3 +1241,4 @@ def _heuristic_message(path: str, status: str, facts: dict) -> Dict[str, str]:
 
     description = "\n\n".join(sections)
     return {"summary": summary, "description": description}
+
