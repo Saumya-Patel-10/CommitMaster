@@ -80,8 +80,8 @@ class SettingsWindow:
         self.root = _make_root()
         self.root.deiconify()          # settings uses a real Tk root (not hidden)
         self.root.title("CommitMaster — Settings")
-        self.root.geometry("680x600")
-        self.root.minsize(580, 500)
+        self.root.geometry("700x700")
+        self.root.minsize(620, 580)
         self.root.configure(bg=C["bg"])
         _apply_theme(self.root)
 
@@ -107,7 +107,7 @@ class SettingsWindow:
 
         nb.add(self.tab_general,  text="  General  ")
         nb.add(self.tab_folders,  text="  Apps & Folders  ")
-        nb.add(self.tab_ai,       text="  AI / Bionic  ")
+        nb.add(self.tab_ai,       text="  AI Provider & Keys  ")
         nb.add(self.tab_advanced, text="  Advanced  ")
 
         self._build_general()
@@ -201,51 +201,146 @@ class SettingsWindow:
         lb.entry = entry
         return lb
 
-    # ── Tab: AI / Bionic ──────────────────────────────────────────────────────
+    # ── Tab: AI / Providers ───────────────────────────────────────────────────
 
     def _build_ai(self) -> None:
         f = self.tab_ai
-        ai = self.cfg["ai"]
+        ai = self.cfg.get("ai", {})
 
-        sec = self._section(f, "Bionic / LM Studio  (OpenAI-compatible local server)")
+        self._provider_map = {
+            "OpenAI": "openai",
+            "Anthropic Claude": "claude",
+            "Google Gemini": "gemini",
+            "Local (Bionic / LM Studio)": "bionic",
+            "Local (Ollama)": "ollama",
+        }
+        self._reverse_provider_map = {v: k for k, v in self._provider_map.items()}
 
-        row = ttk.Frame(sec); row.pack(fill="x", pady=3)
-        ttk.Label(row, text="Server URL:", width=14).pack(side="left")
-        self.ent_base_url = ttk.Entry(row)
-        self.ent_base_url.insert(0, ai["base_url"])
+        sec_prov = self._section(f, "Active AI Provider")
+        row_p = ttk.Frame(sec_prov); row_p.pack(fill="x", pady=4)
+        ttk.Label(row_p, text="Provider:", width=14).pack(side="left")
+        self.cmb_provider = ttk.Combobox(row_p, state="readonly", width=30)
+        self.cmb_provider["values"] = list(self._provider_map.keys())
+        current_prov = ai_messages.get_active_provider(self.cfg)
+        self.cmb_provider.set(self._reverse_provider_map.get(current_prov, "Local (Bionic / LM Studio)"))
+        self.cmb_provider.pack(side="left", padx=6)
+        self.cmb_provider.bind("<<ComboboxSelected>>", self._on_provider_change)
+
+        sec_keys = self._section(f, "Cloud AI API Keys (Stored locally on your device)")
+
+        # OpenAI
+        row_oa = ttk.Frame(sec_keys); row_oa.pack(fill="x", pady=3)
+        ttk.Label(row_oa, text="OpenAI Key:", width=14).pack(side="left")
+        self.ent_openai_key = ttk.Entry(row_oa, show="•")
+        self.ent_openai_key.insert(0, ai.get("openai_api_key", ""))
+        self.ent_openai_key.pack(side="left", fill="x", expand=True, padx=(6, 2))
+        self._add_show_toggle(row_oa, self.ent_openai_key)
+
+        # Claude
+        row_cl = ttk.Frame(sec_keys); row_cl.pack(fill="x", pady=3)
+        ttk.Label(row_cl, text="Claude Key:", width=14).pack(side="left")
+        self.ent_claude_key = ttk.Entry(row_cl, show="•")
+        self.ent_claude_key.insert(0, ai.get("claude_api_key", ""))
+        self.ent_claude_key.pack(side="left", fill="x", expand=True, padx=(6, 2))
+        self._add_show_toggle(row_cl, self.ent_claude_key)
+
+        # Gemini
+        row_gm = ttk.Frame(sec_keys); row_gm.pack(fill="x", pady=3)
+        ttk.Label(row_gm, text="Gemini Key:", width=14).pack(side="left")
+        self.ent_gemini_key = ttk.Entry(row_gm, show="•")
+        self.ent_gemini_key.insert(0, ai.get("gemini_api_key", ""))
+        self.ent_gemini_key.pack(side="left", fill="x", expand=True, padx=(6, 2))
+        self._add_show_toggle(row_gm, self.ent_gemini_key)
+
+        sec_model = self._section(f, "Model & Server Configuration")
+
+        row_m = ttk.Frame(sec_model); row_m.pack(fill="x", pady=3)
+        ttk.Label(row_m, text="Model:", width=14).pack(side="left")
+        self.cmb_model = ttk.Combobox(row_m, width=32)
+        self.cmb_model.pack(side="left", padx=6)
+        self.btn_refresh = ttk.Button(row_m, text="⟳ Refresh",
+                                      command=self._refresh_models,
+                                      style="Secondary.TButton")
+        self.btn_refresh.pack(side="left")
+
+        row_url = ttk.Frame(sec_model); row_url.pack(fill="x", pady=3)
+        self.lbl_server_url = ttk.Label(row_url, text="Server URL:", width=14)
+        self.lbl_server_url.pack(side="left")
+        self.ent_base_url = ttk.Entry(row_url)
+        self.ent_base_url.insert(0, ai.get("base_url", "http://localhost:1234/v1"))
         self.ent_base_url.pack(side="left", fill="x", expand=True, padx=6)
 
-        row2 = ttk.Frame(sec); row2.pack(fill="x", pady=3)
-        ttk.Label(row2, text="Model:", width=14).pack(side="left")
-        self.cmb_model = ttk.Combobox(row2, width=38)
-        model_val = ai.get("model", "")
-        if model_val:
-            self.cmb_model["values"] = [model_val]
-            self.cmb_model.set(model_val)
-        else:
-            self.cmb_model.set("(auto-detect loaded model)")
-        self.cmb_model.pack(side="left", padx=6)
-        ttk.Button(row2, text="⟳ Refresh",
-                   command=self._refresh_models,
-                   style="Secondary.TButton").pack(side="left")
-
-        row3 = ttk.Frame(sec); row3.pack(fill="x", pady=3)
-        ttk.Label(row3, text="Timeout (s):", width=14).pack(side="left")
-        self.spin_timeout = ttk.Spinbox(row3, from_=5, to=600, width=7)
-        self.spin_timeout.set(str(ai["timeout_seconds"]))
+        row_to = ttk.Frame(sec_model); row_to.pack(fill="x", pady=3)
+        ttk.Label(row_to, text="Timeout (s):", width=14).pack(side="left")
+        self.spin_timeout = ttk.Spinbox(row_to, from_=5, to=600, width=7)
+        self.spin_timeout.set(str(ai.get("timeout_seconds", 90)))
         self.spin_timeout.pack(side="left", padx=6)
 
-        ttk.Label(f,
-                  text="  Leave model as '(auto-detect)' to always use whatever is loaded in\n"
-                       "  Bionic / LM Studio — swap models freely without config changes.",
-                  foreground=C["text2"]).pack(anchor="w", padx=16, pady=(8, 4))
+        self._lbl_hint = ttk.Label(f, text="", foreground=C["text2"])
+        self._lbl_hint.pack(anchor="w", padx=16, pady=(6, 4))
 
-        test_row = ttk.Frame(f); test_row.pack(anchor="w", padx=16)
+        self._on_provider_change()
+
+        test_row = ttk.Frame(f); test_row.pack(anchor="w", padx=16, pady=(4, 0))
         ttk.Button(test_row, text="🔌  Test connection",
                    command=self._test_connection,
                    style="Accent.TButton").pack(side="left")
         self.lbl_test_result = ttk.Label(test_row, text="", foreground=C["text2"])
         self.lbl_test_result.pack(side="left", padx=10)
+
+    def _add_show_toggle(self, parent, entry: ttk.Entry) -> None:
+        def _toggle():
+            if entry.cget("show") == "":
+                entry.config(show="•")
+                btn.config(text="👁")
+            else:
+                entry.config(show="")
+                btn.config(text="🔒")
+        btn = ttk.Button(parent, text="👁", width=3, style="Secondary.TButton", command=_toggle)
+        btn.pack(side="left", padx=(0, 2))
+
+    def _on_provider_change(self, _e=None) -> None:
+        prov = self._provider_map.get(self.cmb_provider.get(), "bionic")
+        ai = self.cfg.get("ai", {})
+
+        if prov == "openai":
+            presets = ["gpt-4o-mini", "gpt-4o", "o3-mini", "gpt-4-turbo"]
+            self.cmb_model["values"] = presets
+            current_m = ai.get("openai_model") or "gpt-4o-mini"
+            self.cmb_model.set(current_m)
+            self.btn_refresh.pack_forget()
+            self.lbl_server_url.config(text="API Base (opt):")
+            self._lbl_hint.config(text="  Using OpenAI. Requires OpenAI API key (sk-...). Model: gpt-4o-mini recommended.")
+        elif prov == "claude":
+            presets = ["claude-3-5-haiku-20241022", "claude-3-5-sonnet-20241022", "claude-3-opus-20240229"]
+            self.cmb_model["values"] = presets
+            current_m = ai.get("claude_model") or "claude-3-5-haiku-20241022"
+            self.cmb_model.set(current_m)
+            self.btn_refresh.pack_forget()
+            self.lbl_server_url.config(text="API Base (opt):")
+            self._lbl_hint.config(text="  Using Anthropic Claude. Requires Claude API key (sk-ant-...).")
+        elif prov == "gemini":
+            presets = ["gemini-1.5-flash", "gemini-2.0-flash", "gemini-1.5-pro"]
+            self.cmb_model["values"] = presets
+            current_m = ai.get("gemini_model") or "gemini-1.5-flash"
+            self.cmb_model.set(current_m)
+            self.btn_refresh.pack_forget()
+            self.lbl_server_url.config(text="API Base (opt):")
+            self._lbl_hint.config(text="  Using Google Gemini. Requires Google AI Studio API key (AIza...).")
+        elif prov == "ollama":
+            presets = ["llama3.2", "codellama", "mistral", "deepseek-coder"]
+            self.cmb_model["values"] = presets
+            self.cmb_model.set(ai.get("model") or "llama3.2")
+            self.btn_refresh.pack(side="left")
+            self.lbl_server_url.config(text="Server URL:")
+            self._lbl_hint.config(text="  Using Local Ollama (default http://localhost:11434/v1).")
+        else:
+            model_val = ai.get("model", "")
+            self.cmb_model["values"] = [model_val] if model_val else ["(auto-detect loaded model)"]
+            self.cmb_model.set(model_val or "(auto-detect loaded model)")
+            self.btn_refresh.pack(side="left")
+            self.lbl_server_url.config(text="Server URL:")
+            self._lbl_hint.config(text="  Using Local Bionic / LM Studio (default http://localhost:1234/v1).")
 
     def _refresh_models(self) -> None:
         self.lbl_test_result.config(text="Fetching models…", foreground=C["warn_fg"])
@@ -262,10 +357,19 @@ class SettingsWindow:
     def _test_connection(self) -> None:
         self.lbl_test_result.config(text="Testing…", foreground=C["warn_fg"])
         self.root.update_idletasks()
+        prov = self._provider_map.get(self.cmb_provider.get(), "bionic")
+        m_val = self._model_value()
         tmp_cfg = {
             "ai": {
+                "provider": prov,
                 "base_url": self.ent_base_url.get().strip(),
-                "model": self._model_value(),
+                "model": m_val,
+                "openai_api_key": self.ent_openai_key.get().strip(),
+                "claude_api_key": self.ent_claude_key.get().strip(),
+                "gemini_api_key": self.ent_gemini_key.get().strip(),
+                "openai_model": m_val if prov == "openai" else self.cfg.get("ai", {}).get("openai_model", "gpt-4o-mini"),
+                "claude_model": m_val if prov == "claude" else self.cfg.get("ai", {}).get("claude_model", "claude-3-5-haiku-20241022"),
+                "gemini_model": m_val if prov == "gemini" else self.cfg.get("ai", {}).get("gemini_model", "gemini-1.5-flash"),
                 "timeout_seconds": 10,
             }
         }
@@ -323,6 +427,8 @@ class SettingsWindow:
 
     def _save(self) -> None:
         try:
+            prov = self._provider_map.get(self.cmb_provider.get(), "bionic")
+            m_val = self._model_value()
             new_cfg = {
                 "watched_apps":             self._listbox_values(self.lst_apps),
                 "projects_dirs":            self._listbox_values(self.lst_dirs),
@@ -335,9 +441,15 @@ class SettingsWindow:
                 "github_desktop_path":      self.ent_gd.get().strip(),
                 "ai": {
                     "base_url":         self.ent_base_url.get().strip(),
-                    "model":            self._model_value(),
+                    "model":            m_val if prov in ("bionic", "ollama") else "",
                     "timeout_seconds":  int(self.spin_timeout.get()),
-                    "provider":         self.cfg["ai"].get("provider", "bionic"),
+                    "provider":         prov,
+                    "openai_api_key":   self.ent_openai_key.get().strip(),
+                    "claude_api_key":   self.ent_claude_key.get().strip(),
+                    "gemini_api_key":   self.ent_gemini_key.get().strip(),
+                    "openai_model":     m_val if prov == "openai" else self.cfg.get("ai", {}).get("openai_model", "gpt-4o-mini"),
+                    "claude_model":     m_val if prov == "claude" else self.cfg.get("ai", {}).get("claude_model", "claude-3-5-haiku-20241022"),
+                    "gemini_model":     m_val if prov == "gemini" else self.cfg.get("ai", {}).get("gemini_model", "gemini-1.5-flash"),
                 },
             }
         except ValueError:
