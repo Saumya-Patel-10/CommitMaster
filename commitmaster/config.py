@@ -39,13 +39,20 @@ DEFAULTS: Dict[str, Any] = {
     "skip_sensitive_files": True,      # never auto-stage .env / keys / pem
     "sensitive_patterns": [".env", ".pem", ".key", "secret", "credential", ".p12", "id_rsa"],
     "github_desktop_path": "",         # auto-detected if empty
-    # Bionic / LM Studio local server (OpenAI-compatible).
-    # CommitMaster auto-detects the loaded model when model is blank.
+    # AI Provider configuration: Bionic/LM Studio, OpenAI, Claude, Gemini, Ollama
     "ai": {
+        "provider": "bionic",         # "bionic" | "openai" | "claude" | "gemini" | "ollama"
         "base_url": "http://localhost:1234/v1",
-        "model": "gemma-3-12b-it",    # Bionic / LM Studio model name
+        "model": "",                  # blank = auto-detect or provider default
         "timeout_seconds": 90,
-        "provider": "bionic",         # "bionic" | "lmstudio" | "openai" | "ollama"
+        "openai_api_key": "",
+        "claude_api_key": "",
+        "gemini_api_key": "",
+        "openai_model": "gpt-4o-mini",
+        "claude_model": "claude-3-5-haiku-20241022",
+        "gemini_model": "gemini-1.5-flash",
+        "openai_base_url": "https://api.openai.com/v1",
+        "api_key": "",
     },
     # Legacy key — kept so old config.json files still work.
     "lm_studio": {
@@ -53,6 +60,31 @@ DEFAULTS: Dict[str, Any] = {
         "model": "",
         "timeout_seconds": 60,
     },
+}
+
+# Supported AI provider labels and default models
+AI_PROVIDER_NAMES = {
+    "bionic": "Local (Bionic / LM Studio)",
+    "openai": "OpenAI",
+    "claude": "Anthropic Claude",
+    "gemini": "Google Gemini",
+    "ollama": "Local (Ollama)",
+}
+
+AI_DEFAULT_MODELS = {
+    "bionic": "",
+    "openai": "gpt-4o-mini",
+    "claude": "claude-3-5-haiku-20241022",
+    "gemini": "gemini-1.5-flash",
+    "ollama": "llama3.2",
+}
+
+AI_MODEL_PRESETS = {
+    "openai": ["gpt-4o-mini", "gpt-4o", "o3-mini", "gpt-4-turbo"],
+    "claude": ["claude-3-5-haiku-20241022", "claude-3-5-sonnet-20241022", "claude-3-opus-20240229"],
+    "gemini": ["gemini-1.5-flash", "gemini-2.0-flash", "gemini-1.5-pro"],
+    "bionic": ["(auto-detect loaded model)"],
+    "ollama": ["llama3.2", "codellama", "mistral", "deepseek-coder"],
 }
 
 
