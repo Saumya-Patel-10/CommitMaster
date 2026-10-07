@@ -188,6 +188,13 @@ def init_db() -> None:
             "ui_density": "ALTER TABLE user_preferences ADD COLUMN ui_density TEXT DEFAULT 'comfortable'",
             "auto_push": "ALTER TABLE user_preferences ADD COLUMN auto_push INTEGER DEFAULT 0",
             "ask_before_push": "ALTER TABLE user_preferences ADD COLUMN ask_before_push INTEGER DEFAULT 1",
+            "ai_provider": "ALTER TABLE user_preferences ADD COLUMN ai_provider TEXT DEFAULT 'bionic'",
+            "openai_api_key": "ALTER TABLE user_preferences ADD COLUMN openai_api_key TEXT DEFAULT ''",
+            "claude_api_key": "ALTER TABLE user_preferences ADD COLUMN claude_api_key TEXT DEFAULT ''",
+            "gemini_api_key": "ALTER TABLE user_preferences ADD COLUMN gemini_api_key TEXT DEFAULT ''",
+            "openai_model": "ALTER TABLE user_preferences ADD COLUMN openai_model TEXT DEFAULT 'gpt-4o-mini'",
+            "claude_model": "ALTER TABLE user_preferences ADD COLUMN claude_model TEXT DEFAULT 'claude-3-5-haiku-20241022'",
+            "gemini_model": "ALTER TABLE user_preferences ADD COLUMN gemini_model TEXT DEFAULT 'gemini-1.5-flash'",
         }
         for col_name, ddl in migration_ddls.items():
             if col_name not in existing_cols:
@@ -359,7 +366,8 @@ def update_preferences(user_id: int, **kwargs) -> bool:
         "watched_apps", "projects_dirs", "auto_commit", "skip_sensitive",
         "session_end_grace", "ai_base_url", "ai_model", "theme", "notifications",
         "accent_color", "font_family", "font_scale", "ui_density", "auto_push",
-        "ask_before_push"
+        "ask_before_push", "ai_provider", "openai_api_key", "claude_api_key",
+        "gemini_api_key", "openai_model", "claude_model", "gemini_model"
     }
     updates = {k: v for k, v in kwargs.items() if k in allowed}
     if not updates:
