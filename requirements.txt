@@ -7,3 +7,6 @@ plyer>=2.1
 customtkinter>=6.0
 bcrypt>=4.0
 matplotlib>=3.7
+# Backend & Cloud Server
+flask>=3.0
+gunicorn>=21.0; sys_platform != "win32"
