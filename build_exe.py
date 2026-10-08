@@ -13,7 +13,7 @@ import zipfile
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 
 
-def build_single(target_script: str, exe_name: str, description: str) -> str:
+def build_single(target_script: str, exe_name: str, description: str, icon_file: str = "icon_user.ico") -> str:
     print(f"\n[{description}] Compiling {exe_name}...")
     cmd = [
         sys.executable, "-m", "PyInstaller",
@@ -21,9 +21,12 @@ def build_single(target_script: str, exe_name: str, description: str) -> str:
         "--noconsole",
         "--name", exe_name,
         "--add-data", f"{APP_DIR}/commitmaster;commitmaster",
+        "--add-data", f"{APP_DIR}/assets;assets",
     ]
 
-    icon_path = os.path.join(APP_DIR, "icon.ico")
+    icon_path = os.path.join(APP_DIR, icon_file)
+    if not os.path.exists(icon_path):
+        icon_path = os.path.join(APP_DIR, "icon.ico")
     if os.path.exists(icon_path):
         cmd.extend(["--icon", icon_path])
 
@@ -49,6 +52,7 @@ def main():
         target_script="app.py",
         exe_name="CommitMaster",
         description="1/2: Public User Application (for Microsoft Store / GitHub Releases)",
+        icon_file="icon_user.ico",
     )
 
     # 2. Build Private Admin Application for Saumya
@@ -56,6 +60,7 @@ def main():
         target_script="admin_app.py",
         exe_name="CommitMaster-Admin",
         description="2/2: Saumya's Private Admin App (Keep private, DO NOT upload to Store)",
+        icon_file="icon_admin.ico",
     )
 
     # 3. Create public release ZIP archive
