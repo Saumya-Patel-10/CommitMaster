@@ -4858,3 +4858,1157 @@
 2026-10-07 03:56:30 [DEBUG   ] commitmaster.commit_engine — git diff HEAD --unified=3 -- config.example.json
 2026-10-07 03:56:30 [DEBUG   ] commitmaster.commit_engine — git diff HEAD --unified=3 -- test_ai_providers.py
 2026-10-07 03:56:30 [DEBUG   ] commitmaster.commit_engine — git rev-parse --abbrev-ref HEAD
+2026-10-07 03:56:43 [DEBUG   ] commitmaster.commit_engine — git rev-parse --abbrev-ref HEAD
+2026-10-07 03:56:43 [DEBUG   ] commitmaster.commit_engine — git reset
+2026-10-07 03:56:43 [DEBUG   ] commitmaster.commit_engine — git add -A -- admin_app.py
+2026-10-07 03:56:43 [DEBUG   ] commitmaster.commit_engine — git commit -m feat: enhance admin app and its logic
+
+### New Features
+- Adds helper function `_test_ai_admin`
+
+### Changes Summary
+- 99 lines added, 7 removed across admin_app.py
+2026-10-07 03:56:43 [DEBUG   ] commitmaster.commit_engine — git log -1 --oneline
+2026-10-07 03:56:43 [INFO    ] commitmaster.commit_engine — Committed individually in CommitMaster [admin_app.py]: 5334b06 feat: enhance admin app and its logic
+2026-10-07 03:56:43 [DEBUG   ] commitmaster.commit_engine — git add -A -- commitmaster.db-shm
+2026-10-07 03:56:43 [DEBUG   ] commitmaster.commit_engine — git commit -m refactor: enhance commitmaster and its logic
+
+### Changes & Improvements
+- Refines execution logic and operational flow
+
+### Changes Summary
+- 0 lines added, 0 removed across commitmaster.db-shm
+2026-10-07 03:56:43 [DEBUG   ] commitmaster.commit_engine — git log -1 --oneline
+2026-10-07 03:56:43 [INFO    ] commitmaster.commit_engine — Committed individually in CommitMaster [commitmaster.db-shm]: 4d246f1 refactor: enhance commitmaster and its logic
+2026-10-07 03:56:43 [DEBUG   ] commitmaster.commit_engine — git add -A -- commitmaster.db-wal
+2026-10-07 03:56:43 [DEBUG   ] commitmaster.commit_engine — git commit -m refactor: enhance commitmaster and its logic
+
+### Changes & Improvements
+- Refines execution logic and operational flow
+
+### Changes Summary
+- 0 lines added, 0 removed across commitmaster.db-wal
+2026-10-07 03:56:43 [DEBUG   ] commitmaster.commit_engine — git log -1 --oneline
+2026-10-07 03:56:43 [INFO    ] commitmaster.commit_engine — Committed individually in CommitMaster [commitmaster.db-wal]: 14a62cb refactor: enhance commitmaster and its logic
+2026-10-07 03:56:43 [DEBUG   ] commitmaster.commit_engine — git add -A -- commitmaster.log
+2026-10-07 03:56:44 [DEBUG   ] commitmaster.commit_engine — git commit -m refactor: enhance commitmaster and its logic
+
+### Changes & Improvements
+- Refines view layout and JSX markup structure
+
+### Changes Summary
+- 1341 lines added, 0 removed across commitmaster.log
+2026-10-07 03:56:44 [DEBUG   ] commitmaster.commit_engine — git log -1 --oneline
+2026-10-07 03:56:44 [INFO    ] commitmaster.commit_engine — Committed individually in CommitMaster [commitmaster.log]: db1fd2e refactor: enhance commitmaster and its logic
+2026-10-07 03:56:44 [DEBUG   ] commitmaster.commit_engine — git add -A -- commitmaster/ai_messages.py
+2026-10-07 03:56:44 [DEBUG   ] commitmaster.commit_engine — git commit -m feat(ai_messages): add get_active_provider and 4 more
+
+### New Features
+- Adds function `get_active_provider`
+- Adds function `get_provider_label`
+- Adds function `get_provider_key`
+- Adds function `get_provider_model`
+- Adds function `resolve_active_model`
+- Adds helper function `_call_openai`
+- Adds helper function `_call_claude`
+- Adds helper function `_call_gemini`
+
+### Changes & Improvements
+- Updates component layout and rendering in _chat_json
+- Refines event handlers and user interactions
+- Updates component layout and rendering in _clean_summary
+- Refines event handlers and user interactions
+- Updates component layout and rendering in _clean_description
+- Refines event handlers and user interactions
+- Updates component layout and rendering in _analyze_diff
+- Refines event handlers and user interactions
+- Updates component layout and rendering in _heuristic_message
+- Refines event handlers and user interactions
+
+### Changes Summary
+- 583 lines added, 80 removed across commitmaster/ai_messages.py
+2026-10-07 03:56:44 [DEBUG   ] commitmaster.commit_engine — git log -1 --oneline
+2026-10-07 03:56:44 [INFO    ] commitmaster.commit_engine — Committed individually in CommitMaster [commitmaster/ai_messages.py]: 4f1aa31 feat(ai_messages): add get_active_provider and 4 more
+2026-10-07 03:56:44 [DEBUG   ] commitmaster.commit_engine — git add -A -- commitmaster/commit_composer.py
+2026-10-07 03:56:44 [DEBUG   ] commitmaster.commit_engine — git commit -m refactor: enhance commit composer and its logic
+
+### Changes & Improvements
+- Expands internal routines and helper logic
+
+### Changes Summary
+- 23 lines added, 1 removed across commitmaster/commit_composer.py
+2026-10-07 03:56:44 [DEBUG   ] commitmaster.commit_engine — git log -1 --oneline
+2026-10-07 03:56:44 [INFO    ] commitmaster.commit_engine — Committed individually in CommitMaster [commitmaster/commit_composer.py]: 74748f0 refactor: enhance commit composer and its logic
+2026-10-07 03:56:44 [DEBUG   ] commitmaster.commit_engine — git add -A -- commitmaster/config.py
+2026-10-07 03:56:44 [DEBUG   ] commitmaster.commit_engine — git commit -m refactor: enhance config and its logic
+
+### Changes & Improvements
+- Expands internal routines and helper logic
+
+### Changes Summary
+- 36 lines added, 4 removed across commitmaster/config.py
+2026-10-07 03:56:44 [DEBUG   ] commitmaster.commit_engine — git log -1 --oneline
+2026-10-07 03:56:44 [INFO    ] commitmaster.commit_engine — Committed individually in CommitMaster [commitmaster/config.py]: 02dc3ba refactor: enhance config and its logic
+2026-10-07 03:56:44 [DEBUG   ] commitmaster.commit_engine — git add -A -- commitmaster/database.py
+2026-10-07 03:56:44 [DEBUG   ] commitmaster.commit_engine — git commit -m refactor: enhance database and its logic
+
+### Changes & Improvements
+- Expands internal routines and helper logic
+
+### Changes Summary
+- 9 lines added, 1 removed across commitmaster/database.py
+2026-10-07 03:56:44 [DEBUG   ] commitmaster.commit_engine — git log -1 --oneline
+2026-10-07 03:56:44 [INFO    ] commitmaster.commit_engine — Committed individually in CommitMaster [commitmaster/database.py]: 818fedf refactor: enhance database and its logic
+2026-10-07 03:56:44 [DEBUG   ] commitmaster.commit_engine — git add -A -- commitmaster/settings_ui.py
+2026-10-07 03:56:44 [DEBUG   ] commitmaster.commit_engine — git commit -m feat: enhance settings ui and its logic
+
+### New Features
+- Adds helper function `_add_show_toggle`
+- Adds helper function `_toggle`
+- Adds helper function `_on_provider_change`
+
+### Changes Summary
+- 150 lines added, 38 removed across commitmaster/settings_ui.py
+2026-10-07 03:56:44 [DEBUG   ] commitmaster.commit_engine — git log -1 --oneline
+2026-10-07 03:56:44 [INFO    ] commitmaster.commit_engine — Committed individually in CommitMaster [commitmaster/settings_ui.py]: 651befd feat: enhance settings ui and its logic
+2026-10-07 03:56:44 [DEBUG   ] commitmaster.commit_engine — git add -A -- commitmaster/user_dashboard.py
+2026-10-07 03:56:44 [DEBUG   ] commitmaster.commit_engine — git commit -m feat: enhance user dashboard and its logic
+
+### New Features
+- Adds helper function `_test_ai`
+
+### Changes Summary
+- 160 lines added, 42 removed across commitmaster/user_dashboard.py
+2026-10-07 03:56:44 [DEBUG   ] commitmaster.commit_engine — git log -1 --oneline
+2026-10-07 03:56:44 [INFO    ] commitmaster.commit_engine — Committed individually in CommitMaster [commitmaster/user_dashboard.py]: bcae560 feat: enhance user dashboard and its logic
+2026-10-07 03:56:44 [DEBUG   ] commitmaster.commit_engine — git add -A -- config.example.json
+2026-10-07 03:56:44 [DEBUG   ] commitmaster.commit_engine — git commit -m chore: update config.example configuration
+
+### Changes & Improvements
+- Expands internal routines and helper logic
+
+### Changes Summary
+- 8 lines added, 2 removed across config.example.json
+2026-10-07 03:56:44 [DEBUG   ] commitmaster.commit_engine — git log -1 --oneline
+2026-10-07 03:56:44 [INFO    ] commitmaster.commit_engine — Committed individually in CommitMaster [config.example.json]: 5b272b7 chore: update config.example configuration
+2026-10-07 03:56:44 [DEBUG   ] commitmaster.commit_engine — git add -A -- test_ai_providers.py
+2026-10-07 03:56:44 [DEBUG   ] commitmaster.commit_engine — git commit -m test(test_ai_providers): implement TestAIProvidersAndSanitization…
+
+### New Features
+- Introduces `test_ai_providers.py` module (60 lines)
+- Adds class `TestAIProvidersAndSanitization`
+- Adds function `test_clean_summary_removes_backticks_and_quotes`
+- Adds function `test_clean_description_eliminates_headline_repetition`
+- Adds function `test_clean_description_filters_boilerplate_and_quotes`
+- Adds function `test_provider_helpers`
+
+### Changes Summary
+- 60 lines added, 0 removed across test_ai_providers.py
+2026-10-07 03:56:45 [DEBUG   ] commitmaster.commit_engine — git log -1 --oneline
+2026-10-07 03:56:45 [INFO    ] commitmaster.commit_engine — Committed individually in CommitMaster [test_ai_providers.py]: c82349c test(test_ai_providers): implement TestAIProvidersAndSanitization…
+2026-10-07 03:56:45 [DEBUG   ] commitmaster.commit_engine — git rev-parse --abbrev-ref HEAD
+2026-10-07 03:56:45 [DEBUG   ] commitmaster.commit_engine — git -c core.quotepath=false status --porcelain=v2 --untracked-files=all --ignore-submodules=none
+2026-10-07 03:56:45 [DEBUG   ] commitmaster.commit_engine — uncommitted_changes (v2) found 2 files in C:\Data\Saumya\Projects\CommitMaster
+2026-10-07 03:56:45 [DEBUG   ] commitmaster.commit_engine — git diff HEAD --unified=3 -- commitmaster.db-wal
+2026-10-07 03:56:45 [DEBUG   ] commitmaster.commit_engine — git rev-parse --abbrev-ref HEAD
+2026-10-07 03:56:45 [DEBUG   ] commitmaster.ai_messages — list_models failed: HTTPConnectionPool(host='localhost', port=1234): Max retries exceeded with url: /v1/models (Caused by ConnectTimeoutError(<HTTPConnection(host='localhost', port=1234) at 0x1cfe5bf43e0>, 'Connection to localhost timed out. (connect timeout=0.4)'))
+2026-10-07 03:56:46 [DEBUG   ] commitmaster.commit_engine — git rev-parse --abbrev-ref HEAD
+2026-10-07 03:56:46 [DEBUG   ] commitmaster.commit_engine — git log origin/main..main --oneline
+2026-10-07 03:56:46 [DEBUG   ] commitmaster.commit_engine — git rev-parse --abbrev-ref HEAD
+2026-10-07 03:56:48 [DEBUG   ] commitmaster.commit_engine — git rev-parse --abbrev-ref HEAD
+2026-10-07 03:56:48 [DEBUG   ] commitmaster.commit_engine — git remote get-url origin
+2026-10-07 03:56:48 [DEBUG   ] commitmaster.commit_engine — git config user.name Saumya Patel
+2026-10-07 03:56:48 [DEBUG   ] commitmaster.commit_engine — git config user.email saumya.a.patel@gmail.com
+2026-10-07 03:56:48 [INFO    ] commitmaster.commit_engine — Pushing CommitMaster (main) to Saumya-Patel-10/CommitMaster via @Saumya-Patel-10
+2026-10-07 03:56:50 [INFO    ] commitmaster.commit_engine — Push succeeded for CommitMaster: branch 'main' set up to track 'https://Saumya-Patel-10:[TOKEN_REDACTED]@github.com/Saumya-Patel-10/CommitMaster.git/main'.
+2026-10-07 03:56:50 [DEBUG   ] commitmaster.commit_engine — git rev-parse --abbrev-ref HEAD
+2026-10-07 04:21:42 [DEBUG   ] commitmaster.windows_integration — Registered Windows AppUserModelID: CommitMaster.Desktop.3.0
+2026-10-07 04:21:43 [DEBUG   ] commitmaster.commit_engine — git rev-parse --abbrev-ref HEAD
+2026-10-07 04:21:43 [DEBUG   ] commitmaster.commit_engine — git -c core.quotepath=false status --porcelain=v2 --untracked-files=all --ignore-submodules=none
+2026-10-07 04:21:43 [DEBUG   ] commitmaster.commit_engine — uncommitted_changes (v2) found 3 files in C:\Data\Saumya\Projects\CommitMaster
+2026-10-07 04:21:43 [DEBUG   ] commitmaster.commit_engine — git rev-parse --abbrev-ref HEAD
+2026-10-07 04:21:43 [DEBUG   ] commitmaster.ai_messages — list_models failed: HTTPConnectionPool(host='localhost', port=1234): Max retries exceeded with url: /v1/models (Caused by ConnectTimeoutError(<HTTPConnection(host='localhost', port=1234) at 0x1a30d18dfd0>, 'Connection to localhost timed out. (connect timeout=0.4)'))
+2026-10-07 04:21:45 [DEBUG   ] commitmaster.commit_engine — git rev-parse --abbrev-ref HEAD
+2026-10-07 04:21:45 [DEBUG   ] commitmaster.commit_engine — git diff HEAD --unified=3 -- commitmaster.db-shm
+2026-10-07 04:21:45 [DEBUG   ] commitmaster.commit_engine — git rev-parse --abbrev-ref HEAD
+2026-10-07 04:21:47 [DEBUG   ] commitmaster.commit_engine — git rev-parse --abbrev-ref HEAD
+2026-10-07 04:21:47 [DEBUG   ] commitmaster.commit_engine — git -c core.quotepath=false status --porcelain=v2 --untracked-files=all --ignore-submodules=none
+2026-10-07 04:21:47 [DEBUG   ] commitmaster.commit_engine — uncommitted_changes (v2) found 3 files in C:\Data\Saumya\Projects\CommitMaster
+2026-10-07 04:21:47 [DEBUG   ] commitmaster.commit_engine — git rev-parse --abbrev-ref HEAD
+2026-10-07 04:21:49 [DEBUG   ] commitmaster.commit_engine — git rev-parse --abbrev-ref HEAD
+2026-10-07 04:21:49 [DEBUG   ] commitmaster.commit_engine — git -c core.quotepath=false status --porcelain=v2 --untracked-files=all --ignore-submodules=none
+2026-10-07 04:21:49 [DEBUG   ] commitmaster.commit_engine — uncommitted_changes (v2) found 6 files in C:\Data\Saumya\Projects\JobSeeker
+2026-10-07 04:21:49 [DEBUG   ] commitmaster.commit_engine — git diff HEAD --unified=3 -- app/pipelines/score_pipeline.py
+2026-10-07 04:21:49 [DEBUG   ] commitmaster.commit_engine — git rev-parse --abbrev-ref HEAD
+2026-10-07 04:22:05 [DEBUG   ] commitmaster.commit_engine — git rev-parse --abbrev-ref HEAD
+2026-10-07 04:22:05 [DEBUG   ] commitmaster.commit_engine — git -c core.quotepath=false status --porcelain=v2 --untracked-files=all --ignore-submodules=none
+2026-10-07 04:22:05 [DEBUG   ] commitmaster.commit_engine — uncommitted_changes (v2) found 3 files in C:\Data\Saumya\Projects\CommitMaster
+2026-10-07 04:22:05 [DEBUG   ] commitmaster.commit_engine — git diff HEAD --unified=3 -- commitmaster.db-shm
+2026-10-07 04:22:05 [DEBUG   ] commitmaster.commit_engine — git rev-parse --abbrev-ref HEAD
+2026-10-07 04:22:06 [DEBUG   ] commitmaster.ai_messages — list_models failed: HTTPConnectionPool(host='localhost', port=1234): Max retries exceeded with url: /v1/models (Caused by ConnectTimeoutError(<HTTPConnection(host='localhost', port=1234) at 0x1a30d0b34d0>, 'Connection to localhost timed out. (connect timeout=0.4)'))
+2026-10-07 16:05:24 [DEBUG   ] commitmaster.windows_integration — Registered Windows AppUserModelID: CommitMaster.Desktop.3.0
+2026-10-07 16:05:25 [DEBUG   ] commitmaster.commit_engine — git rev-parse --abbrev-ref HEAD
+2026-10-07 16:05:25 [DEBUG   ] commitmaster.commit_engine — git -c core.quotepath=false status --porcelain=v2 --untracked-files=all --ignore-submodules=none
+2026-10-07 16:05:25 [DEBUG   ] commitmaster.commit_engine — uncommitted_changes (v2) found 3 files in C:\Data\Saumya\Projects\CommitMaster
+2026-10-07 16:05:25 [DEBUG   ] commitmaster.commit_engine — git rev-parse --abbrev-ref HEAD
+2026-10-07 16:05:26 [DEBUG   ] commitmaster.ai_messages — list_models failed: HTTPConnectionPool(host='localhost', port=1234): Max retries exceeded with url: /v1/models (Caused by ConnectTimeoutError(<HTTPConnection(host='localhost', port=1234) at 0x2445dbee120>, 'Connection to localhost timed out. (connect timeout=0.4)'))
+2026-10-07 16:05:30 [DEBUG   ] commitmaster.commit_engine — git rev-parse --abbrev-ref HEAD
+2026-10-07 16:05:30 [DEBUG   ] commitmaster.commit_engine — git -c core.quotepath=false status --porcelain=v2 --untracked-files=all --ignore-submodules=none
+2026-10-07 16:05:30 [DEBUG   ] commitmaster.commit_engine — uncommitted_changes (v2) found 3 files in C:\Data\Saumya\Projects\CommitMaster
+2026-10-07 16:05:30 [DEBUG   ] commitmaster.commit_engine — git diff HEAD --unified=3 -- commitmaster.db-shm
+2026-10-07 16:05:30 [DEBUG   ] commitmaster.commit_engine — git rev-parse --abbrev-ref HEAD
+2026-10-07 16:06:22 [DEBUG   ] commitmaster.windows_integration — Registered Windows AppUserModelID: CommitMaster.Desktop.3.0
+2026-10-07 16:07:00 [DEBUG   ] commitmaster.commit_engine — git rev-parse --abbrev-ref HEAD
+2026-10-07 16:07:01 [DEBUG   ] commitmaster.commit_engine — git -c core.quotepath=false status --porcelain=v2 --untracked-files=all --ignore-submodules=none
+2026-10-07 16:07:01 [DEBUG   ] commitmaster.commit_engine — uncommitted_changes (v2) found 3 files in C:\Data\Saumya\Projects\CommitMaster
+2026-10-07 16:07:01 [DEBUG   ] commitmaster.commit_engine — git diff HEAD --unified=3 -- commitmaster.db-shm
+2026-10-07 16:07:01 [DEBUG   ] commitmaster.commit_engine — git rev-parse --abbrev-ref HEAD
+2026-10-07 16:07:01 [DEBUG   ] commitmaster.ai_messages — list_models failed: HTTPConnectionPool(host='localhost', port=1234): Max retries exceeded with url: /v1/models (Caused by ConnectTimeoutError(<HTTPConnection(host='localhost', port=1234) at 0x2445db12e90>, 'Connection to localhost timed out. (connect timeout=0.4)'))
+2026-10-07 16:07:02 [DEBUG   ] commitmaster.commit_engine — git rev-parse --abbrev-ref HEAD
+2026-10-07 16:07:29 [DEBUG   ] commitmaster.commit_engine — git rev-parse --abbrev-ref HEAD
+2026-10-07 16:07:31 [DEBUG   ] commitmaster.commit_engine — git -c core.quotepath=false status --porcelain=v2 --untracked-files=all --ignore-submodules=none
+2026-10-07 16:07:31 [DEBUG   ] commitmaster.commit_engine — uncommitted_changes (v2) found 3 files in C:\Data\Saumya\Projects\CommitMaster
+2026-10-07 16:07:31 [DEBUG   ] commitmaster.commit_engine — git rev-parse --abbrev-ref HEAD
+2026-10-07 16:07:31 [DEBUG   ] commitmaster.commit_engine — git diff HEAD --unified=3 -- commitmaster.db-shm
+2026-10-07 16:07:32 [DEBUG   ] commitmaster.commit_engine — git diff HEAD --unified=3 -- commitmaster.db-wal
+2026-10-07 16:07:32 [DEBUG   ] commitmaster.commit_engine — git diff HEAD --unified=3 -- commitmaster.log
+2026-10-07 16:07:32 [DEBUG   ] commitmaster.commit_engine — git rev-parse --abbrev-ref HEAD
+2026-10-07 16:08:20 [DEBUG   ] commitmaster.commit_engine — git rev-parse --abbrev-ref HEAD
+2026-10-07 16:08:20 [DEBUG   ] commitmaster.commit_engine — git -c core.quotepath=false status --porcelain=v2 --untracked-files=all --ignore-submodules=none
+2026-10-07 16:08:20 [DEBUG   ] commitmaster.commit_engine — uncommitted_changes (v2) found 3 files in C:\Data\Saumya\Projects\CommitMaster
+2026-10-07 16:08:20 [DEBUG   ] commitmaster.commit_engine — git diff HEAD --unified=3 -- commitmaster.db-shm
+2026-10-07 16:08:20 [DEBUG   ] commitmaster.commit_engine — git rev-parse --abbrev-ref HEAD
+2026-10-07 16:08:21 [DEBUG   ] commitmaster.ai_messages — list_models failed: HTTPConnectionPool(host='localhost', port=1234): Max retries exceeded with url: /v1/models (Caused by ConnectTimeoutError(<HTTPConnection(host='localhost', port=1234) at 0x2445db12e90>, 'Connection to localhost timed out. (connect timeout=0.4)'))
+2026-10-07 17:03:20 [DEBUG   ] commitmaster.commit_engine — Cannot scan C:\Users\saumy\AppData\Local\Temp\cm_test_ejy4mg98: [WinError 5] Access is denied: 'C:\\Users\\saumy\\AppData\\Local\\Temp\\cm_test_ejy4mg98'
+2026-10-07 17:03:20 [DEBUG   ] commitmaster.commit_engine — Cannot scan C:\Users\saumy\AppData\Local\Temp\cm_test_f9i7txz4: [WinError 5] Access is denied: 'C:\\Users\\saumy\\AppData\\Local\\Temp\\cm_test_f9i7txz4'
+2026-10-07 17:03:20 [DEBUG   ] commitmaster.commit_engine — Cannot scan C:\Users\saumy\AppData\Local\Temp\cm_test_h_ntpwkt: [WinError 5] Access is denied: 'C:\\Users\\saumy\\AppData\\Local\\Temp\\cm_test_h_ntpwkt'
+2026-10-07 17:03:20 [DEBUG   ] commitmaster.commit_engine — Cannot scan C:\Users\saumy\AppData\Local\Temp\WinSAT: [WinError 5] Access is denied: 'C:\\Users\\saumy\\AppData\\Local\\Temp\\WinSAT'
+2026-10-07 17:03:20 [DEBUG   ] commitmaster.commit_engine — list_repos found 114 repos under ['C:\\Users\\saumy\\AppData\\Local\\Temp']
+2026-10-07 17:03:20 [DEBUG   ] commitmaster.commit_engine — git -c core.quotepath=false status --porcelain=v2 --untracked-files=all --ignore-submodules=none
+2026-10-07 17:03:20 [DEBUG   ] commitmaster.commit_engine — uncommitted_changes (v2) found 5 files in C:\Users\saumy\AppData\Local\Temp\commitmaster_test_repo
+2026-10-07 17:03:20 [DEBUG   ] commitmaster.commit_engine — git reset
+2026-10-07 17:03:20 [DEBUG   ] commitmaster.commit_engine — git add -A -- src/app.py
+2026-10-07 17:03:20 [DEBUG   ] commitmaster.commit_engine — git commit -m refactor: update app output
+2026-10-07 17:03:21 [DEBUG   ] commitmaster.commit_engine — git log -1 --oneline
+2026-10-07 17:03:21 [INFO    ] commitmaster.commit_engine — Committed in commitmaster_test_repo: 64d3cc1 refactor: update app output
+2026-10-07 17:03:21 [DEBUG   ] commitmaster.commit_engine — git log --oneline
+2026-10-07 17:03:21 [DEBUG   ] commitmaster.commit_engine — git -c core.quotepath=false status --porcelain=v2 --untracked-files=all --ignore-submodules=none
+2026-10-07 17:03:21 [DEBUG   ] commitmaster.commit_engine — uncommitted_changes (v2) found 4 files in C:\Users\saumy\AppData\Local\Temp\commitmaster_test_repo
+2026-10-07 17:03:21 [DEBUG   ] commitmaster.commit_engine — git diff --cached --unified=2
+2026-10-07 17:03:21 [DEBUG   ] commitmaster.commit_engine — git diff --unified=2
+2026-10-07 17:03:21 [DEBUG   ] commitmaster.commit_engine — git diff HEAD --stat
+2026-10-07 17:03:21 [DEBUG   ] commitmaster.commit_engine — Found GitHub Desktop at: C:\Users\saumy\AppData\Local\GitHubDesktop\GitHubDesktop.exe
+2026-10-07 17:03:26 [DEBUG   ] commitmaster.commit_engine — git init
+2026-10-07 17:03:26 [DEBUG   ] commitmaster.commit_engine — git config user.name Test User
+2026-10-07 17:03:26 [DEBUG   ] commitmaster.commit_engine — git config user.email test@commitmaster.local
+2026-10-07 17:03:26 [DEBUG   ] commitmaster.commit_engine — git reset
+2026-10-07 17:03:27 [DEBUG   ] commitmaster.commit_engine — git add -A -- file1.txt file2.txt
+2026-10-07 17:03:27 [DEBUG   ] commitmaster.commit_engine — git commit -m feat: add both files
+2026-10-07 17:03:27 [DEBUG   ] commitmaster.commit_engine — git log -1 --oneline
+2026-10-07 17:03:27 [INFO    ] commitmaster.commit_engine — Committed in cm_test_ipuom2nl: dec649c feat: add both files
+2026-10-07 17:03:27 [DEBUG   ] commitmaster.commit_engine — git log --oneline
+2026-10-07 17:03:27 [DEBUG   ] commitmaster.commit_engine — git init
+2026-10-07 17:03:27 [DEBUG   ] commitmaster.commit_engine — git config user.name Test User
+2026-10-07 17:03:27 [DEBUG   ] commitmaster.commit_engine — git config user.email test@commitmaster.local
+2026-10-07 17:03:27 [DEBUG   ] commitmaster.commit_engine — git init
+2026-10-07 17:03:27 [DEBUG   ] commitmaster.commit_engine — git config user.name Test User
+2026-10-07 17:03:27 [DEBUG   ] commitmaster.commit_engine — git config user.email test@commitmaster.local
+2026-10-07 17:03:27 [DEBUG   ] commitmaster.commit_engine — git init
+2026-10-07 17:03:27 [DEBUG   ] commitmaster.commit_engine — git config user.name Test User
+2026-10-07 17:03:27 [DEBUG   ] commitmaster.commit_engine — git config user.email test@commitmaster.local
+2026-10-07 17:03:27 [DEBUG   ] commitmaster.commit_engine — git init
+2026-10-07 17:03:27 [DEBUG   ] commitmaster.commit_engine — git config user.name Test User
+2026-10-07 17:03:27 [DEBUG   ] commitmaster.commit_engine — git config user.email test@commitmaster.local
+2026-10-07 17:03:27 [DEBUG   ] commitmaster.commit_engine — git init
+2026-10-07 17:03:27 [DEBUG   ] commitmaster.commit_engine — git config user.name Test User
+2026-10-07 17:03:27 [DEBUG   ] commitmaster.commit_engine — git config user.email test@commitmaster.local
+2026-10-07 17:03:27 [DEBUG   ] commitmaster.commit_engine — git init
+2026-10-07 17:03:27 [DEBUG   ] commitmaster.commit_engine — git config user.name Test User
+2026-10-07 17:03:27 [DEBUG   ] commitmaster.commit_engine — git config user.email test@commitmaster.local
+2026-10-07 17:03:27 [DEBUG   ] commitmaster.commit_engine — git init
+2026-10-07 17:03:27 [DEBUG   ] commitmaster.commit_engine — git config user.name Test User
+2026-10-07 17:03:27 [DEBUG   ] commitmaster.commit_engine — git config user.email test@commitmaster.local
+2026-10-07 17:03:27 [DEBUG   ] commitmaster.commit_engine — git init
+2026-10-07 17:03:27 [DEBUG   ] commitmaster.commit_engine — git config user.name Test User
+2026-10-07 17:03:27 [DEBUG   ] commitmaster.commit_engine — git config user.email test@commitmaster.local
+2026-10-07 17:03:27 [DEBUG   ] commitmaster.commit_engine — git reset
+2026-10-07 17:03:28 [DEBUG   ] commitmaster.commit_engine — git add -A -- alpha.py
+2026-10-07 17:03:28 [DEBUG   ] commitmaster.commit_engine — git commit -m feat(core): add alpha logic
+2026-10-07 17:03:28 [DEBUG   ] commitmaster.commit_engine — git log -1 --oneline
+2026-10-07 17:03:28 [INFO    ] commitmaster.commit_engine — Committed individually in cm_test_7_624acf [alpha.py]: 911fa5f feat(core): add alpha logic
+2026-10-07 17:03:28 [DEBUG   ] commitmaster.commit_engine — git add -A -- beta.md
+2026-10-07 17:03:28 [DEBUG   ] commitmaster.commit_engine — git commit -m docs: update beta documentation
+2026-10-07 17:03:28 [DEBUG   ] commitmaster.commit_engine — git log -1 --oneline
+2026-10-07 17:03:28 [INFO    ] commitmaster.commit_engine — Committed individually in cm_test_7_624acf [beta.md]: da7cfbf docs: update beta documentation
+2026-10-07 17:03:28 [DEBUG   ] commitmaster.commit_engine — git add -A -- gamma.json
+2026-10-07 17:03:28 [DEBUG   ] commitmaster.commit_engine — git commit -m chore(config): initialize gamma schema
+2026-10-07 17:03:28 [DEBUG   ] commitmaster.commit_engine — git log -1 --oneline
+2026-10-07 17:03:28 [INFO    ] commitmaster.commit_engine — Committed individually in cm_test_7_624acf [gamma.json]: b50c4e0 chore(config): initialize gamma schema
+2026-10-07 17:03:28 [DEBUG   ] commitmaster.commit_engine — git log --oneline
+2026-10-07 17:03:28 [DEBUG   ] commitmaster.commit_engine — git init
+2026-10-07 17:03:28 [DEBUG   ] commitmaster.commit_engine — git config user.name Test User
+2026-10-07 17:03:28 [DEBUG   ] commitmaster.commit_engine — git config user.email test@commitmaster.local
+2026-10-07 17:03:28 [DEBUG   ] commitmaster.commit_engine — git reset
+2026-10-07 17:03:28 [DEBUG   ] commitmaster.commit_engine — git add -A -- cached.txt
+2026-10-07 17:03:28 [DEBUG   ] commitmaster.commit_engine — git commit -m init cached
+2026-10-07 17:03:28 [DEBUG   ] commitmaster.commit_engine — git log -1 --oneline
+2026-10-07 17:03:28 [INFO    ] commitmaster.commit_engine — Committed in cm_test_9f0lmc47: ddeba7c init cached
+2026-10-07 17:03:28 [DEBUG   ] commitmaster.commit_engine — git -c core.quotepath=false status --porcelain=v2 --untracked-files=all --ignore-submodules=none
+2026-10-07 17:03:28 [DEBUG   ] commitmaster.commit_engine — uncommitted_changes (v2) found 1 files in C:\Users\saumy\AppData\Local\Temp\cm_test_9f0lmc47
+2026-10-07 17:03:28 [DEBUG   ] commitmaster.commit_engine — git -c core.quotepath=false status --porcelain=v2 --untracked-files=all --ignore-submodules=none
+2026-10-07 17:03:28 [DEBUG   ] commitmaster.commit_engine — uncommitted_changes (v2) found 1 files in C:\Users\saumy\AppData\Local\Temp\cm_test_9f0lmc47
+2026-10-07 17:11:27 [DEBUG   ] commitmaster.reminder_service — ReminderService config loaded: interval=True (2h 30m), app_monitor=True, only_dirty=True
+2026-10-07 17:11:27 [INFO    ] commitmaster.reminder_service — Reminder snoozed for 15 minutes.
+2026-10-07 17:11:27 [INFO    ] commitmaster.reminder_service — ReminderService preferences updated dynamically.
+2026-10-07 17:11:30 [DEBUG   ] commitmaster.commit_engine — Cannot scan C:\Users\saumy\AppData\Local\Temp\cm_test_ejy4mg98: [WinError 5] Access is denied: 'C:\\Users\\saumy\\AppData\\Local\\Temp\\cm_test_ejy4mg98'
+2026-10-07 17:11:30 [DEBUG   ] commitmaster.commit_engine — Cannot scan C:\Users\saumy\AppData\Local\Temp\cm_test_f9i7txz4: [WinError 5] Access is denied: 'C:\\Users\\saumy\\AppData\\Local\\Temp\\cm_test_f9i7txz4'
+2026-10-07 17:11:30 [DEBUG   ] commitmaster.commit_engine — Cannot scan C:\Users\saumy\AppData\Local\Temp\cm_test_h_ntpwkt: [WinError 5] Access is denied: 'C:\\Users\\saumy\\AppData\\Local\\Temp\\cm_test_h_ntpwkt'
+2026-10-07 17:11:30 [DEBUG   ] commitmaster.commit_engine — Cannot scan C:\Users\saumy\AppData\Local\Temp\WinSAT: [WinError 5] Access is denied: 'C:\\Users\\saumy\\AppData\\Local\\Temp\\WinSAT'
+2026-10-07 17:11:30 [DEBUG   ] commitmaster.commit_engine — list_repos found 117 repos under ['C:\\Users\\saumy\\AppData\\Local\\Temp']
+2026-10-07 17:11:30 [DEBUG   ] commitmaster.commit_engine — git -c core.quotepath=false status --porcelain=v2 --untracked-files=all --ignore-submodules=none
+2026-10-07 17:11:30 [DEBUG   ] commitmaster.commit_engine — uncommitted_changes (v2) found 5 files in C:\Users\saumy\AppData\Local\Temp\commitmaster_test_repo
+2026-10-07 17:11:30 [DEBUG   ] commitmaster.commit_engine — git reset
+2026-10-07 17:11:30 [DEBUG   ] commitmaster.commit_engine — git add -A -- src/app.py
+2026-10-07 17:11:30 [DEBUG   ] commitmaster.commit_engine — git commit -m refactor: update app output
+2026-10-07 17:11:30 [DEBUG   ] commitmaster.commit_engine — git log -1 --oneline
+2026-10-07 17:11:30 [INFO    ] commitmaster.commit_engine — Committed in commitmaster_test_repo: 983dc82 refactor: update app output
+2026-10-07 17:11:30 [DEBUG   ] commitmaster.commit_engine — git log --oneline
+2026-10-07 17:11:30 [DEBUG   ] commitmaster.commit_engine — git -c core.quotepath=false status --porcelain=v2 --untracked-files=all --ignore-submodules=none
+2026-10-07 17:11:30 [DEBUG   ] commitmaster.commit_engine — uncommitted_changes (v2) found 4 files in C:\Users\saumy\AppData\Local\Temp\commitmaster_test_repo
+2026-10-07 17:11:30 [DEBUG   ] commitmaster.commit_engine — git diff --cached --unified=2
+2026-10-07 17:11:30 [DEBUG   ] commitmaster.commit_engine — git diff --unified=2
+2026-10-07 17:11:30 [DEBUG   ] commitmaster.commit_engine — git diff HEAD --stat
+2026-10-07 17:11:30 [DEBUG   ] commitmaster.commit_engine — Found GitHub Desktop at: C:\Users\saumy\AppData\Local\GitHubDesktop\GitHubDesktop.exe
+2026-10-07 17:11:34 [DEBUG   ] commitmaster.commit_engine — git init
+2026-10-07 17:11:34 [DEBUG   ] commitmaster.commit_engine — git config user.name Test User
+2026-10-07 17:11:34 [DEBUG   ] commitmaster.commit_engine — git config user.email test@commitmaster.local
+2026-10-07 17:11:34 [DEBUG   ] commitmaster.commit_engine — git reset
+2026-10-07 17:11:34 [DEBUG   ] commitmaster.commit_engine — git add -A -- file1.txt file2.txt
+2026-10-07 17:11:34 [DEBUG   ] commitmaster.commit_engine — git commit -m feat: add both files
+2026-10-07 17:11:34 [DEBUG   ] commitmaster.commit_engine — git log -1 --oneline
+2026-10-07 17:11:34 [INFO    ] commitmaster.commit_engine — Committed in cm_test_a6_2qubs: ded5d9c feat: add both files
+2026-10-07 17:11:34 [DEBUG   ] commitmaster.commit_engine — git log --oneline
+2026-10-07 17:11:34 [DEBUG   ] commitmaster.commit_engine — git init
+2026-10-07 17:11:34 [DEBUG   ] commitmaster.commit_engine — git config user.name Test User
+2026-10-07 17:11:34 [DEBUG   ] commitmaster.commit_engine — git config user.email test@commitmaster.local
+2026-10-07 17:11:34 [DEBUG   ] commitmaster.commit_engine — git init
+2026-10-07 17:11:34 [DEBUG   ] commitmaster.commit_engine — git config user.name Test User
+2026-10-07 17:11:34 [DEBUG   ] commitmaster.commit_engine — git config user.email test@commitmaster.local
+2026-10-07 17:11:34 [DEBUG   ] commitmaster.commit_engine — git init
+2026-10-07 17:11:34 [DEBUG   ] commitmaster.commit_engine — git config user.name Test User
+2026-10-07 17:11:34 [DEBUG   ] commitmaster.commit_engine — git config user.email test@commitmaster.local
+2026-10-07 17:11:34 [DEBUG   ] commitmaster.commit_engine — git init
+2026-10-07 17:11:34 [DEBUG   ] commitmaster.commit_engine — git config user.name Test User
+2026-10-07 17:11:34 [DEBUG   ] commitmaster.commit_engine — git config user.email test@commitmaster.local
+2026-10-07 17:11:34 [DEBUG   ] commitmaster.commit_engine — git init
+2026-10-07 17:11:34 [DEBUG   ] commitmaster.commit_engine — git config user.name Test User
+2026-10-07 17:11:34 [DEBUG   ] commitmaster.commit_engine — git config user.email test@commitmaster.local
+2026-10-07 17:11:34 [DEBUG   ] commitmaster.commit_engine — git init
+2026-10-07 17:11:35 [DEBUG   ] commitmaster.commit_engine — git config user.name Test User
+2026-10-07 17:11:35 [DEBUG   ] commitmaster.commit_engine — git config user.email test@commitmaster.local
+2026-10-07 17:11:35 [DEBUG   ] commitmaster.commit_engine — git init
+2026-10-07 17:11:35 [DEBUG   ] commitmaster.commit_engine — git config user.name Test User
+2026-10-07 17:11:35 [DEBUG   ] commitmaster.commit_engine — git config user.email test@commitmaster.local
+2026-10-07 17:11:35 [DEBUG   ] commitmaster.commit_engine — git init
+2026-10-07 17:11:35 [DEBUG   ] commitmaster.commit_engine — git config user.name Test User
+2026-10-07 17:11:35 [DEBUG   ] commitmaster.commit_engine — git config user.email test@commitmaster.local
+2026-10-07 17:11:35 [DEBUG   ] commitmaster.commit_engine — git reset
+2026-10-07 17:11:35 [DEBUG   ] commitmaster.commit_engine — git add -A -- alpha.py
+2026-10-07 17:11:35 [DEBUG   ] commitmaster.commit_engine — git commit -m feat(core): add alpha logic
+2026-10-07 17:11:35 [DEBUG   ] commitmaster.commit_engine — git log -1 --oneline
+2026-10-07 17:11:35 [INFO    ] commitmaster.commit_engine — Committed individually in cm_test_sqs_p7vw [alpha.py]: 028d346 feat(core): add alpha logic
+2026-10-07 17:11:35 [DEBUG   ] commitmaster.commit_engine — git add -A -- beta.md
+2026-10-07 17:11:35 [DEBUG   ] commitmaster.commit_engine — git commit -m docs: update beta documentation
+2026-10-07 17:11:35 [DEBUG   ] commitmaster.commit_engine — git log -1 --oneline
+2026-10-07 17:11:35 [INFO    ] commitmaster.commit_engine — Committed individually in cm_test_sqs_p7vw [beta.md]: f73d579 docs: update beta documentation
+2026-10-07 17:11:35 [DEBUG   ] commitmaster.commit_engine — git add -A -- gamma.json
+2026-10-07 17:11:35 [DEBUG   ] commitmaster.commit_engine — git commit -m chore(config): initialize gamma schema
+2026-10-07 17:11:35 [DEBUG   ] commitmaster.commit_engine — git log -1 --oneline
+2026-10-07 17:11:35 [INFO    ] commitmaster.commit_engine — Committed individually in cm_test_sqs_p7vw [gamma.json]: a5cf783 chore(config): initialize gamma schema
+2026-10-07 17:11:35 [DEBUG   ] commitmaster.commit_engine — git log --oneline
+2026-10-07 17:11:35 [DEBUG   ] commitmaster.commit_engine — git init
+2026-10-07 17:11:35 [DEBUG   ] commitmaster.commit_engine — git config user.name Test User
+2026-10-07 17:11:35 [DEBUG   ] commitmaster.commit_engine — git config user.email test@commitmaster.local
+2026-10-07 17:11:35 [DEBUG   ] commitmaster.commit_engine — git reset
+2026-10-07 17:11:35 [DEBUG   ] commitmaster.commit_engine — git add -A -- cached.txt
+2026-10-07 17:11:35 [DEBUG   ] commitmaster.commit_engine — git commit -m init cached
+2026-10-07 17:11:35 [DEBUG   ] commitmaster.commit_engine — git log -1 --oneline
+2026-10-07 17:11:35 [INFO    ] commitmaster.commit_engine — Committed in cm_test_kou40pe8: bdec231 init cached
+2026-10-07 17:11:35 [DEBUG   ] commitmaster.commit_engine — git -c core.quotepath=false status --porcelain=v2 --untracked-files=all --ignore-submodules=none
+2026-10-07 17:11:35 [DEBUG   ] commitmaster.commit_engine — uncommitted_changes (v2) found 1 files in C:\Users\saumy\AppData\Local\Temp\cm_test_kou40pe8
+2026-10-07 17:11:35 [DEBUG   ] commitmaster.commit_engine — git -c core.quotepath=false status --porcelain=v2 --untracked-files=all --ignore-submodules=none
+2026-10-07 17:11:35 [DEBUG   ] commitmaster.commit_engine — uncommitted_changes (v2) found 1 files in C:\Users\saumy\AppData\Local\Temp\cm_test_kou40pe8
+2026-10-07 17:11:41 [DEBUG   ] commitmaster.commit_engine — git -c core.quotepath=false status --porcelain=v2 --untracked-files=all --ignore-submodules=none
+2026-10-07 17:11:41 [DEBUG   ] commitmaster.commit_engine — uncommitted_changes (v2) found 12 files in C:\Data\Saumya\Projects\CommitMaster
+2026-10-07 17:11:42 [DEBUG   ] commitmaster.ai_messages — list_models failed: HTTPConnectionPool(host='localhost', port=1234): Max retries exceeded with url: /v1/models (Caused by ConnectTimeoutError(<HTTPConnection(host='localhost', port=1234) at 0x1c34022a900>, 'Connection to localhost timed out. (connect timeout=0.4)'))
+2026-10-07 17:11:42 [INFO    ] commitmaster.ai_messages — Local (Bionic / LM Studio) offline or not detected - using diff-based heuristic messages.
+2026-10-07 17:11:42 [DEBUG   ] commitmaster.commit_engine — git rev-parse --abbrev-ref HEAD
+2026-10-07 17:11:42 [DEBUG   ] commitmaster.commit_engine — git diff HEAD --unified=3 -- commitmaster/database.py
+2026-10-07 17:11:42 [DEBUG   ] commitmaster.commit_engine — git diff HEAD --unified=3 -- commitmaster/github_service.py
+2026-10-07 17:11:42 [DEBUG   ] commitmaster.commit_engine — git diff HEAD --unified=3 -- README.md
+2026-10-07 17:12:10 [DEBUG   ] commitmaster.reminder_service — ReminderService config loaded: interval=True (2h 30m), app_monitor=True, only_dirty=True
+2026-10-07 17:12:10 [INFO    ] commitmaster.reminder_service — Reminder snoozed for 15 minutes.
+2026-10-07 17:12:10 [INFO    ] commitmaster.reminder_service — ReminderService preferences updated dynamically.
+2026-10-07 17:13:11 [DEBUG   ] commitmaster.windows_integration — Registered Windows AppUserModelID: CommitMaster.Desktop.3.0
+2026-10-07 17:13:11 [DEBUG   ] commitmaster.commit_engine — git rev-parse --abbrev-ref HEAD
+2026-10-07 17:13:11 [DEBUG   ] commitmaster.commit_engine — git -c core.quotepath=false status --porcelain=v2 --untracked-files=all --ignore-submodules=none
+2026-10-07 17:13:11 [DEBUG   ] commitmaster.commit_engine — uncommitted_changes (v2) found 13 files in C:\Data\Saumya\Projects\CommitMaster
+2026-10-07 17:13:12 [DEBUG   ] commitmaster.commit_engine — git rev-parse --abbrev-ref HEAD
+2026-10-07 17:13:12 [DEBUG   ] commitmaster.ai_messages — list_models failed: HTTPConnectionPool(host='localhost', port=1234): Max retries exceeded with url: /v1/models (Caused by ConnectTimeoutError(<HTTPConnection(host='localhost', port=1234) at 0x28d429d6120>, 'Connection to localhost timed out. (connect timeout=0.4)'))
+2026-10-07 18:10:03 [DEBUG   ] commitmaster.windows_integration — Registered Windows AppUserModelID: CommitMaster.Desktop.3.0
+2026-10-07 18:10:03 [DEBUG   ] commitmaster.reminder_service — ReminderService config loaded: interval=True (1h 0m), app_monitor=True, only_dirty=True
+2026-10-07 18:10:03 [INFO    ] commitmaster.reminder_service — ReminderService background thread started for user 3.
+2026-10-07 18:10:06 [INFO    ] commitmaster.reminder_service — ReminderService background thread stopped.
+2026-10-07 18:10:11 [DEBUG   ] commitmaster.windows_integration — Registered Windows AppUserModelID: CommitMaster.Desktop.3.0
+2026-10-07 18:10:12 [DEBUG   ] commitmaster.commit_engine — git rev-parse --abbrev-ref HEAD
+2026-10-07 18:10:12 [DEBUG   ] commitmaster.commit_engine — git -c core.quotepath=false status --porcelain=v2 --untracked-files=all --ignore-submodules=none
+2026-10-07 18:10:12 [DEBUG   ] commitmaster.commit_engine — uncommitted_changes (v2) found 13 files in C:\Data\Saumya\Projects\CommitMaster
+2026-10-07 18:10:12 [DEBUG   ] commitmaster.commit_engine — git rev-parse --abbrev-ref HEAD
+2026-10-07 18:10:12 [DEBUG   ] commitmaster.ai_messages — list_models failed: HTTPConnectionPool(host='localhost', port=1234): Max retries exceeded with url: /v1/models (Caused by ConnectTimeoutError(<HTTPConnection(host='localhost', port=1234) at 0x21e67e8a270>, 'Connection to localhost timed out. (connect timeout=0.4)'))
+2026-10-07 18:28:38 [DEBUG   ] commitmaster.reminder_service — ReminderService config reloaded: interval=True (2h 30m), app_monitor=True, only_dirty=True, watched=13 apps
+2026-10-07 18:28:38 [INFO    ] commitmaster.reminder_service — Reminder snoozed for 15 minutes.
+2026-10-07 18:28:38 [INFO    ] commitmaster.reminder_service — ReminderService preferences updated dynamically.
+2026-10-07 18:32:42 [DEBUG   ] commitmaster.reminder_service — ReminderService config reloaded: interval=True (2h 30m), app_monitor=True, only_dirty=True, watched=13 apps
+2026-10-07 18:32:42 [INFO    ] commitmaster.reminder_service — Reminder snoozed for 15 minutes.
+2026-10-07 18:32:42 [INFO    ] commitmaster.reminder_service — ReminderService preferences updated dynamically.
+2026-10-07 18:33:27 [DEBUG   ] commitmaster.reminder_service — ReminderService config reloaded: interval=True (2h 30m), app_monitor=True, only_dirty=True, watched=13 apps
+2026-10-07 18:33:27 [INFO    ] commitmaster.reminder_service — Reminder snoozed for 15 minutes.
+2026-10-07 18:33:27 [INFO    ] commitmaster.reminder_service — ReminderService preferences updated dynamically.
+2026-10-07 18:33:33 [DEBUG   ] commitmaster.commit_engine — Cannot scan C:\Users\saumy\AppData\Local\Temp\cm_test_ejy4mg98: [WinError 5] Access is denied: 'C:\\Users\\saumy\\AppData\\Local\\Temp\\cm_test_ejy4mg98'
+2026-10-07 18:33:33 [DEBUG   ] commitmaster.commit_engine — Cannot scan C:\Users\saumy\AppData\Local\Temp\cm_test_f9i7txz4: [WinError 5] Access is denied: 'C:\\Users\\saumy\\AppData\\Local\\Temp\\cm_test_f9i7txz4'
+2026-10-07 18:33:33 [DEBUG   ] commitmaster.commit_engine — Cannot scan C:\Users\saumy\AppData\Local\Temp\cm_test_h_ntpwkt: [WinError 5] Access is denied: 'C:\\Users\\saumy\\AppData\\Local\\Temp\\cm_test_h_ntpwkt'
+2026-10-07 18:33:33 [DEBUG   ] commitmaster.commit_engine — Cannot scan C:\Users\saumy\AppData\Local\Temp\WinSAT: [WinError 5] Access is denied: 'C:\\Users\\saumy\\AppData\\Local\\Temp\\WinSAT'
+2026-10-07 18:33:33 [DEBUG   ] commitmaster.commit_engine — list_repos found 120 repos under ['C:\\Users\\saumy\\AppData\\Local\\Temp']
+2026-10-07 18:33:33 [DEBUG   ] commitmaster.commit_engine — git -c core.quotepath=false status --porcelain=v2 --untracked-files=all --ignore-submodules=none
+2026-10-07 18:33:33 [DEBUG   ] commitmaster.commit_engine — uncommitted_changes (v2) found 5 files in C:\Users\saumy\AppData\Local\Temp\commitmaster_test_repo
+2026-10-07 18:33:33 [DEBUG   ] commitmaster.commit_engine — git reset
+2026-10-07 18:33:33 [DEBUG   ] commitmaster.commit_engine — git add -A -- src/app.py
+2026-10-07 18:33:33 [DEBUG   ] commitmaster.commit_engine — git commit -m refactor: update app output
+2026-10-07 18:33:33 [DEBUG   ] commitmaster.commit_engine — git log -1 --oneline
+2026-10-07 18:33:33 [INFO    ] commitmaster.commit_engine — Committed in commitmaster_test_repo: 926889a refactor: update app output
+2026-10-07 18:33:33 [DEBUG   ] commitmaster.commit_engine — git log --oneline
+2026-10-07 18:33:33 [DEBUG   ] commitmaster.commit_engine — git -c core.quotepath=false status --porcelain=v2 --untracked-files=all --ignore-submodules=none
+2026-10-07 18:33:33 [DEBUG   ] commitmaster.commit_engine — uncommitted_changes (v2) found 4 files in C:\Users\saumy\AppData\Local\Temp\commitmaster_test_repo
+2026-10-07 18:33:33 [DEBUG   ] commitmaster.commit_engine — git diff --cached --unified=2
+2026-10-07 18:33:33 [DEBUG   ] commitmaster.commit_engine — git diff --unified=2
+2026-10-07 18:33:33 [DEBUG   ] commitmaster.commit_engine — git diff HEAD --stat
+2026-10-07 18:33:33 [DEBUG   ] commitmaster.commit_engine — Found GitHub Desktop at: C:\Users\saumy\AppData\Local\GitHubDesktop\GitHubDesktop.exe
+2026-10-07 18:33:51 [DEBUG   ] commitmaster.commit_engine — git init
+2026-10-07 18:33:51 [DEBUG   ] commitmaster.commit_engine — git config user.name Test User
+2026-10-07 18:33:51 [DEBUG   ] commitmaster.commit_engine — git config user.email test@commitmaster.local
+2026-10-07 18:33:51 [DEBUG   ] commitmaster.commit_engine — git reset
+2026-10-07 18:33:51 [DEBUG   ] commitmaster.commit_engine — git add -A -- file1.txt file2.txt
+2026-10-07 18:33:52 [DEBUG   ] commitmaster.commit_engine — git commit -m feat: add both files
+2026-10-07 18:33:52 [DEBUG   ] commitmaster.commit_engine — git log -1 --oneline
+2026-10-07 18:33:52 [INFO    ] commitmaster.commit_engine — Committed in cm_test_l602jziz: 65401c8 feat: add both files
+2026-10-07 18:33:52 [DEBUG   ] commitmaster.commit_engine — git log --oneline
+2026-10-07 18:33:52 [DEBUG   ] commitmaster.commit_engine — git init
+2026-10-07 18:33:52 [DEBUG   ] commitmaster.commit_engine — git config user.name Test User
+2026-10-07 18:33:52 [DEBUG   ] commitmaster.commit_engine — git config user.email test@commitmaster.local
+2026-10-07 18:33:52 [DEBUG   ] commitmaster.commit_engine — git init
+2026-10-07 18:33:52 [DEBUG   ] commitmaster.commit_engine — git config user.name Test User
+2026-10-07 18:33:52 [DEBUG   ] commitmaster.commit_engine — git config user.email test@commitmaster.local
+2026-10-07 18:33:52 [DEBUG   ] commitmaster.commit_engine — git init
+2026-10-07 18:33:52 [DEBUG   ] commitmaster.commit_engine — git config user.name Test User
+2026-10-07 18:33:52 [DEBUG   ] commitmaster.commit_engine — git config user.email test@commitmaster.local
+2026-10-07 18:33:52 [DEBUG   ] commitmaster.commit_engine — git init
+2026-10-07 18:33:52 [DEBUG   ] commitmaster.commit_engine — git config user.name Test User
+2026-10-07 18:33:52 [DEBUG   ] commitmaster.commit_engine — git config user.email test@commitmaster.local
+2026-10-07 18:33:52 [DEBUG   ] commitmaster.commit_engine — git init
+2026-10-07 18:33:52 [DEBUG   ] commitmaster.commit_engine — git config user.name Test User
+2026-10-07 18:33:52 [DEBUG   ] commitmaster.commit_engine — git config user.email test@commitmaster.local
+2026-10-07 18:33:52 [DEBUG   ] commitmaster.commit_engine — git init
+2026-10-07 18:33:52 [DEBUG   ] commitmaster.commit_engine — git config user.name Test User
+2026-10-07 18:33:52 [DEBUG   ] commitmaster.commit_engine — git config user.email test@commitmaster.local
+2026-10-07 18:33:52 [DEBUG   ] commitmaster.commit_engine — git init
+2026-10-07 18:33:52 [DEBUG   ] commitmaster.commit_engine — git config user.name Test User
+2026-10-07 18:33:52 [DEBUG   ] commitmaster.commit_engine — git config user.email test@commitmaster.local
+2026-10-07 18:33:52 [DEBUG   ] commitmaster.commit_engine — git init
+2026-10-07 18:33:52 [DEBUG   ] commitmaster.commit_engine — git config user.name Test User
+2026-10-07 18:33:52 [DEBUG   ] commitmaster.commit_engine — git config user.email test@commitmaster.local
+2026-10-07 18:33:52 [DEBUG   ] commitmaster.commit_engine — git reset
+2026-10-07 18:33:53 [DEBUG   ] commitmaster.commit_engine — git add -A -- alpha.py
+2026-10-07 18:33:53 [DEBUG   ] commitmaster.commit_engine — git commit -m feat(core): add alpha logic
+2026-10-07 18:33:53 [DEBUG   ] commitmaster.commit_engine — git log -1 --oneline
+2026-10-07 18:33:53 [INFO    ] commitmaster.commit_engine — Committed individually in cm_test_8e44po1u [alpha.py]: 892b212 feat(core): add alpha logic
+2026-10-07 18:33:53 [DEBUG   ] commitmaster.commit_engine — git add -A -- beta.md
+2026-10-07 18:33:53 [DEBUG   ] commitmaster.commit_engine — git commit -m docs: update beta documentation
+2026-10-07 18:33:53 [DEBUG   ] commitmaster.commit_engine — git log -1 --oneline
+2026-10-07 18:33:53 [INFO    ] commitmaster.commit_engine — Committed individually in cm_test_8e44po1u [beta.md]: df243c3 docs: update beta documentation
+2026-10-07 18:33:53 [DEBUG   ] commitmaster.commit_engine — git add -A -- gamma.json
+2026-10-07 18:33:53 [DEBUG   ] commitmaster.commit_engine — git commit -m chore(config): initialize gamma schema
+2026-10-07 18:33:53 [DEBUG   ] commitmaster.commit_engine — git log -1 --oneline
+2026-10-07 18:33:53 [INFO    ] commitmaster.commit_engine — Committed individually in cm_test_8e44po1u [gamma.json]: b015741 chore(config): initialize gamma schema
+2026-10-07 18:33:53 [DEBUG   ] commitmaster.commit_engine — git log --oneline
+2026-10-07 18:33:53 [DEBUG   ] commitmaster.commit_engine — git init
+2026-10-07 18:33:53 [DEBUG   ] commitmaster.commit_engine — git config user.name Test User
+2026-10-07 18:33:53 [DEBUG   ] commitmaster.commit_engine — git config user.email test@commitmaster.local
+2026-10-07 18:33:53 [DEBUG   ] commitmaster.commit_engine — git reset
+2026-10-07 18:33:53 [DEBUG   ] commitmaster.commit_engine — git add -A -- cached.txt
+2026-10-07 18:33:53 [DEBUG   ] commitmaster.commit_engine — git commit -m init cached
+2026-10-07 18:33:53 [DEBUG   ] commitmaster.commit_engine — git log -1 --oneline
+2026-10-07 18:33:53 [INFO    ] commitmaster.commit_engine — Committed in cm_test_wj494a6q: 06b8cc4 init cached
+2026-10-07 18:33:53 [DEBUG   ] commitmaster.commit_engine — git -c core.quotepath=false status --porcelain=v2 --untracked-files=all --ignore-submodules=none
+2026-10-07 18:33:53 [DEBUG   ] commitmaster.commit_engine — uncommitted_changes (v2) found 1 files in C:\Users\saumy\AppData\Local\Temp\cm_test_wj494a6q
+2026-10-07 18:33:53 [DEBUG   ] commitmaster.commit_engine — git -c core.quotepath=false status --porcelain=v2 --untracked-files=all --ignore-submodules=none
+2026-10-07 18:33:53 [DEBUG   ] commitmaster.commit_engine — uncommitted_changes (v2) found 1 files in C:\Users\saumy\AppData\Local\Temp\cm_test_wj494a6q
+2026-10-07 18:39:03 [DEBUG   ] commitmaster.windows_integration — Registered Windows AppUserModelID: CommitMaster.Desktop.3.0
+2026-10-07 18:39:03 [DEBUG   ] commitmaster.commit_engine — git rev-parse --abbrev-ref HEAD
+2026-10-07 18:39:03 [DEBUG   ] commitmaster.commit_engine — git -c core.quotepath=false status --porcelain=v2 --untracked-files=all --ignore-submodules=none
+2026-10-07 18:39:03 [DEBUG   ] commitmaster.commit_engine — uncommitted_changes (v2) found 14 files in C:\Data\Saumya\Projects\CommitMaster
+2026-10-07 18:39:04 [DEBUG   ] commitmaster.commit_engine — git rev-parse --abbrev-ref HEAD
+2026-10-07 18:39:04 [DEBUG   ] commitmaster.ai_messages — list_models failed: HTTPConnectionPool(host='localhost', port=1234): Max retries exceeded with url: /v1/models (Caused by ConnectTimeoutError(<HTTPConnection(host='localhost', port=1234) at 0x1a1741163c0>, 'Connection to localhost timed out. (connect timeout=0.4)'))
+2026-10-07 18:40:01 [DEBUG   ] commitmaster.config — Config saved to C:\Data\Saumya\Projects\CommitMaster\config.json
+2026-10-07 18:40:58 [DEBUG   ] commitmaster.config — Config saved to C:\Data\Saumya\Projects\CommitMaster\config.json
+2026-10-07 18:41:05 [DEBUG   ] commitmaster.commit_engine — git rev-parse --abbrev-ref HEAD
+2026-10-07 18:41:05 [DEBUG   ] commitmaster.commit_engine — git -c core.quotepath=false status --porcelain=v2 --untracked-files=all --ignore-submodules=none
+2026-10-07 18:41:05 [DEBUG   ] commitmaster.commit_engine — uncommitted_changes (v2) found 14 files in C:\Data\Saumya\Projects\CommitMaster
+2026-10-07 18:41:05 [DEBUG   ] commitmaster.commit_engine — git rev-parse --abbrev-ref HEAD
+2026-10-07 18:41:06 [DEBUG   ] commitmaster.ai_messages — list_models failed: HTTPConnectionPool(host='localhost', port=1234): Max retries exceeded with url: /v1/models (Caused by ConnectTimeoutError(<HTTPConnection(host='localhost', port=1234) at 0x1a17404b890>, 'Connection to localhost timed out. (connect timeout=0.4)'))
+2026-10-07 23:11:42 [DEBUG   ] commitmaster.windows_integration — Registered Windows AppUserModelID: CommitMaster.Desktop.3.0
+2026-10-07 23:11:42 [DEBUG   ] commitmaster.commit_engine — git rev-parse --abbrev-ref HEAD
+2026-10-07 23:11:42 [DEBUG   ] commitmaster.commit_engine — git -c core.quotepath=false status --porcelain=v2 --untracked-files=all --ignore-submodules=none
+2026-10-07 23:11:42 [DEBUG   ] commitmaster.commit_engine — uncommitted_changes (v2) found 14 files in C:\Data\Saumya\Projects\CommitMaster
+2026-10-07 23:11:43 [DEBUG   ] commitmaster.commit_engine — git rev-parse --abbrev-ref HEAD
+2026-10-07 23:11:43 [DEBUG   ] commitmaster.ai_messages — list_models failed: HTTPConnectionPool(host='localhost', port=1234): Max retries exceeded with url: /v1/models (Caused by ConnectTimeoutError(<HTTPConnection(host='localhost', port=1234) at 0x1e9ef4d6270>, 'Connection to localhost timed out. (connect timeout=0.4)'))
+2026-10-07 23:38:23 [DEBUG   ] commitmaster.commit_engine — Cannot scan C:\Users\saumy\AppData\Local\Temp\cm_test_ejy4mg98: [WinError 5] Access is denied: 'C:\\Users\\saumy\\AppData\\Local\\Temp\\cm_test_ejy4mg98'
+2026-10-07 23:38:23 [DEBUG   ] commitmaster.commit_engine — Cannot scan C:\Users\saumy\AppData\Local\Temp\cm_test_f9i7txz4: [WinError 5] Access is denied: 'C:\\Users\\saumy\\AppData\\Local\\Temp\\cm_test_f9i7txz4'
+2026-10-07 23:38:23 [DEBUG   ] commitmaster.commit_engine — Cannot scan C:\Users\saumy\AppData\Local\Temp\cm_test_h_ntpwkt: [WinError 5] Access is denied: 'C:\\Users\\saumy\\AppData\\Local\\Temp\\cm_test_h_ntpwkt'
+2026-10-07 23:38:23 [DEBUG   ] commitmaster.commit_engine — Cannot scan C:\Users\saumy\AppData\Local\Temp\WinSAT: [WinError 5] Access is denied: 'C:\\Users\\saumy\\AppData\\Local\\Temp\\WinSAT'
+2026-10-07 23:38:23 [DEBUG   ] commitmaster.commit_engine — list_repos found 123 repos under ['C:\\Users\\saumy\\AppData\\Local\\Temp']
+2026-10-07 23:38:23 [DEBUG   ] commitmaster.commit_engine — git -c core.quotepath=false status --porcelain=v2 --untracked-files=all --ignore-submodules=none
+2026-10-07 23:38:23 [DEBUG   ] commitmaster.commit_engine — uncommitted_changes (v2) found 5 files in C:\Users\saumy\AppData\Local\Temp\commitmaster_test_repo
+2026-10-07 23:38:23 [DEBUG   ] commitmaster.commit_engine — git reset
+2026-10-07 23:38:23 [DEBUG   ] commitmaster.commit_engine — git add -A -- src/app.py
+2026-10-07 23:38:23 [DEBUG   ] commitmaster.commit_engine — git commit -m refactor: update app output
+2026-10-07 23:38:23 [DEBUG   ] commitmaster.commit_engine — git log -1 --oneline
+2026-10-07 23:38:23 [INFO    ] commitmaster.commit_engine — Committed in commitmaster_test_repo: a9d3ed0 refactor: update app output
+2026-10-07 23:38:23 [DEBUG   ] commitmaster.commit_engine — git log --oneline
+2026-10-07 23:38:23 [DEBUG   ] commitmaster.commit_engine — git -c core.quotepath=false status --porcelain=v2 --untracked-files=all --ignore-submodules=none
+2026-10-07 23:38:23 [DEBUG   ] commitmaster.commit_engine — uncommitted_changes (v2) found 4 files in C:\Users\saumy\AppData\Local\Temp\commitmaster_test_repo
+2026-10-07 23:38:23 [DEBUG   ] commitmaster.commit_engine — git diff --cached --unified=2
+2026-10-07 23:38:23 [DEBUG   ] commitmaster.commit_engine — git diff --unified=2
+2026-10-07 23:38:23 [DEBUG   ] commitmaster.commit_engine — git diff HEAD --stat
+2026-10-07 23:38:23 [DEBUG   ] commitmaster.commit_engine — Found GitHub Desktop at: C:\Users\saumy\AppData\Local\GitHubDesktop\GitHubDesktop.exe
+2026-10-07 23:39:25 [DEBUG   ] commitmaster.commit_engine — git init
+2026-10-07 23:39:25 [DEBUG   ] commitmaster.commit_engine — git config user.name Test User
+2026-10-07 23:39:25 [DEBUG   ] commitmaster.commit_engine — git config user.email test@commitmaster.local
+2026-10-07 23:39:25 [DEBUG   ] commitmaster.commit_engine — git reset
+2026-10-07 23:39:25 [DEBUG   ] commitmaster.commit_engine — git add -A -- file1.txt file2.txt
+2026-10-07 23:39:25 [DEBUG   ] commitmaster.commit_engine — git commit -m feat: add both files
+2026-10-07 23:39:26 [DEBUG   ] commitmaster.commit_engine — git log -1 --oneline
+2026-10-07 23:39:26 [INFO    ] commitmaster.commit_engine — Committed in cm_test_ceqywxmn: da434a4 feat: add both files
+2026-10-07 23:39:26 [DEBUG   ] commitmaster.commit_engine — git log --oneline
+2026-10-07 23:39:26 [DEBUG   ] commitmaster.commit_engine — git init
+2026-10-07 23:39:26 [DEBUG   ] commitmaster.commit_engine — git config user.name Test User
+2026-10-07 23:39:26 [DEBUG   ] commitmaster.commit_engine — git config user.email test@commitmaster.local
+2026-10-07 23:39:26 [DEBUG   ] commitmaster.commit_engine — git init
+2026-10-07 23:39:26 [DEBUG   ] commitmaster.commit_engine — git config user.name Test User
+2026-10-07 23:39:26 [DEBUG   ] commitmaster.commit_engine — git config user.email test@commitmaster.local
+2026-10-07 23:39:26 [DEBUG   ] commitmaster.commit_engine — git init
+2026-10-07 23:39:26 [DEBUG   ] commitmaster.commit_engine — git config user.name Test User
+2026-10-07 23:39:26 [DEBUG   ] commitmaster.commit_engine — git config user.email test@commitmaster.local
+2026-10-07 23:39:26 [DEBUG   ] commitmaster.commit_engine — git init
+2026-10-07 23:39:26 [DEBUG   ] commitmaster.commit_engine — git config user.name Test User
+2026-10-07 23:39:26 [DEBUG   ] commitmaster.commit_engine — git config user.email test@commitmaster.local
+2026-10-07 23:39:26 [DEBUG   ] commitmaster.commit_engine — git init
+2026-10-07 23:39:26 [DEBUG   ] commitmaster.commit_engine — git config user.name Test User
+2026-10-07 23:39:26 [DEBUG   ] commitmaster.commit_engine — git config user.email test@commitmaster.local
+2026-10-07 23:39:26 [DEBUG   ] commitmaster.commit_engine — git init
+2026-10-07 23:39:26 [DEBUG   ] commitmaster.commit_engine — git config user.name Test User
+2026-10-07 23:39:26 [DEBUG   ] commitmaster.commit_engine — git config user.email test@commitmaster.local
+2026-10-07 23:39:26 [DEBUG   ] commitmaster.commit_engine — git init
+2026-10-07 23:39:26 [DEBUG   ] commitmaster.commit_engine — git config user.name Test User
+2026-10-07 23:39:26 [DEBUG   ] commitmaster.commit_engine — git config user.email test@commitmaster.local
+2026-10-07 23:39:26 [DEBUG   ] commitmaster.commit_engine — git init
+2026-10-07 23:39:26 [DEBUG   ] commitmaster.commit_engine — git config user.name Test User
+2026-10-07 23:39:26 [DEBUG   ] commitmaster.commit_engine — git config user.email test@commitmaster.local
+2026-10-07 23:39:26 [DEBUG   ] commitmaster.commit_engine — git reset
+2026-10-07 23:39:26 [DEBUG   ] commitmaster.commit_engine — git add -A -- alpha.py
+2026-10-07 23:39:26 [DEBUG   ] commitmaster.commit_engine — git commit -m feat(core): add alpha logic
+2026-10-07 23:39:27 [DEBUG   ] commitmaster.commit_engine — git log -1 --oneline
+2026-10-07 23:39:27 [INFO    ] commitmaster.commit_engine — Committed individually in cm_test_du9ipupl [alpha.py]: 3693e6f feat(core): add alpha logic
+2026-10-07 23:39:27 [DEBUG   ] commitmaster.commit_engine — git add -A -- beta.md
+2026-10-07 23:39:27 [DEBUG   ] commitmaster.commit_engine — git commit -m docs: update beta documentation
+2026-10-07 23:39:27 [DEBUG   ] commitmaster.commit_engine — git log -1 --oneline
+2026-10-07 23:39:27 [INFO    ] commitmaster.commit_engine — Committed individually in cm_test_du9ipupl [beta.md]: 7260b9c docs: update beta documentation
+2026-10-07 23:39:27 [DEBUG   ] commitmaster.commit_engine — git add -A -- gamma.json
+2026-10-07 23:39:27 [DEBUG   ] commitmaster.commit_engine — git commit -m chore(config): initialize gamma schema
+2026-10-07 23:39:27 [DEBUG   ] commitmaster.commit_engine — git log -1 --oneline
+2026-10-07 23:39:27 [INFO    ] commitmaster.commit_engine — Committed individually in cm_test_du9ipupl [gamma.json]: 2973f7e chore(config): initialize gamma schema
+2026-10-07 23:39:27 [DEBUG   ] commitmaster.commit_engine — git log --oneline
+2026-10-07 23:39:27 [DEBUG   ] commitmaster.commit_engine — git init
+2026-10-07 23:39:27 [DEBUG   ] commitmaster.commit_engine — git config user.name Test User
+2026-10-07 23:39:27 [DEBUG   ] commitmaster.commit_engine — git config user.email test@commitmaster.local
+2026-10-07 23:39:27 [DEBUG   ] commitmaster.commit_engine — git reset
+2026-10-07 23:39:27 [DEBUG   ] commitmaster.commit_engine — git add -A -- cached.txt
+2026-10-07 23:39:27 [DEBUG   ] commitmaster.commit_engine — git commit -m init cached
+2026-10-07 23:39:27 [DEBUG   ] commitmaster.commit_engine — git log -1 --oneline
+2026-10-07 23:39:27 [INFO    ] commitmaster.commit_engine — Committed in cm_test_25ro7or0: ecc7fd3 init cached
+2026-10-07 23:39:27 [DEBUG   ] commitmaster.commit_engine — git -c core.quotepath=false status --porcelain=v2 --untracked-files=all --ignore-submodules=none
+2026-10-07 23:39:27 [DEBUG   ] commitmaster.commit_engine — uncommitted_changes (v2) found 1 files in C:\Users\saumy\AppData\Local\Temp\cm_test_25ro7or0
+2026-10-07 23:39:27 [DEBUG   ] commitmaster.commit_engine — git -c core.quotepath=false status --porcelain=v2 --untracked-files=all --ignore-submodules=none
+2026-10-07 23:39:27 [DEBUG   ] commitmaster.commit_engine — uncommitted_changes (v2) found 1 files in C:\Users\saumy\AppData\Local\Temp\cm_test_25ro7or0
+2026-10-07 23:40:18 [DEBUG   ] commitmaster.commit_engine — git -c core.quotepath=false status --porcelain=v2 --untracked-files=all --ignore-submodules=none
+2026-10-07 23:40:18 [DEBUG   ] commitmaster.commit_engine — uncommitted_changes (v2) found 26 files in C:\Data\Saumya\Projects\CommitMaster
+2026-10-07 23:40:19 [DEBUG   ] commitmaster.ai_messages — list_models failed: HTTPConnectionPool(host='localhost', port=1234): Max retries exceeded with url: /v1/models (Caused by ConnectTimeoutError(<HTTPConnection(host='localhost', port=1234) at 0x19e6479e510>, 'Connection to localhost timed out. (connect timeout=0.4)'))
+2026-10-07 23:40:19 [INFO    ] commitmaster.ai_messages — Local (Bionic / LM Studio) offline or not detected - using diff-based heuristic messages.
+2026-10-07 23:40:19 [DEBUG   ] commitmaster.commit_engine — git rev-parse --abbrev-ref HEAD
+2026-10-07 23:40:19 [DEBUG   ] commitmaster.commit_engine — git diff HEAD --unified=3 -- commitmaster/database.py
+2026-10-07 23:40:19 [DEBUG   ] commitmaster.commit_engine — git diff HEAD --unified=3 -- commitmaster/github_service.py
+2026-10-07 23:40:19 [DEBUG   ] commitmaster.commit_engine — git diff HEAD --unified=3 -- README.md
+2026-10-07 23:41:08 [DEBUG   ] commitmaster.reminder_service — ReminderService config reloaded: interval=True (2h 30m), app_monitor=True, only_dirty=True, watched=13 apps
+2026-10-07 23:41:08 [INFO    ] commitmaster.reminder_service — Reminder snoozed for 15 minutes.
+2026-10-07 23:41:08 [INFO    ] commitmaster.reminder_service — ReminderService preferences updated dynamically.
+2026-10-07 23:50:59 [DEBUG   ] commitmaster.windows_integration — Registered Windows AppUserModelID: CommitMaster.Desktop.3.0
+2026-10-07 23:50:59 [DEBUG   ] commitmaster.commit_engine — git rev-parse --abbrev-ref HEAD
+2026-10-07 23:50:59 [DEBUG   ] commitmaster.commit_engine — git -c core.quotepath=false status --porcelain=v2 --untracked-files=all --ignore-submodules=none
+2026-10-07 23:50:59 [DEBUG   ] commitmaster.commit_engine — uncommitted_changes (v2) found 27 files in C:\Data\Saumya\Projects\CommitMaster
+2026-10-07 23:51:00 [DEBUG   ] commitmaster.commit_engine — git rev-parse --abbrev-ref HEAD
+2026-10-07 23:51:00 [DEBUG   ] commitmaster.ai_messages — list_models failed: HTTPConnectionPool(host='localhost', port=1234): Max retries exceeded with url: /v1/models (Caused by ConnectTimeoutError(<HTTPConnection(host='localhost', port=1234) at 0x19932495d30>, 'Connection to localhost timed out. (connect timeout=0.4)'))
+2026-10-08 00:02:24 [DEBUG   ] commitmaster.windows_integration — Registered Windows AppUserModelID: CommitMaster.Desktop.3.0
+2026-10-08 00:02:54 [DEBUG   ] commitmaster.windows_integration — Registered Windows AppUserModelID: CommitMaster.Desktop.3.0
+2026-10-08 00:02:55 [DEBUG   ] commitmaster.commit_engine — git rev-parse --abbrev-ref HEAD
+2026-10-08 00:02:55 [DEBUG   ] commitmaster.commit_engine — git -c core.quotepath=false status --porcelain=v2 --untracked-files=all --ignore-submodules=none
+2026-10-08 00:02:55 [DEBUG   ] commitmaster.commit_engine — uncommitted_changes (v2) found 27 files in C:\Data\Saumya\Projects\CommitMaster
+2026-10-08 00:02:55 [DEBUG   ] commitmaster.commit_engine — git rev-parse --abbrev-ref HEAD
+2026-10-08 00:08:35 [DEBUG   ] commitmaster.windows_integration — Registered Windows AppUserModelID: CommitMaster.Desktop.3.0
+2026-10-08 00:08:42 [DEBUG   ] commitmaster.windows_integration — Registered Windows AppUserModelID: CommitMaster.Desktop.3.0
+2026-10-08 00:08:43 [DEBUG   ] commitmaster.commit_engine — git rev-parse --abbrev-ref HEAD
+2026-10-08 00:08:43 [DEBUG   ] commitmaster.commit_engine — git -c core.quotepath=false status --porcelain=v2 --untracked-files=all --ignore-submodules=none
+2026-10-08 00:08:43 [DEBUG   ] commitmaster.commit_engine — uncommitted_changes (v2) found 51 files in C:\Data\Saumya\Projects\CommitMaster
+2026-10-08 00:08:43 [DEBUG   ] commitmaster.commit_engine — git rev-parse --abbrev-ref HEAD
+2026-10-08 00:08:43 [DEBUG   ] commitmaster.ai_messages — list_models failed: HTTPConnectionPool(host='localhost', port=1234): Max retries exceeded with url: /v1/models (Caused by ConnectTimeoutError(<HTTPConnection(host='localhost', port=1234) at 0x19d9eae6120>, 'Connection to localhost timed out. (connect timeout=0.4)'))
+2026-10-08 00:18:08 [DEBUG   ] commitmaster.windows_integration — Registered Windows AppUserModelID: CommitMaster.App.Admin.3.0 (admin)
+2026-10-08 00:18:24 [DEBUG   ] commitmaster.windows_integration — Registered Windows AppUserModelID: CommitMaster.App.Admin.3.0 (admin)
+2026-10-08 00:18:24 [DEBUG   ] commitmaster.commit_engine — git rev-parse --abbrev-ref HEAD
+2026-10-08 00:18:25 [DEBUG   ] commitmaster.commit_engine — git -c core.quotepath=false status --porcelain=v2 --untracked-files=all --ignore-submodules=none
+2026-10-08 00:18:25 [DEBUG   ] commitmaster.commit_engine — uncommitted_changes (v2) found 57 files in C:\Data\Saumya\Projects\CommitMaster
+2026-10-08 00:18:25 [DEBUG   ] commitmaster.commit_engine — git rev-parse --abbrev-ref HEAD
+2026-10-08 00:18:25 [DEBUG   ] commitmaster.ai_messages — list_models failed: HTTPConnectionPool(host='localhost', port=1234): Max retries exceeded with url: /v1/models (Caused by ConnectTimeoutError(<HTTPConnection(host='localhost', port=1234) at 0x1f755540ad0>, 'Connection to localhost timed out. (connect timeout=0.4)'))
+2026-10-08 00:18:30 [DEBUG   ] commitmaster.windows_integration — Registered Windows AppUserModelID: CommitMaster.App.Admin.3.0 (admin)
+2026-10-08 00:18:31 [DEBUG   ] commitmaster.commit_engine — git rev-parse --abbrev-ref HEAD
+2026-10-08 00:18:31 [DEBUG   ] commitmaster.commit_engine — git -c core.quotepath=false status --porcelain=v2 --untracked-files=all --ignore-submodules=none
+2026-10-08 00:18:31 [DEBUG   ] commitmaster.commit_engine — uncommitted_changes (v2) found 57 files in C:\Data\Saumya\Projects\CommitMaster
+2026-10-08 00:18:31 [DEBUG   ] commitmaster.commit_engine — git rev-parse --abbrev-ref HEAD
+2026-10-08 00:18:32 [DEBUG   ] commitmaster.ai_messages — list_models failed: HTTPConnectionPool(host='localhost', port=1234): Max retries exceeded with url: /v1/models (Caused by ConnectTimeoutError(<HTTPConnection(host='localhost', port=1234) at 0x20a68956900>, 'Connection to localhost timed out. (connect timeout=0.4)'))
+2026-10-08 00:18:35 [DEBUG   ] commitmaster.commit_engine — git -c core.quotepath=false status --porcelain=v2 --untracked-files=all --ignore-submodules=none
+2026-10-08 00:18:35 [DEBUG   ] commitmaster.commit_engine — uncommitted_changes (v2) found 57 files in C:\Data\Saumya\Projects\CommitMaster
+2026-10-08 00:18:35 [INFO    ] commitmaster.ai_messages — Local (Bionic / LM Studio) offline or not detected - using diff-based heuristic messages.
+2026-10-08 00:18:35 [DEBUG   ] commitmaster.commit_engine — git rev-parse --abbrev-ref HEAD
+2026-10-08 00:18:35 [DEBUG   ] commitmaster.commit_engine — git diff HEAD --unified=3 -- commitmaster/database.py
+2026-10-08 00:18:35 [DEBUG   ] commitmaster.commit_engine — git diff HEAD --unified=3 -- commitmaster/github_service.py
+2026-10-08 00:18:35 [DEBUG   ] commitmaster.commit_engine — git diff HEAD --unified=3 -- README.md
+2026-10-08 00:18:35 [DEBUG   ] commitmaster.commit_engine — git init
+2026-10-08 00:18:35 [DEBUG   ] commitmaster.commit_engine — git config user.name Test User
+2026-10-08 00:18:35 [DEBUG   ] commitmaster.commit_engine — git config user.email test@commitmaster.local
+2026-10-08 00:18:35 [DEBUG   ] commitmaster.commit_engine — git reset
+2026-10-08 00:18:35 [DEBUG   ] commitmaster.commit_engine — git add -A -- file1.txt file2.txt
+2026-10-08 00:18:35 [DEBUG   ] commitmaster.commit_engine — git commit -m feat: add both files
+2026-10-08 00:18:35 [DEBUG   ] commitmaster.commit_engine — git log -1 --oneline
+2026-10-08 00:18:35 [INFO    ] commitmaster.commit_engine — Committed in cm_test_u1e5z1ee: e04d1b1 feat: add both files
+2026-10-08 00:18:35 [DEBUG   ] commitmaster.commit_engine — git log --oneline
+2026-10-08 00:18:35 [DEBUG   ] commitmaster.commit_engine — git init
+2026-10-08 00:18:36 [DEBUG   ] commitmaster.commit_engine — git config user.name Test User
+2026-10-08 00:18:36 [DEBUG   ] commitmaster.commit_engine — git config user.email test@commitmaster.local
+2026-10-08 00:18:36 [DEBUG   ] commitmaster.commit_engine — git init
+2026-10-08 00:18:36 [DEBUG   ] commitmaster.commit_engine — git config user.name Test User
+2026-10-08 00:18:36 [DEBUG   ] commitmaster.commit_engine — git config user.email test@commitmaster.local
+2026-10-08 00:18:36 [DEBUG   ] commitmaster.commit_engine — git init
+2026-10-08 00:18:36 [DEBUG   ] commitmaster.commit_engine — git config user.name Test User
+2026-10-08 00:18:36 [DEBUG   ] commitmaster.commit_engine — git config user.email test@commitmaster.local
+2026-10-08 00:18:36 [DEBUG   ] commitmaster.commit_engine — git init
+2026-10-08 00:18:36 [DEBUG   ] commitmaster.commit_engine — git config user.name Test User
+2026-10-08 00:18:36 [DEBUG   ] commitmaster.commit_engine — git config user.email test@commitmaster.local
+2026-10-08 00:18:36 [DEBUG   ] commitmaster.commit_engine — git init
+2026-10-08 00:18:36 [DEBUG   ] commitmaster.commit_engine — git config user.name Test User
+2026-10-08 00:18:36 [DEBUG   ] commitmaster.commit_engine — git config user.email test@commitmaster.local
+2026-10-08 00:18:36 [DEBUG   ] commitmaster.commit_engine — git init
+2026-10-08 00:18:36 [DEBUG   ] commitmaster.commit_engine — git config user.name Test User
+2026-10-08 00:18:36 [DEBUG   ] commitmaster.commit_engine — git config user.email test@commitmaster.local
+2026-10-08 00:18:36 [DEBUG   ] commitmaster.commit_engine — git init
+2026-10-08 00:18:36 [DEBUG   ] commitmaster.commit_engine — git config user.name Test User
+2026-10-08 00:18:36 [DEBUG   ] commitmaster.commit_engine — git config user.email test@commitmaster.local
+2026-10-08 00:18:36 [DEBUG   ] commitmaster.commit_engine — git init
+2026-10-08 00:18:36 [DEBUG   ] commitmaster.commit_engine — git config user.name Test User
+2026-10-08 00:18:36 [DEBUG   ] commitmaster.commit_engine — git config user.email test@commitmaster.local
+2026-10-08 00:18:36 [DEBUG   ] commitmaster.commit_engine — git reset
+2026-10-08 00:18:36 [DEBUG   ] commitmaster.commit_engine — git add -A -- alpha.py
+2026-10-08 00:18:36 [DEBUG   ] commitmaster.commit_engine — git commit -m feat(core): add alpha logic
+2026-10-08 00:18:36 [DEBUG   ] commitmaster.commit_engine — git log -1 --oneline
+2026-10-08 00:18:36 [INFO    ] commitmaster.commit_engine — Committed individually in cm_test_baroie0k [alpha.py]: 2c57d07 feat(core): add alpha logic
+2026-10-08 00:18:36 [DEBUG   ] commitmaster.commit_engine — git add -A -- beta.md
+2026-10-08 00:18:36 [DEBUG   ] commitmaster.commit_engine — git commit -m docs: update beta documentation
+2026-10-08 00:18:37 [DEBUG   ] commitmaster.commit_engine — git log -1 --oneline
+2026-10-08 00:18:37 [INFO    ] commitmaster.commit_engine — Committed individually in cm_test_baroie0k [beta.md]: 781f0a0 docs: update beta documentation
+2026-10-08 00:18:37 [DEBUG   ] commitmaster.commit_engine — git add -A -- gamma.json
+2026-10-08 00:18:37 [DEBUG   ] commitmaster.commit_engine — git commit -m chore(config): initialize gamma schema
+2026-10-08 00:18:37 [DEBUG   ] commitmaster.commit_engine — git log -1 --oneline
+2026-10-08 00:18:37 [INFO    ] commitmaster.commit_engine — Committed individually in cm_test_baroie0k [gamma.json]: 6a69f3e chore(config): initialize gamma schema
+2026-10-08 00:18:37 [DEBUG   ] commitmaster.commit_engine — git log --oneline
+2026-10-08 00:18:37 [DEBUG   ] commitmaster.commit_engine — git init
+2026-10-08 00:18:37 [DEBUG   ] commitmaster.commit_engine — git config user.name Test User
+2026-10-08 00:18:37 [DEBUG   ] commitmaster.commit_engine — git config user.email test@commitmaster.local
+2026-10-08 00:18:37 [DEBUG   ] commitmaster.commit_engine — git reset
+2026-10-08 00:18:37 [DEBUG   ] commitmaster.commit_engine — git add -A -- cached.txt
+2026-10-08 00:18:37 [DEBUG   ] commitmaster.commit_engine — git commit -m init cached
+2026-10-08 00:18:37 [DEBUG   ] commitmaster.commit_engine — git log -1 --oneline
+2026-10-08 00:18:37 [INFO    ] commitmaster.commit_engine — Committed in cm_test_0fsgo9c_: 00101d1 init cached
+2026-10-08 00:18:37 [DEBUG   ] commitmaster.commit_engine — git -c core.quotepath=false status --porcelain=v2 --untracked-files=all --ignore-submodules=none
+2026-10-08 00:18:37 [DEBUG   ] commitmaster.commit_engine — uncommitted_changes (v2) found 1 files in C:\Users\saumy\AppData\Local\Temp\cm_test_0fsgo9c_
+2026-10-08 00:18:37 [DEBUG   ] commitmaster.commit_engine — git -c core.quotepath=false status --porcelain=v2 --untracked-files=all --ignore-submodules=none
+2026-10-08 00:18:37 [DEBUG   ] commitmaster.commit_engine — uncommitted_changes (v2) found 1 files in C:\Users\saumy\AppData\Local\Temp\cm_test_0fsgo9c_
+2026-10-08 00:18:37 [DEBUG   ] commitmaster.reminder_service — ReminderService config reloaded: interval=True (2h 30m), app_monitor=True, only_dirty=True, watched=13 apps
+2026-10-08 00:18:37 [INFO    ] commitmaster.reminder_service — Reminder snoozed for 15 minutes.
+2026-10-08 00:18:37 [INFO    ] commitmaster.reminder_service — ReminderService preferences updated dynamically.
+2026-10-08 00:19:47 [DEBUG   ] commitmaster.windows_integration — Registered Windows AppUserModelID: CommitMaster.App.Admin.3.0 (admin)
+2026-10-08 00:19:48 [DEBUG   ] commitmaster.commit_engine — git rev-parse --abbrev-ref HEAD
+2026-10-08 00:19:48 [DEBUG   ] commitmaster.commit_engine — git -c core.quotepath=false status --porcelain=v2 --untracked-files=all --ignore-submodules=none
+2026-10-08 00:19:48 [DEBUG   ] commitmaster.commit_engine — uncommitted_changes (v2) found 57 files in C:\Data\Saumya\Projects\CommitMaster
+2026-10-08 00:19:49 [DEBUG   ] commitmaster.commit_engine — git rev-parse --abbrev-ref HEAD
+2026-10-08 00:19:49 [DEBUG   ] commitmaster.ai_messages — list_models failed: HTTPConnectionPool(host='localhost', port=1234): Max retries exceeded with url: /v1/models (Caused by ConnectTimeoutError(<HTTPConnection(host='localhost', port=1234) at 0x27d05a35e80>, 'Connection to localhost timed out. (connect timeout=0.4)'))
+2026-10-08 00:19:53 [DEBUG   ] commitmaster.commit_engine — git rev-parse --abbrev-ref HEAD
+2026-10-08 00:19:53 [DEBUG   ] commitmaster.commit_engine — git -c core.quotepath=false status --porcelain=v2 --untracked-files=all --ignore-submodules=none
+2026-10-08 00:19:53 [DEBUG   ] commitmaster.commit_engine — uncommitted_changes (v2) found 57 files in C:\Data\Saumya\Projects\CommitMaster
+2026-10-08 00:19:53 [DEBUG   ] commitmaster.commit_engine — git diff HEAD --unified=3 -- Create_Desktop_Shortcuts.vbs
+2026-10-08 00:19:54 [DEBUG   ] commitmaster.commit_engine — git rev-parse --abbrev-ref HEAD
+2026-10-08 00:41:12 [DEBUG   ] commitmaster.windows_integration — Registered Windows AppUserModelID: CommitMaster.App.Client.3.0 (user)
+2026-10-08 00:41:12 [DEBUG   ] commitmaster.reminder_service — ReminderService config reloaded: interval=True (1h 0m), app_monitor=True, only_dirty=True, watched=13 apps
+2026-10-08 00:41:12 [INFO    ] commitmaster.reminder_service — ReminderService background thread started for user 3.
+2026-10-08 00:41:18 [INFO    ] commitmaster.reminder_service — ReminderService background thread stopped.
+2026-10-08 00:44:08 [DEBUG   ] commitmaster.windows_integration — Registered Windows AppUserModelID: CommitMaster.App.Admin.3.0 (admin)
+2026-10-08 00:44:09 [DEBUG   ] commitmaster.commit_engine — git rev-parse --abbrev-ref HEAD
+2026-10-08 00:44:09 [DEBUG   ] commitmaster.commit_engine — git -c core.quotepath=false status --porcelain=v2 --untracked-files=all --ignore-submodules=none
+2026-10-08 00:44:09 [DEBUG   ] commitmaster.commit_engine — uncommitted_changes (v2) found 57 files in C:\Data\Saumya\Projects\CommitMaster
+2026-10-08 00:44:09 [DEBUG   ] commitmaster.commit_engine — git rev-parse --abbrev-ref HEAD
+2026-10-08 00:44:09 [DEBUG   ] commitmaster.ai_messages — list_models failed: HTTPConnectionPool(host='localhost', port=1234): Max retries exceeded with url: /v1/models (Caused by ConnectTimeoutError(<HTTPConnection(host='localhost', port=1234) at 0x2864ee85d30>, 'Connection to localhost timed out. (connect timeout=0.4)'))
+2026-10-08 00:44:15 [DEBUG   ] commitmaster.commit_engine — git rev-parse --abbrev-ref HEAD
+2026-10-08 00:44:15 [DEBUG   ] commitmaster.commit_engine — git -c core.quotepath=false status --porcelain=v2 --untracked-files=all --ignore-submodules=none
+2026-10-08 00:44:15 [DEBUG   ] commitmaster.commit_engine — uncommitted_changes (v2) found 57 files in C:\Data\Saumya\Projects\CommitMaster
+2026-10-08 00:44:15 [DEBUG   ] commitmaster.commit_engine — git diff HEAD --unified=3 -- Create_Desktop_Shortcuts.vbs
+2026-10-08 00:44:15 [DEBUG   ] commitmaster.commit_engine — git rev-parse --abbrev-ref HEAD
+2026-10-08 00:44:39 [DEBUG   ] commitmaster.commit_engine — git rev-parse --abbrev-ref HEAD
+2026-10-08 00:44:39 [DEBUG   ] commitmaster.commit_engine — git -c core.quotepath=false status --porcelain=v2 --untracked-files=all --ignore-submodules=none
+2026-10-08 00:44:39 [DEBUG   ] commitmaster.commit_engine — uncommitted_changes (v2) found 57 files in C:\Data\Saumya\Projects\CommitMaster
+2026-10-08 00:44:39 [DEBUG   ] commitmaster.commit_engine — git diff HEAD --unified=3 -- Create_Desktop_Shortcuts.vbs
+2026-10-08 00:44:40 [DEBUG   ] commitmaster.commit_engine — git rev-parse --abbrev-ref HEAD
+2026-10-08 00:44:40 [DEBUG   ] commitmaster.ai_messages — list_models failed: HTTPConnectionPool(host='localhost', port=1234): Max retries exceeded with url: /v1/models (Caused by ConnectTimeoutError(<HTTPConnection(host='localhost', port=1234) at 0x2864ca2b9d0>, 'Connection to localhost timed out. (connect timeout=0.4)'))
+2026-10-08 01:42:20 [DEBUG   ] commitmaster.windows_integration — Registered Windows AppUserModelID: CommitMaster.App.Admin.3.0 (admin)
+2026-10-08 01:42:21 [DEBUG   ] commitmaster.commit_engine — git rev-parse --abbrev-ref HEAD
+2026-10-08 01:42:21 [DEBUG   ] commitmaster.commit_engine — git -c core.quotepath=false status --porcelain=v2 --untracked-files=all --ignore-submodules=none
+2026-10-08 01:42:21 [DEBUG   ] commitmaster.commit_engine — uncommitted_changes (v2) found 57 files in C:\Data\Saumya\Projects\CommitMaster
+2026-10-08 01:42:21 [DEBUG   ] commitmaster.commit_engine — git rev-parse --abbrev-ref HEAD
+2026-10-08 01:42:22 [DEBUG   ] commitmaster.ai_messages — list_models failed: HTTPConnectionPool(host='localhost', port=1234): Max retries exceeded with url: /v1/models (Caused by ConnectTimeoutError(<HTTPConnection(host='localhost', port=1234) at 0x1f10fc8cc20>, 'Connection to localhost timed out. (connect timeout=0.4)'))
+2026-10-08 01:42:30 [DEBUG   ] commitmaster.reminder_service — ReminderService config reloaded: interval=True (2h 30m), app_monitor=True, only_dirty=True, watched=13 apps
+2026-10-08 01:42:30 [INFO    ] commitmaster.reminder_service — Reminder snoozed for 15 minutes.
+2026-10-08 01:42:30 [INFO    ] commitmaster.reminder_service — ReminderService preferences updated dynamically.
+2026-10-08 01:42:30 [DEBUG   ] commitmaster.commit_engine — git -c core.quotepath=false status --porcelain=v2 --untracked-files=all --ignore-submodules=none
+2026-10-08 01:42:30 [DEBUG   ] commitmaster.commit_engine — uncommitted_changes (v2) found 57 files in C:\Data\Saumya\Projects\CommitMaster
+2026-10-08 01:42:31 [DEBUG   ] commitmaster.ai_messages — list_models failed: HTTPConnectionPool(host='localhost', port=1234): Max retries exceeded with url: /v1/models (Caused by ConnectTimeoutError(<HTTPConnection(host='localhost', port=1234) at 0x10f3caf1ae0>, 'Connection to localhost timed out. (connect timeout=0.4)'))
+2026-10-08 01:42:31 [INFO    ] commitmaster.ai_messages — Local (Bionic / LM Studio) offline or not detected - using diff-based heuristic messages.
+2026-10-08 01:42:31 [DEBUG   ] commitmaster.commit_engine — git rev-parse --abbrev-ref HEAD
+2026-10-08 01:42:31 [DEBUG   ] commitmaster.commit_engine — git diff HEAD --unified=3 -- commitmaster/database.py
+2026-10-08 01:42:31 [DEBUG   ] commitmaster.commit_engine — git diff HEAD --unified=3 -- commitmaster/github_service.py
+2026-10-08 01:42:31 [DEBUG   ] commitmaster.commit_engine — git diff HEAD --unified=3 -- README.md
+2026-10-08 01:42:32 [DEBUG   ] commitmaster.commit_engine — git init
+2026-10-08 01:42:32 [DEBUG   ] commitmaster.commit_engine — git config user.name Test User
+2026-10-08 01:42:32 [DEBUG   ] commitmaster.commit_engine — git config user.email test@commitmaster.local
+2026-10-08 01:42:32 [DEBUG   ] commitmaster.commit_engine — git reset
+2026-10-08 01:42:32 [DEBUG   ] commitmaster.commit_engine — git add -A -- file1.txt file2.txt
+2026-10-08 01:42:32 [DEBUG   ] commitmaster.commit_engine — git commit -m feat: add both files
+2026-10-08 01:42:32 [DEBUG   ] commitmaster.commit_engine — git log -1 --oneline
+2026-10-08 01:42:32 [INFO    ] commitmaster.commit_engine — Committed in cm_test_pjl1to9r: 7d34842 feat: add both files
+2026-10-08 01:42:32 [DEBUG   ] commitmaster.commit_engine — git log --oneline
+2026-10-08 01:42:32 [DEBUG   ] commitmaster.commit_engine — git init
+2026-10-08 01:42:32 [DEBUG   ] commitmaster.commit_engine — git config user.name Test User
+2026-10-08 01:42:32 [DEBUG   ] commitmaster.commit_engine — git config user.email test@commitmaster.local
+2026-10-08 01:42:32 [DEBUG   ] commitmaster.commit_engine — git init
+2026-10-08 01:42:32 [DEBUG   ] commitmaster.commit_engine — git config user.name Test User
+2026-10-08 01:42:32 [DEBUG   ] commitmaster.commit_engine — git config user.email test@commitmaster.local
+2026-10-08 01:42:32 [DEBUG   ] commitmaster.commit_engine — git init
+2026-10-08 01:42:32 [DEBUG   ] commitmaster.commit_engine — git config user.name Test User
+2026-10-08 01:42:32 [DEBUG   ] commitmaster.commit_engine — git config user.email test@commitmaster.local
+2026-10-08 01:42:32 [DEBUG   ] commitmaster.commit_engine — git init
+2026-10-08 01:42:32 [DEBUG   ] commitmaster.commit_engine — git config user.name Test User
+2026-10-08 01:42:32 [DEBUG   ] commitmaster.commit_engine — git config user.email test@commitmaster.local
+2026-10-08 01:42:32 [DEBUG   ] commitmaster.commit_engine — git init
+2026-10-08 01:42:32 [DEBUG   ] commitmaster.commit_engine — git config user.name Test User
+2026-10-08 01:42:32 [DEBUG   ] commitmaster.commit_engine — git config user.email test@commitmaster.local
+2026-10-08 01:42:32 [DEBUG   ] commitmaster.commit_engine — git init
+2026-10-08 01:42:33 [DEBUG   ] commitmaster.commit_engine — git config user.name Test User
+2026-10-08 01:42:33 [DEBUG   ] commitmaster.commit_engine — git config user.email test@commitmaster.local
+2026-10-08 01:42:33 [DEBUG   ] commitmaster.commit_engine — git init
+2026-10-08 01:42:33 [DEBUG   ] commitmaster.commit_engine — git config user.name Test User
+2026-10-08 01:42:33 [DEBUG   ] commitmaster.commit_engine — git config user.email test@commitmaster.local
+2026-10-08 01:42:33 [DEBUG   ] commitmaster.commit_engine — git init
+2026-10-08 01:42:33 [DEBUG   ] commitmaster.commit_engine — git config user.name Test User
+2026-10-08 01:42:33 [DEBUG   ] commitmaster.commit_engine — git config user.email test@commitmaster.local
+2026-10-08 01:42:33 [DEBUG   ] commitmaster.commit_engine — git reset
+2026-10-08 01:42:33 [DEBUG   ] commitmaster.commit_engine — git add -A -- alpha.py
+2026-10-08 01:42:33 [DEBUG   ] commitmaster.commit_engine — git commit -m feat(core): add alpha logic
+2026-10-08 01:42:33 [DEBUG   ] commitmaster.commit_engine — git log -1 --oneline
+2026-10-08 01:42:33 [INFO    ] commitmaster.commit_engine — Committed individually in cm_test_chrm92w1 [alpha.py]: bacf5ea feat(core): add alpha logic
+2026-10-08 01:42:33 [DEBUG   ] commitmaster.commit_engine — git add -A -- beta.md
+2026-10-08 01:42:33 [DEBUG   ] commitmaster.commit_engine — git commit -m docs: update beta documentation
+2026-10-08 01:42:33 [DEBUG   ] commitmaster.commit_engine — git log -1 --oneline
+2026-10-08 01:42:33 [INFO    ] commitmaster.commit_engine — Committed individually in cm_test_chrm92w1 [beta.md]: 24579cd docs: update beta documentation
+2026-10-08 01:42:33 [DEBUG   ] commitmaster.commit_engine — git add -A -- gamma.json
+2026-10-08 01:42:33 [DEBUG   ] commitmaster.commit_engine — git commit -m chore(config): initialize gamma schema
+2026-10-08 01:42:33 [DEBUG   ] commitmaster.commit_engine — git log -1 --oneline
+2026-10-08 01:42:33 [INFO    ] commitmaster.commit_engine — Committed individually in cm_test_chrm92w1 [gamma.json]: 814811a chore(config): initialize gamma schema
+2026-10-08 01:42:33 [DEBUG   ] commitmaster.commit_engine — git log --oneline
+2026-10-08 01:42:33 [DEBUG   ] commitmaster.commit_engine — git init
+2026-10-08 01:42:33 [DEBUG   ] commitmaster.commit_engine — git config user.name Test User
+2026-10-08 01:42:33 [DEBUG   ] commitmaster.commit_engine — git config user.email test@commitmaster.local
+2026-10-08 01:42:33 [DEBUG   ] commitmaster.commit_engine — git reset
+2026-10-08 01:42:33 [DEBUG   ] commitmaster.commit_engine — git add -A -- cached.txt
+2026-10-08 01:42:34 [DEBUG   ] commitmaster.commit_engine — git commit -m init cached
+2026-10-08 01:42:34 [DEBUG   ] commitmaster.commit_engine — git log -1 --oneline
+2026-10-08 01:42:34 [INFO    ] commitmaster.commit_engine — Committed in cm_test_c4e0srxv: 15789c9 init cached
+2026-10-08 01:42:34 [DEBUG   ] commitmaster.commit_engine — git -c core.quotepath=false status --porcelain=v2 --untracked-files=all --ignore-submodules=none
+2026-10-08 01:42:34 [DEBUG   ] commitmaster.commit_engine — uncommitted_changes (v2) found 1 files in C:\Users\saumy\AppData\Local\Temp\cm_test_c4e0srxv
+2026-10-08 01:42:34 [DEBUG   ] commitmaster.commit_engine — git -c core.quotepath=false status --porcelain=v2 --untracked-files=all --ignore-submodules=none
+2026-10-08 01:42:34 [DEBUG   ] commitmaster.commit_engine — uncommitted_changes (v2) found 1 files in C:\Users\saumy\AppData\Local\Temp\cm_test_c4e0srxv
+2026-10-08 02:04:57 [DEBUG   ] commitmaster.windows_integration — Registered Windows AppUserModelID: CommitMaster.App.Client.3.0 (user)
+2026-10-08 02:04:57 [DEBUG   ] commitmaster.reminder_service — ReminderService config reloaded: interval=True (1h 0m), app_monitor=True, only_dirty=True, watched=13 apps
+2026-10-08 02:04:57 [INFO    ] commitmaster.reminder_service — ReminderService background thread started for user 2.
+2026-10-08 02:04:57 [INFO    ] commitmaster.reminder_service — IDE detected: Antigravity IDE.exe. Coding session active (detected project: CommitMaster).
+2026-10-08 02:09:44 [INFO    ] commitmaster.account_manager — Saved account saumya.patel@Admin_# (id=1) as active.
+2026-10-08 02:09:44 [INFO    ] commitmaster.account_manager — Saved account regular_joe (id=2) as active.
+2026-10-08 02:10:47 [INFO    ] commitmaster.account_manager — Saved account saumya.patel@Admin_# (id=1) as active.
+2026-10-08 02:10:47 [INFO    ] commitmaster.account_manager — Saved account regular_joe (id=2) as active.
+2026-10-08 02:10:48 [INFO    ] commitmaster.account_manager — Saved account user_alpha (id=1) as active.
+2026-10-08 02:11:19 [INFO    ] commitmaster.account_manager — Saved account saumya.patel@Admin_# (id=1) as active.
+2026-10-08 02:11:19 [INFO    ] commitmaster.account_manager — Saved account regular_joe (id=2) as active.
+2026-10-08 02:11:21 [INFO    ] commitmaster.account_manager — Saved account user_alpha (id=2) as active.
+2026-10-08 02:11:21 [INFO    ] commitmaster.account_manager — Saved account user_beta (id=3) as active.
+2026-10-08 02:11:21 [INFO    ] commitmaster.account_manager — Removed account user_beta from saved accounts.
+2026-10-08 02:11:28 [DEBUG   ] commitmaster.reminder_service — ReminderService config reloaded: interval=True (2h 30m), app_monitor=True, only_dirty=True, watched=13 apps
+2026-10-08 02:11:28 [INFO    ] commitmaster.reminder_service — Reminder snoozed for 15 minutes.
+2026-10-08 02:11:28 [INFO    ] commitmaster.reminder_service — ReminderService preferences updated dynamically.
+2026-10-08 02:11:28 [DEBUG   ] commitmaster.commit_engine — git init
+2026-10-08 02:11:28 [DEBUG   ] commitmaster.commit_engine — git config user.name Test User
+2026-10-08 02:11:28 [DEBUG   ] commitmaster.commit_engine — git config user.email test@commitmaster.local
+2026-10-08 02:11:28 [DEBUG   ] commitmaster.commit_engine — git reset
+2026-10-08 02:11:28 [DEBUG   ] commitmaster.commit_engine — git add -A -- file1.txt file2.txt
+2026-10-08 02:11:28 [DEBUG   ] commitmaster.commit_engine — git commit -m feat: add both files
+2026-10-08 02:11:28 [DEBUG   ] commitmaster.commit_engine — git log -1 --oneline
+2026-10-08 02:11:28 [INFO    ] commitmaster.commit_engine — Committed in cm_test_b3g8qkl0: 3e831cd feat: add both files
+2026-10-08 02:11:28 [DEBUG   ] commitmaster.commit_engine — git log --oneline
+2026-10-08 02:11:28 [DEBUG   ] commitmaster.commit_engine — git init
+2026-10-08 02:11:28 [DEBUG   ] commitmaster.commit_engine — git config user.name Test User
+2026-10-08 02:11:28 [DEBUG   ] commitmaster.commit_engine — git config user.email test@commitmaster.local
+2026-10-08 02:11:28 [DEBUG   ] commitmaster.commit_engine — git init
+2026-10-08 02:11:28 [DEBUG   ] commitmaster.commit_engine — git config user.name Test User
+2026-10-08 02:11:28 [DEBUG   ] commitmaster.commit_engine — git config user.email test@commitmaster.local
+2026-10-08 02:11:29 [DEBUG   ] commitmaster.commit_engine — git init
+2026-10-08 02:11:29 [DEBUG   ] commitmaster.commit_engine — git config user.name Test User
+2026-10-08 02:11:29 [DEBUG   ] commitmaster.commit_engine — git config user.email test@commitmaster.local
+2026-10-08 02:11:29 [DEBUG   ] commitmaster.commit_engine — git init
+2026-10-08 02:11:29 [DEBUG   ] commitmaster.commit_engine — git config user.name Test User
+2026-10-08 02:11:29 [DEBUG   ] commitmaster.commit_engine — git config user.email test@commitmaster.local
+2026-10-08 02:11:29 [DEBUG   ] commitmaster.commit_engine — git init
+2026-10-08 02:11:29 [DEBUG   ] commitmaster.commit_engine — git config user.name Test User
+2026-10-08 02:11:29 [DEBUG   ] commitmaster.commit_engine — git config user.email test@commitmaster.local
+2026-10-08 02:11:29 [DEBUG   ] commitmaster.commit_engine — git init
+2026-10-08 02:11:29 [DEBUG   ] commitmaster.commit_engine — git config user.name Test User
+2026-10-08 02:11:29 [DEBUG   ] commitmaster.commit_engine — git config user.email test@commitmaster.local
+2026-10-08 02:11:29 [DEBUG   ] commitmaster.commit_engine — git init
+2026-10-08 02:11:29 [DEBUG   ] commitmaster.commit_engine — git config user.name Test User
+2026-10-08 02:11:29 [DEBUG   ] commitmaster.commit_engine — git config user.email test@commitmaster.local
+2026-10-08 02:11:29 [DEBUG   ] commitmaster.commit_engine — git init
+2026-10-08 02:11:29 [DEBUG   ] commitmaster.commit_engine — git config user.name Test User
+2026-10-08 02:11:29 [DEBUG   ] commitmaster.commit_engine — git config user.email test@commitmaster.local
+2026-10-08 02:11:29 [DEBUG   ] commitmaster.commit_engine — git reset
+2026-10-08 02:11:29 [DEBUG   ] commitmaster.commit_engine — git add -A -- alpha.py
+2026-10-08 02:11:29 [DEBUG   ] commitmaster.commit_engine — git commit -m feat(core): add alpha logic
+2026-10-08 02:11:29 [DEBUG   ] commitmaster.commit_engine — git log -1 --oneline
+2026-10-08 02:11:29 [INFO    ] commitmaster.commit_engine — Committed individually in cm_test_1z3cr5vc [alpha.py]: e2cd573 feat(core): add alpha logic
+2026-10-08 02:11:29 [DEBUG   ] commitmaster.commit_engine — git add -A -- beta.md
+2026-10-08 02:11:29 [DEBUG   ] commitmaster.commit_engine — git commit -m docs: update beta documentation
+2026-10-08 02:11:30 [DEBUG   ] commitmaster.commit_engine — git log -1 --oneline
+2026-10-08 02:11:30 [INFO    ] commitmaster.commit_engine — Committed individually in cm_test_1z3cr5vc [beta.md]: c9bbe1a docs: update beta documentation
+2026-10-08 02:11:30 [DEBUG   ] commitmaster.commit_engine — git add -A -- gamma.json
+2026-10-08 02:11:30 [DEBUG   ] commitmaster.commit_engine — git commit -m chore(config): initialize gamma schema
+2026-10-08 02:11:30 [DEBUG   ] commitmaster.commit_engine — git log -1 --oneline
+2026-10-08 02:11:30 [INFO    ] commitmaster.commit_engine — Committed individually in cm_test_1z3cr5vc [gamma.json]: f1e4483 chore(config): initialize gamma schema
+2026-10-08 02:11:30 [DEBUG   ] commitmaster.commit_engine — git log --oneline
+2026-10-08 02:11:30 [DEBUG   ] commitmaster.commit_engine — git init
+2026-10-08 02:11:30 [DEBUG   ] commitmaster.commit_engine — git config user.name Test User
+2026-10-08 02:11:30 [DEBUG   ] commitmaster.commit_engine — git config user.email test@commitmaster.local
+2026-10-08 02:11:30 [DEBUG   ] commitmaster.commit_engine — git reset
+2026-10-08 02:11:30 [DEBUG   ] commitmaster.commit_engine — git add -A -- cached.txt
+2026-10-08 02:11:30 [DEBUG   ] commitmaster.commit_engine — git commit -m init cached
+2026-10-08 02:11:30 [DEBUG   ] commitmaster.commit_engine — git log -1 --oneline
+2026-10-08 02:11:30 [INFO    ] commitmaster.commit_engine — Committed in cm_test_7opw9sft: 5e77a46 init cached
+2026-10-08 02:11:30 [DEBUG   ] commitmaster.commit_engine — git -c core.quotepath=false status --porcelain=v2 --untracked-files=all --ignore-submodules=none
+2026-10-08 02:11:30 [DEBUG   ] commitmaster.commit_engine — uncommitted_changes (v2) found 1 files in C:\Users\saumy\AppData\Local\Temp\cm_test_7opw9sft
+2026-10-08 02:11:30 [DEBUG   ] commitmaster.commit_engine — git -c core.quotepath=false status --porcelain=v2 --untracked-files=all --ignore-submodules=none
+2026-10-08 02:11:30 [DEBUG   ] commitmaster.commit_engine — uncommitted_changes (v2) found 1 files in C:\Users\saumy\AppData\Local\Temp\cm_test_7opw9sft
+2026-10-08 02:11:30 [DEBUG   ] commitmaster.commit_engine — git -c core.quotepath=false status --porcelain=v2 --untracked-files=all --ignore-submodules=none
+2026-10-08 02:11:30 [DEBUG   ] commitmaster.commit_engine — uncommitted_changes (v2) found 63 files in C:\Data\Saumya\Projects\CommitMaster
+2026-10-08 02:11:31 [DEBUG   ] commitmaster.ai_messages — list_models failed: HTTPConnectionPool(host='localhost', port=1234): Max retries exceeded with url: /v1/models (Caused by ConnectTimeoutError(<HTTPConnection(host='localhost', port=1234) at 0x1e1166e4980>, 'Connection to localhost timed out. (connect timeout=0.4)'))
+2026-10-08 02:11:31 [INFO    ] commitmaster.ai_messages — Local (Bionic / LM Studio) offline or not detected - using diff-based heuristic messages.
+2026-10-08 02:11:31 [DEBUG   ] commitmaster.commit_engine — git rev-parse --abbrev-ref HEAD
+2026-10-08 02:11:31 [DEBUG   ] commitmaster.commit_engine — git diff HEAD --unified=3 -- commitmaster/database.py
+2026-10-08 02:11:31 [DEBUG   ] commitmaster.commit_engine — git diff HEAD --unified=3 -- commitmaster/github_service.py
+2026-10-08 02:11:31 [DEBUG   ] commitmaster.commit_engine — git diff HEAD --unified=3 -- README.md
+2026-10-08 02:11:32 [DEBUG   ] commitmaster.windows_integration — Registered Windows AppUserModelID: CommitMaster.App.Admin.3.0 (admin)
+2026-10-08 02:11:32 [DEBUG   ] commitmaster.commit_engine — git rev-parse --abbrev-ref HEAD
+2026-10-08 02:11:33 [DEBUG   ] commitmaster.commit_engine — git rev-parse --abbrev-ref HEAD
+2026-10-08 02:11:39 [DEBUG   ] commitmaster.commit_engine — Cannot scan C:\Users\saumy\AppData\Local\Temp\cm_test_ejy4mg98: [WinError 5] Access is denied: 'C:\\Users\\saumy\\AppData\\Local\\Temp\\cm_test_ejy4mg98'
+2026-10-08 02:11:39 [DEBUG   ] commitmaster.commit_engine — Cannot scan C:\Users\saumy\AppData\Local\Temp\cm_test_f9i7txz4: [WinError 5] Access is denied: 'C:\\Users\\saumy\\AppData\\Local\\Temp\\cm_test_f9i7txz4'
+2026-10-08 02:11:39 [DEBUG   ] commitmaster.commit_engine — Cannot scan C:\Users\saumy\AppData\Local\Temp\cm_test_h_ntpwkt: [WinError 5] Access is denied: 'C:\\Users\\saumy\\AppData\\Local\\Temp\\cm_test_h_ntpwkt'
+2026-10-08 02:11:39 [DEBUG   ] commitmaster.commit_engine — Cannot scan C:\Users\saumy\AppData\Local\Temp\WinSAT: [WinError 5] Access is denied: 'C:\\Users\\saumy\\AppData\\Local\\Temp\\WinSAT'
+2026-10-08 02:11:39 [DEBUG   ] commitmaster.commit_engine — list_repos found 135 repos under ['C:\\Users\\saumy\\AppData\\Local\\Temp']
+2026-10-08 02:11:39 [DEBUG   ] commitmaster.commit_engine — git -c core.quotepath=false status --porcelain=v2 --untracked-files=all --ignore-submodules=none
+2026-10-08 02:11:39 [DEBUG   ] commitmaster.commit_engine — uncommitted_changes (v2) found 5 files in C:\Users\saumy\AppData\Local\Temp\commitmaster_test_repo
+2026-10-08 02:11:39 [DEBUG   ] commitmaster.commit_engine — git reset
+2026-10-08 02:11:39 [DEBUG   ] commitmaster.commit_engine — git add -A -- src/app.py
+2026-10-08 02:11:39 [DEBUG   ] commitmaster.commit_engine — git commit -m refactor: update app output
+2026-10-08 02:11:39 [DEBUG   ] commitmaster.commit_engine — git log -1 --oneline
+2026-10-08 02:11:39 [INFO    ] commitmaster.commit_engine — Committed in commitmaster_test_repo: 08a1830 refactor: update app output
+2026-10-08 02:11:39 [DEBUG   ] commitmaster.commit_engine — git log --oneline
+2026-10-08 02:11:39 [DEBUG   ] commitmaster.commit_engine — git -c core.quotepath=false status --porcelain=v2 --untracked-files=all --ignore-submodules=none
+2026-10-08 02:11:39 [DEBUG   ] commitmaster.commit_engine — uncommitted_changes (v2) found 4 files in C:\Users\saumy\AppData\Local\Temp\commitmaster_test_repo
+2026-10-08 02:11:39 [DEBUG   ] commitmaster.commit_engine — git diff --cached --unified=2
+2026-10-08 02:11:39 [DEBUG   ] commitmaster.commit_engine — git diff --unified=2
+2026-10-08 02:11:39 [DEBUG   ] commitmaster.commit_engine — git diff HEAD --stat
+2026-10-08 02:11:39 [DEBUG   ] commitmaster.commit_engine — Found GitHub Desktop at: C:\Users\saumy\AppData\Local\GitHubDesktop\GitHubDesktop.exe
+2026-10-08 02:19:51 [DEBUG   ] commitmaster.windows_integration — Registered Windows AppUserModelID: CommitMaster.App.Client.3.0 (unified)
+2026-10-08 02:19:51 [DEBUG   ] commitmaster.windows_integration — Registered Windows AppUserModelID: CommitMaster.App.Client.3.0 (user)
+2026-10-08 02:19:55 [DEBUG   ] commitmaster.windows_integration — Registered Windows AppUserModelID: CommitMaster.App.Client.3.0 (unified)
+2026-10-08 02:19:55 [DEBUG   ] commitmaster.windows_integration — Registered Windows AppUserModelID: CommitMaster.App.Client.3.0 (user)
+2026-10-08 02:20:00 [DEBUG   ] commitmaster.windows_integration — Registered Windows AppUserModelID: CommitMaster.App.Client.3.0 (unified)
+2026-10-08 02:20:00 [DEBUG   ] commitmaster.windows_integration — Registered Windows AppUserModelID: CommitMaster.App.Client.3.0 (user)
+2026-10-08 02:20:14 [INFO    ] commitmaster.account_manager — Saved account notrealbutfr_yt (id=3) as active.
+2026-10-08 02:20:14 [INFO    ] commitmaster.account_manager — Saved account notrealbutfr_yt (id=3) as active.
+2026-10-08 02:20:14 [DEBUG   ] commitmaster.reminder_service — ReminderService config reloaded: interval=True (1h 0m), app_monitor=True, only_dirty=True, watched=13 apps
+2026-10-08 02:20:14 [INFO    ] commitmaster.reminder_service — ReminderService background thread started for user 3.
+2026-10-08 02:20:14 [INFO    ] commitmaster.reminder_service — IDE detected: Antigravity IDE.exe. Coding session active (detected project: CommitMaster).
+2026-10-08 02:20:21 [INFO    ] commitmaster.reminder_service — ReminderService background thread stopped.
+2026-10-08 02:20:26 [INFO    ] commitmaster.account_manager — Saved account notrealbutfr_yt (id=3) as active.
+2026-10-08 02:20:26 [DEBUG   ] commitmaster.reminder_service — ReminderService config reloaded: interval=True (1h 0m), app_monitor=True, only_dirty=True, watched=13 apps
+2026-10-08 02:20:26 [INFO    ] commitmaster.reminder_service — ReminderService background thread started for user 3.
+2026-10-08 02:20:26 [INFO    ] commitmaster.reminder_service — IDE detected: Antigravity IDE.exe. Coding session active (detected project: CommitMaster).
+2026-10-08 02:20:39 [INFO    ] commitmaster.otp_service — Generated OTP for samual100806@gmail.com [purpose=verify_account]: 591490
+2026-10-08 02:21:00 [INFO    ] commitmaster.reminder_service — ReminderService background thread stopped.
+2026-10-08 02:22:26 [DEBUG   ] commitmaster.windows_integration — Registered Windows AppUserModelID: CommitMaster.App.Client.3.0 (unified)
+2026-10-08 02:22:26 [INFO    ] commitmaster.account_manager — Saved account notrealbutfr_yt (id=3) as active.
+2026-10-08 02:22:26 [DEBUG   ] commitmaster.windows_integration — Registered Windows AppUserModelID: CommitMaster.App.Client.3.0 (user)
+2026-10-08 02:22:26 [DEBUG   ] commitmaster.reminder_service — ReminderService config reloaded: interval=True (1h 0m), app_monitor=True, only_dirty=True, watched=13 apps
+2026-10-08 02:22:26 [INFO    ] commitmaster.reminder_service — ReminderService background thread started for user 3.
+2026-10-08 02:22:26 [INFO    ] commitmaster.reminder_service — IDE detected: Antigravity IDE.exe. Coding session active (detected project: CommitMaster).
+2026-10-08 02:22:30 [INFO    ] commitmaster.reminder_service — ReminderService background thread stopped.
+2026-10-08 02:22:43 [INFO    ] commitmaster.account_manager — Saved account saumya.patel@Admin_# (id=1) as active.
+2026-10-08 02:22:43 [INFO    ] commitmaster.account_manager — Saved account saumya.patel@Admin_# (id=1) as active.
+2026-10-08 02:22:43 [DEBUG   ] commitmaster.windows_integration — Registered Windows AppUserModelID: CommitMaster.App.Admin.3.0 (admin)
+2026-10-08 02:22:43 [DEBUG   ] commitmaster.commit_engine — git rev-parse --abbrev-ref HEAD
+2026-10-08 02:22:43 [DEBUG   ] commitmaster.commit_engine — git -c core.quotepath=false status --porcelain=v2 --untracked-files=all --ignore-submodules=none
+2026-10-08 02:22:43 [DEBUG   ] commitmaster.commit_engine — uncommitted_changes (v2) found 64 files in C:\Data\Saumya\Projects\CommitMaster
+2026-10-08 02:22:44 [DEBUG   ] commitmaster.commit_engine — git rev-parse --abbrev-ref HEAD
+2026-10-08 02:22:44 [DEBUG   ] commitmaster.ai_messages — list_models failed: HTTPConnectionPool(host='localhost', port=1234): Max retries exceeded with url: /v1/models (Caused by ConnectTimeoutError(<HTTPConnection(host='localhost', port=1234) at 0x24971ab6cf0>, 'Connection to localhost timed out. (connect timeout=0.4)'))
+2026-10-08 02:23:03 [DEBUG   ] commitmaster.commit_engine — git rev-parse --abbrev-ref HEAD
+2026-10-08 02:23:03 [DEBUG   ] commitmaster.commit_engine — git remote get-url origin
+2026-10-08 02:23:03 [DEBUG   ] commitmaster.commit_engine — git rev-parse --abbrev-ref HEAD
+2026-10-08 02:23:03 [DEBUG   ] commitmaster.commit_engine — git remote get-url origin
+2026-10-08 02:23:03 [DEBUG   ] commitmaster.commit_engine — git rev-parse --abbrev-ref HEAD
+2026-10-08 02:23:03 [DEBUG   ] commitmaster.commit_engine — git remote get-url origin
+2026-10-08 02:23:12 [DEBUG   ] commitmaster.commit_engine — git rev-parse --abbrev-ref HEAD
+2026-10-08 02:23:12 [DEBUG   ] commitmaster.commit_engine — git -c core.quotepath=false status --porcelain=v2 --untracked-files=all --ignore-submodules=none
+2026-10-08 02:23:12 [DEBUG   ] commitmaster.commit_engine — uncommitted_changes (v2) found 64 files in C:\Data\Saumya\Projects\CommitMaster
+2026-10-08 02:23:12 [DEBUG   ] commitmaster.commit_engine — git diff HEAD --unified=3 -- Create_Desktop_Shortcuts.vbs
+2026-10-08 02:23:12 [DEBUG   ] commitmaster.commit_engine — git rev-parse --abbrev-ref HEAD
+2026-10-08 02:23:13 [DEBUG   ] commitmaster.ai_messages — list_models failed: HTTPConnectionPool(host='localhost', port=1234): Max retries exceeded with url: /v1/models (Caused by ConnectTimeoutError(<HTTPConnection(host='localhost', port=1234) at 0x2497526de50>, 'Connection to localhost timed out. (connect timeout=0.4)'))
+2026-10-08 02:23:17 [DEBUG   ] commitmaster.commit_engine — git rev-parse --abbrev-ref HEAD
+2026-10-08 02:23:19 [DEBUG   ] commitmaster.commit_engine — git -c core.quotepath=false status --porcelain=v2 --untracked-files=all --ignore-submodules=none
+2026-10-08 02:23:19 [DEBUG   ] commitmaster.commit_engine — uncommitted_changes (v2) found 64 files in C:\Data\Saumya\Projects\CommitMaster
+2026-10-08 02:23:19 [DEBUG   ] commitmaster.commit_engine — git rev-parse --abbrev-ref HEAD
+2026-10-08 02:23:19 [DEBUG   ] commitmaster.commit_engine — git diff HEAD --unified=3 -- Create_Desktop_Shortcuts.vbs
+2026-10-08 02:23:19 [DEBUG   ] commitmaster.commit_engine — git diff HEAD --unified=3 -- Launch_Admin_App.bat
+2026-10-08 02:23:19 [DEBUG   ] commitmaster.commit_engine — git diff HEAD --unified=3 -- Launch_Admin_App.vbs
+2026-10-08 02:23:19 [DEBUG   ] commitmaster.commit_engine — git diff HEAD --unified=3 -- README.md
+2026-10-08 02:23:19 [DEBUG   ] commitmaster.commit_engine — git diff HEAD --unified=3 -- admin_app.py
+2026-10-08 02:23:20 [DEBUG   ] commitmaster.commit_engine — git diff HEAD --unified=3 -- app.py
+2026-10-08 02:23:20 [DEBUG   ] commitmaster.commit_engine — git diff HEAD --unified=3 -- assets/icon.ico
+2026-10-08 02:23:20 [DEBUG   ] commitmaster.commit_engine — git diff HEAD --unified=3 -- assets/logo.png
+2026-10-08 02:23:20 [DEBUG   ] commitmaster.commit_engine — git diff HEAD --unified=3 -- build_exe.py
+2026-10-08 02:23:20 [DEBUG   ] commitmaster.commit_engine — git diff HEAD --unified=3 -- commitmaster.db-shm
+2026-10-08 02:23:20 [DEBUG   ] commitmaster.commit_engine — git diff HEAD --unified=3 -- commitmaster.db-wal
+2026-10-08 02:23:20 [DEBUG   ] commitmaster.commit_engine — git diff HEAD --unified=3 -- commitmaster.log
+2026-10-08 02:23:20 [DEBUG   ] commitmaster.commit_engine — git diff HEAD --unified=3 -- commitmaster/admin_portal.py
+2026-10-08 02:23:20 [DEBUG   ] commitmaster.commit_engine — git diff HEAD --unified=3 -- commitmaster/commit_composer.py
+2026-10-08 02:23:20 [DEBUG   ] commitmaster.commit_engine — git diff HEAD --unified=3 -- commitmaster/config.py
+2026-10-08 02:23:20 [DEBUG   ] commitmaster.commit_engine — git diff HEAD --unified=3 -- commitmaster/database.py
+2026-10-08 02:23:20 [DEBUG   ] commitmaster.commit_engine — git diff HEAD --unified=3 -- commitmaster/login_window.py
+2026-10-08 02:23:20 [DEBUG   ] commitmaster.commit_engine — git diff HEAD --unified=3 -- commitmaster/navigation.py
+2026-10-08 02:23:20 [DEBUG   ] commitmaster.commit_engine — git diff HEAD --unified=3 -- commitmaster/session_monitor.py
+2026-10-08 02:23:20 [DEBUG   ] commitmaster.commit_engine — git diff HEAD --unified=3 -- commitmaster/settings_ui.py
+2026-10-08 02:23:20 [DEBUG   ] commitmaster.commit_engine — git diff HEAD --unified=3 -- commitmaster/user_dashboard.py
+2026-10-08 02:23:20 [DEBUG   ] commitmaster.commit_engine — git diff HEAD --unified=3 -- commitmaster/windows_integration.py
+2026-10-08 02:23:20 [DEBUG   ] commitmaster.commit_engine — git diff HEAD --unified=3 -- config.example.json
+2026-10-08 02:23:20 [DEBUG   ] commitmaster.commit_engine — git diff HEAD --unified=3 -- icon.ico
+2026-10-08 02:23:20 [DEBUG   ] commitmaster.commit_engine — git diff HEAD --unified=3 -- requirements.txt
+2026-10-08 02:23:20 [DEBUG   ] commitmaster.commit_engine — git diff HEAD --unified=3 -- .commitmaster_accounts.json
+2026-10-08 02:23:20 [DEBUG   ] commitmaster.commit_engine — git diff HEAD --unified=3 -- DEPLOYMENT_GUIDE.md
+2026-10-08 02:23:20 [DEBUG   ] commitmaster.commit_engine — git diff HEAD --unified=3 -- Dockerfile
+2026-10-08 02:23:20 [DEBUG   ] commitmaster.commit_engine — git diff HEAD --unified=3 -- Launch_Server.bat
+2026-10-08 02:23:20 [DEBUG   ] commitmaster.commit_engine — git diff HEAD --unified=3 -- Procfile
+2026-10-08 02:23:20 [DEBUG   ] commitmaster.commit_engine — git diff HEAD --unified=3 -- assets/icon_admin.ico
+2026-10-08 02:23:20 [DEBUG   ] commitmaster.commit_engine — git diff HEAD --unified=3 -- assets/icon_user.ico
+2026-10-08 02:23:20 [DEBUG   ] commitmaster.commit_engine — git diff HEAD --unified=3 -- assets/logo_admin.png
+2026-10-08 02:23:20 [DEBUG   ] commitmaster.commit_engine — git diff HEAD --unified=3 -- assets/logo_admin_128.png
+2026-10-08 02:23:20 [DEBUG   ] commitmaster.commit_engine — git diff HEAD --unified=3 -- assets/logo_admin_16.png
+2026-10-08 02:23:20 [DEBUG   ] commitmaster.commit_engine — git diff HEAD --unified=3 -- assets/logo_admin_24.png
+2026-10-08 02:23:21 [DEBUG   ] commitmaster.commit_engine — git diff HEAD --unified=3 -- assets/logo_admin_256.png
+2026-10-08 02:23:21 [DEBUG   ] commitmaster.commit_engine — git diff HEAD --unified=3 -- assets/logo_admin_32.png
+2026-10-08 02:23:21 [DEBUG   ] commitmaster.commit_engine — git diff HEAD --unified=3 -- assets/logo_admin_48.png
+2026-10-08 02:23:21 [DEBUG   ] commitmaster.commit_engine — git diff HEAD --unified=3 -- assets/logo_admin_64.png
+2026-10-08 02:23:21 [DEBUG   ] commitmaster.commit_engine — git diff HEAD --unified=3 -- assets/logo_user.png
+2026-10-08 02:23:21 [DEBUG   ] commitmaster.commit_engine — git diff HEAD --unified=3 -- assets/logo_user_128.png
+2026-10-08 02:23:21 [DEBUG   ] commitmaster.commit_engine — git diff HEAD --unified=3 -- assets/logo_user_16.png
+2026-10-08 02:23:21 [DEBUG   ] commitmaster.commit_engine — git diff HEAD --unified=3 -- assets/logo_user_24.png
+2026-10-08 02:23:21 [DEBUG   ] commitmaster.commit_engine — git diff HEAD --unified=3 -- assets/logo_user_256.png
+2026-10-08 02:23:21 [DEBUG   ] commitmaster.commit_engine — git diff HEAD --unified=3 -- assets/logo_user_32.png
+2026-10-08 02:23:21 [DEBUG   ] commitmaster.commit_engine — git diff HEAD --unified=3 -- assets/logo_user_48.png
+2026-10-08 02:23:21 [DEBUG   ] commitmaster.commit_engine — git diff HEAD --unified=3 -- assets/logo_user_64.png
+2026-10-08 02:23:21 [DEBUG   ] commitmaster.commit_engine — git diff HEAD --unified=3 -- commitmaster/account_manager.py
+2026-10-08 02:23:21 [DEBUG   ] commitmaster.commit_engine — git diff HEAD --unified=3 -- commitmaster/ide_selector.py
+2026-10-08 02:23:21 [DEBUG   ] commitmaster.commit_engine — git diff HEAD --unified=3 -- commitmaster/notification_toast.py
+2026-10-08 02:23:21 [DEBUG   ] commitmaster.commit_engine — git diff HEAD --unified=3 -- commitmaster/otp_service.py
+2026-10-08 02:23:21 [DEBUG   ] commitmaster.commit_engine — git diff HEAD --unified=3 -- commitmaster/reminder_service.py
+2026-10-08 02:23:21 [DEBUG   ] commitmaster.commit_engine — git diff HEAD --unified=3 -- icon_admin.ico
+2026-10-08 02:23:21 [DEBUG   ] commitmaster.commit_engine — git diff HEAD --unified=3 -- icon_user.ico
+2026-10-08 02:23:21 [DEBUG   ] commitmaster.commit_engine — git diff HEAD --unified=3 -- migrate_to_server.py
+2026-10-08 02:23:21 [DEBUG   ] commitmaster.commit_engine — git diff HEAD --unified=3 -- railway.json
+2026-10-08 02:23:21 [DEBUG   ] commitmaster.commit_engine — git diff HEAD --unified=3 -- render.yaml
+2026-10-08 02:23:21 [DEBUG   ] commitmaster.commit_engine — git diff HEAD --unified=3 -- requirements-server.txt
+2026-10-08 02:23:21 [DEBUG   ] commitmaster.commit_engine — git diff HEAD --unified=3 -- server.py
+2026-10-08 02:23:21 [DEBUG   ] commitmaster.commit_engine — git diff HEAD --unified=3 -- test_admin_and_icons_and_scroll.py
+2026-10-08 02:23:21 [DEBUG   ] commitmaster.commit_engine — git diff HEAD --unified=3 -- test_cloud_server_and_auth.py
+2026-10-08 02:23:21 [DEBUG   ] commitmaster.commit_engine — git diff HEAD --unified=3 -- test_new_unified_features.py
+2026-10-08 02:23:21 [DEBUG   ] commitmaster.commit_engine — git diff HEAD --unified=3 -- test_reminders.py
+2026-10-08 02:23:22 [DEBUG   ] commitmaster.commit_engine — git rev-parse --abbrev-ref HEAD
+2026-10-08 02:23:43 [DEBUG   ] commitmaster.commit_engine — git rev-parse --abbrev-ref HEAD
+2026-10-08 02:23:43 [DEBUG   ] commitmaster.commit_engine — git reset
+2026-10-08 02:23:43 [DEBUG   ] commitmaster.commit_engine — git add -A -- Create_Desktop_Shortcuts.vbs
+2026-10-08 02:23:43 [DEBUG   ] commitmaster.commit_engine — git commit -m refactor: enhance Create Desktop Shortcuts and its logic
+
+### Changes & Improvements
+- Expands internal routines and helper logic
+
+### Changes Summary
+- 11 lines added, 5 removed across Create_Desktop_Shortcuts.vbs
+2026-10-08 02:23:44 [DEBUG   ] commitmaster.commit_engine — git log -1 --oneline
+2026-10-08 02:23:44 [INFO    ] commitmaster.commit_engine — Committed individually in CommitMaster [Create_Desktop_Shortcuts.vbs]: 05f9527 refactor: enhance Create Desktop Shortcuts and its logic
+2026-10-08 02:23:44 [DEBUG   ] commitmaster.commit_engine — git add -A -- Launch_Admin_App.bat
+2026-10-08 02:23:44 [DEBUG   ] commitmaster.commit_engine — git commit -m refactor: enhance Launch Admin App and its logic
+
+### Changes & Improvements
+- Refines execution logic and operational flow
+
+### Changes Summary
+- 2 lines added, 2 removed across Launch_Admin_App.bat
+2026-10-08 02:23:44 [DEBUG   ] commitmaster.commit_engine — git log -1 --oneline
+2026-10-08 02:23:44 [INFO    ] commitmaster.commit_engine — Committed individually in CommitMaster [Launch_Admin_App.bat]: 48f8bbe refactor: enhance Launch Admin App and its logic
+2026-10-08 02:23:44 [DEBUG   ] commitmaster.commit_engine — git add -A -- Launch_Admin_App.vbs
+2026-10-08 02:23:44 [DEBUG   ] commitmaster.commit_engine — git commit -m refactor: enhance Launch Admin App and its logic
+
+### Changes & Improvements
+- Refines execution logic and operational flow
+
+### Changes Summary
+- 1 line added, 1 removed across Launch_Admin_App.vbs
+2026-10-08 02:23:44 [DEBUG   ] commitmaster.commit_engine — git log -1 --oneline
+2026-10-08 02:23:44 [INFO    ] commitmaster.commit_engine — Committed individually in CommitMaster [Launch_Admin_App.vbs]: 157bd51 refactor: enhance Launch Admin App and its logic
+2026-10-08 02:23:44 [DEBUG   ] commitmaster.commit_engine — git add -A -- README.md
+2026-10-08 02:23:44 [DEBUG   ] commitmaster.commit_engine — git commit -m docs: update README documentation - 🔔 Bottom-Right Notificatio
+
+### Changes & Improvements
+- Documents 🔔 Bottom-Right Notification Reminder System
+
+### Changes Summary
+- 6 lines added, 0 removed across README.md
+2026-10-08 02:23:44 [DEBUG   ] commitmaster.commit_engine — git log -1 --oneline
+2026-10-08 02:23:44 [INFO    ] commitmaster.commit_engine — Committed individually in CommitMaster [README.md]: 4bb1f56 docs: update README documentation - 🔔 Bottom-Right Notificatio
+2026-10-08 02:23:44 [DEBUG   ] commitmaster.commit_engine — git add -A -- admin_app.py
+2026-10-08 02:23:44 [DEBUG   ] commitmaster.commit_engine — git commit -m feat(admin_app): add on_switched and on_add
+
+### New Features
+- Adds function `on_switched`
+- Adds function `on_add`
+- Adds helper function `_test_admin_toast`
+- Adds helper function `_open_account_switcher`
+
+### Changes & Improvements
+- Updates component layout and rendering in _open_admin_window
+- Updates component layout and rendering in _on_frame_configure
+
+### Changes Summary
+- 216 lines added, 66 removed across admin_app.py
+2026-10-08 02:23:44 [DEBUG   ] commitmaster.commit_engine — git log -1 --oneline
+2026-10-08 02:23:44 [INFO    ] commitmaster.commit_engine — Committed individually in CommitMaster [admin_app.py]: db468ae feat(admin_app): add on_switched and on_add
+2026-10-08 02:23:44 [DEBUG   ] commitmaster.commit_engine — git add -A -- app.py
+2026-10-08 02:23:44 [DEBUG   ] commitmaster.commit_engine — git commit -m feat(app): add on_switch_account
+
+### New Features
+- Adds function `on_switch_account`
+- Adds helper function `_route_user`
+
+### Removals & Deprecations
+- Removes function `_open_dashboard`
+- Removes function `on_admin`
+- Removes function `on_admin_close`
+
+### Changes Summary
+- 78 lines added, 29 removed across app.py
+2026-10-08 02:23:44 [DEBUG   ] commitmaster.commit_engine — git log -1 --oneline
+2026-10-08 02:23:44 [INFO    ] commitmaster.commit_engine — Committed individually in CommitMaster [app.py]: e6ec1ca feat(app): add on_switch_account
+2026-10-08 02:23:44 [DEBUG   ] commitmaster.commit_engine — git add -A -- assets/icon.ico
+2026-10-08 02:23:44 [DEBUG   ] commitmaster.commit_engine — git commit -m refactor: enhance icon and its logic
+
+### Changes & Improvements
+- Refines execution logic and operational flow
+
+### Changes Summary
+- 0 lines added, 0 removed across assets/icon.ico
+2026-10-08 02:23:44 [DEBUG   ] commitmaster.commit_engine — git log -1 --oneline
+2026-10-08 02:23:44 [INFO    ] commitmaster.commit_engine — Committed individually in CommitMaster [assets/icon.ico]: 28f83cd refactor: enhance icon and its logic
+2026-10-08 02:23:44 [DEBUG   ] commitmaster.commit_engine — git add -A -- assets/logo.png
+2026-10-08 02:23:44 [DEBUG   ] commitmaster.commit_engine — git commit -m refactor: enhance logo and its logic
+
+### Changes & Improvements
+- Refines execution logic and operational flow
+
+### Changes Summary
+- 0 lines added, 0 removed across assets/logo.png
+2026-10-08 02:23:44 [DEBUG   ] commitmaster.commit_engine — git log -1 --oneline
+2026-10-08 02:23:44 [INFO    ] commitmaster.commit_engine — Committed individually in CommitMaster [assets/logo.png]: d235874 refactor: enhance logo and its logic
+2026-10-08 02:23:44 [DEBUG   ] commitmaster.commit_engine — git add -A -- build_exe.py
+2026-10-08 02:23:44 [DEBUG   ] commitmaster.commit_engine — git commit -m refactor(build_exe): refine build_single logic
+
+### Changes & Improvements
+- Updates logic in `build_single`
+
+### Changes Summary
+- 7 lines added, 2 removed across build_exe.py
+2026-10-08 02:23:44 [DEBUG   ] commitmaster.commit_engine — git log -1 --oneline
+2026-10-08 02:23:44 [INFO    ] commitmaster.commit_engine — Committed individually in CommitMaster [build_exe.py]: 037a875 refactor(build_exe): refine build_single logic
+2026-10-08 02:23:44 [DEBUG   ] commitmaster.commit_engine — git add -A -- commitmaster.db-shm
+2026-10-08 02:23:45 [DEBUG   ] commitmaster.commit_engine — git commit -m refactor: enhance commitmaster and its logic
+
+### Changes & Improvements
+- Refines execution logic and operational flow
+
+### Changes Summary
+- 0 lines added, 0 removed across commitmaster.db-shm
+2026-10-08 02:23:45 [DEBUG   ] commitmaster.commit_engine — git log -1 --oneline
+2026-10-08 02:23:45 [INFO    ] commitmaster.commit_engine — Committed individually in CommitMaster [commitmaster.db-shm]: 1d86ee4 refactor: enhance commitmaster and its logic
+2026-10-08 02:23:45 [DEBUG   ] commitmaster.commit_engine — git add -A -- commitmaster.db-wal
+2026-10-08 02:23:45 [DEBUG   ] commitmaster.commit_engine — git commit -m refactor: enhance commitmaster and its logic
+
+### Changes & Improvements
+- Refines execution logic and operational flow
+
+### Changes Summary
+- 0 lines added, 0 removed across commitmaster.db-wal
