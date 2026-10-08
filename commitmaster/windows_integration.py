@@ -17,21 +17,23 @@ from commitmaster.logger import get
 log = get("windows_integration")
 
 APP_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-_PHOTO_CACHE: Dict[int, ImageTk.PhotoImage] = {}
-_INITIALIZED_APP_ID = False
+_PHOTO_CACHE: Dict[tuple, ImageTk.PhotoImage] = {}
+_INITIALIZED_APP_ID: Dict[str, bool] = {}
 
 
-def init_app_user_model_id() -> None:
+def init_app_user_model_id(app_type: str = "user") -> None:
     """Register custom Windows Application ID so taskbar shows proper app icon & grouping."""
-    global _INITIALIZED_APP_ID
-    if _INITIALIZED_APP_ID:
+    if _INITIALIZED_APP_ID.get(app_type):
         return
-    _INITIALIZED_APP_ID = True
+    _INITIALIZED_APP_ID[app_type] = True
     if sys.platform == "win32":
         try:
-            app_id = "CommitMaster.Desktop.3.0"
+            if app_type == "admin":
+                app_id = "CommitMaster.App.Admin.3.0"
+            else:
+                app_id = "CommitMaster.App.Client.3.0"
             ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(app_id)
-            log.debug("Registered Windows AppUserModelID: %s", app_id)
+            log.debug("Registered Windows AppUserModelID: %s (%s)", app_id, app_type)
         except Exception as exc:
             log.debug("Could not set AppUserModelID: %s", exc)
 
@@ -63,14 +65,24 @@ def set_dark_titlebar(window: tk.Misc) -> None:
         log.debug("Could not set dark title bar: %s", exc)
 
 
-def get_icon_path() -> Optional[str]:
-    """Find icon.ico in workspace, bundle or assets directory."""
-    candidates = [
-        os.path.join(APP_DIR, "icon.ico"),
-        os.path.join(APP_DIR, "assets", "icon.ico"),
-        os.path.join(getattr(sys, "_MEIPASS", APP_DIR), "icon.ico"),
-        os.path.join(getattr(sys, "_MEIPASS", APP_DIR), "commitmaster", "icon.ico"),
-    ]
+def get_icon_path(app_type: str = "user") -> Optional[str]:
+    """Find appropriate .ico in workspace, bundle or assets directory."""
+    if app_type == "admin":
+        candidates = [
+            os.path.join(APP_DIR, "assets", "icon_admin.ico"),
+            os.path.join(APP_DIR, "icon_admin.ico"),
+            os.path.join(getattr(sys, "_MEIPASS", APP_DIR), "assets", "icon_admin.ico"),
+            os.path.join(APP_DIR, "assets", "icon.ico"),
+            os.path.join(APP_DIR, "icon.ico"),
+        ]
+    else:
+        candidates = [
+            os.path.join(APP_DIR, "assets", "icon_user.ico"),
+            os.path.join(APP_DIR, "icon_user.ico"),
+            os.path.join(getattr(sys, "_MEIPASS", APP_DIR), "assets", "icon_user.ico"),
+            os.path.join(APP_DIR, "assets", "icon.ico"),
+            os.path.join(APP_DIR, "icon.ico"),
+        ]
     for c in candidates:
         if os.path.exists(c):
             return c
@@ -92,38 +104,60 @@ def set_dpi_awareness() -> None:
                     pass
 
 
-_IMAGE_CACHE: Dict[int, Image.Image] = {}
+_IMAGE_CACHE: Dict[tuple, Image.Image] = {}
 
 
-def get_logo_photo(size: int = 32, master: Optional[tk.Misc] = None) -> Optional[ImageTk.PhotoImage]:
+def get_logo_photo(size: int = 32, master: Optional[tk.Misc] = None,
+                   app_type: str = "user") -> Optional[ImageTk.PhotoImage]:
     """Return high-resolution PhotoImage for in-app headers and dialogs bound to active master."""
-    cache_key = (size, str(master) if master else "root")
-    if cache_key in _PHOTO_CACHE:
+    if master is None:
         try:
-            return _PHOTO_CACHE[cache_key]
+            master = tk._default_root
         except Exception:
             pass
 
-    if size not in _IMAGE_CACHE:
-        candidates = [
-            os.path.join(APP_DIR, "assets", f"logo_{size}.png"),
-            os.path.join(APP_DIR, "assets", "logo.png"),
-            os.path.join(getattr(sys, "_MEIPASS", APP_DIR), "assets", "logo.png"),
-        ]
+    cache_key = (size, str(master) if master else "root", app_type)
+    if cache_key in _PHOTO_CACHE:
+        try:
+            photo = _PHOTO_CACHE[cache_key]
+            if master:
+                master.tk.call("image", "type", str(photo))
+            return photo
+        except Exception:
+            _PHOTO_CACHE.pop(cache_key, None)
+
+    img_key = (size, app_type)
+    if img_key not in _IMAGE_CACHE:
+        if app_type == "admin":
+            candidates = [
+                os.path.join(APP_DIR, "assets", f"logo_admin_{size}.png"),
+                os.path.join(APP_DIR, "assets", "logo_admin.png"),
+                os.path.join(getattr(sys, "_MEIPASS", APP_DIR), "assets", "logo_admin.png"),
+                os.path.join(APP_DIR, "assets", f"logo_{size}.png"),
+                os.path.join(APP_DIR, "assets", "logo.png"),
+            ]
+        else:
+            candidates = [
+                os.path.join(APP_DIR, "assets", f"logo_user_{size}.png"),
+                os.path.join(APP_DIR, "assets", "logo_user.png"),
+                os.path.join(getattr(sys, "_MEIPASS", APP_DIR), "assets", "logo_user.png"),
+                os.path.join(APP_DIR, "assets", f"logo_{size}.png"),
+                os.path.join(APP_DIR, "assets", "logo.png"),
+            ]
         for c in candidates:
             if os.path.exists(c):
                 try:
                     im = Image.open(c).convert("RGBA")
                     if im.size != (size, size):
                         im = im.resize((size, size), Image.Resampling.LANCZOS)
-                    _IMAGE_CACHE[size] = im
+                    _IMAGE_CACHE[img_key] = im
                     break
                 except Exception as exc:
                     log.debug("Could not load logo from %s: %s", c, exc)
 
-    if size in _IMAGE_CACHE:
+    if img_key in _IMAGE_CACHE:
         try:
-            photo = ImageTk.PhotoImage(_IMAGE_CACHE[size], master=master)
+            photo = ImageTk.PhotoImage(_IMAGE_CACHE[img_key], master=master)
             _PHOTO_CACHE[cache_key] = photo
             return photo
         except Exception:
@@ -131,8 +165,8 @@ def get_logo_photo(size: int = 32, master: Optional[tk.Misc] = None) -> Optional
     return None
 
 
-
-def apply_windows_theme(window: tk.Misc, title: Optional[str] = None) -> None:
+def apply_windows_theme(window: tk.Misc, title: Optional[str] = None,
+                        app_type: str = "user") -> None:
     """
     Complete professional Windows treatment:
       1. Sets AppUserModelID on process
@@ -140,7 +174,7 @@ def apply_windows_theme(window: tk.Misc, title: Optional[str] = None) -> None:
       3. Sets multi-res window icons for title bar and Alt+Tab switcher
     """
     set_dpi_awareness()
-    init_app_user_model_id()
+    init_app_user_model_id(app_type)
 
     if title and hasattr(window, "title"):
         try:
@@ -149,14 +183,14 @@ def apply_windows_theme(window: tk.Misc, title: Optional[str] = None) -> None:
             pass
 
     # Window icons
-    icon_path = get_icon_path()
+    icon_path = get_icon_path(app_type)
     if icon_path and hasattr(window, "iconbitmap"):
         try:
             window.iconbitmap(icon_path)
         except Exception:
             pass
 
-    photo = get_logo_photo(64) or get_logo_photo(32)
+    photo = get_logo_photo(64, master=window, app_type=app_type) or get_logo_photo(32, master=window, app_type=app_type)
     if photo and hasattr(window, "iconphoto"):
         try:
             window.iconphoto(True, photo)
@@ -180,22 +214,28 @@ def create_desktop_shortcut(target: str = "both") -> tuple[bool, str]:
 
     import subprocess
     app_dir = APP_DIR.replace("\\", "\\\\")
-    icon_path = os.path.join(APP_DIR, "icon.ico").replace("\\", "\\\\")
+    user_icon = os.path.join(APP_DIR, "icon_user.ico").replace("\\", "\\\\")
+    admin_icon = os.path.join(APP_DIR, "icon_admin.ico").replace("\\", "\\\\")
+    fallback_icon = os.path.join(APP_DIR, "icon.ico").replace("\\", "\\\\")
 
     shortcuts_to_create = []
     if target in ("admin", "both"):
         vbs_target = os.path.join(APP_DIR, "Launch_Admin_App.vbs").replace("\\", "\\\\")
+        ico = admin_icon if os.path.exists(os.path.join(APP_DIR, "icon_admin.ico")) else fallback_icon
         shortcuts_to_create.append({
             "name": "CommitMaster Admin",
             "desc": "CommitMaster Admin Portal — Saumya's Private Workspace",
             "script": vbs_target,
+            "icon": ico,
         })
     if target in ("user", "both"):
         vbs_target = os.path.join(APP_DIR, "Launch_CommitMaster.vbs").replace("\\", "\\\\")
+        ico = user_icon if os.path.exists(os.path.join(APP_DIR, "icon_user.ico")) else fallback_icon
         shortcuts_to_create.append({
             "name": "CommitMaster",
             "desc": "CommitMaster Desktop Application",
             "script": vbs_target,
+            "icon": ico,
         })
 
     created_names = []
@@ -207,8 +247,8 @@ def create_desktop_shortcut(target: str = "both") -> tuple[bool, str]:
             ps_commands.append(f"$lnk.Arguments = '\"{s['script']}\"'")
             ps_commands.append(f"$lnk.WorkingDirectory = '{app_dir}'")
             ps_commands.append(f"$lnk.Description = '{s['desc']}'")
-            if os.path.exists(os.path.join(APP_DIR, "icon.ico")):
-                ps_commands.append(f"$lnk.IconLocation = '{icon_path},0'")
+            if os.path.exists(s["icon"]):
+                ps_commands.append(f"$lnk.IconLocation = '{s['icon']},0'")
             ps_commands.append("$lnk.Save()")
             created_names.append(s["name"])
 
