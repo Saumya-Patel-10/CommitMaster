@@ -29,7 +29,7 @@ ElseIf fso.FileExists(WshShell.ExpandEnvironmentStrings("%LOCALAPPDATA%\Programs
     pyExe = WshShell.ExpandEnvironmentStrings("%LOCALAPPDATA%\Programs\Python\Python312\pythonw.exe")
 End If
 
-scriptPath = currentDir & "\admin_app.py"
+scriptPath = currentDir & "\app.py"
 cmdLine = """" & pyExe & """ """ & scriptPath & """"
 WshShell.Run cmdLine, 0, False
 
