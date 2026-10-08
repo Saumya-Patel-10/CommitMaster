@@ -10,7 +10,7 @@ from tkinter import messagebox, simpledialog, ttk
 from datetime import datetime
 from typing import Dict, Callable
 
-from commitmaster import commit_engine, charts, navigation
+from commitmaster import commit_engine, charts, navigation, pattern_utils
 from commitmaster.app_styles import (
     COLORS, FONTS, SIZES, AVATAR_COLORS, THEMES, ACCENTS, FONT_FAMILIES, FONT_SCALES,
     apply_customization, get_active_customization
@@ -37,6 +37,7 @@ class AdminPortal:
             font_family=prefs.get("font_family"),
             font_scale=prefs.get("font_scale"),
             ui_density=prefs.get("ui_density"),
+            pattern=prefs.get("bg_pattern"),
         )
 
         self.root = tk.Tk()
@@ -117,23 +118,41 @@ class AdminPortal:
     def _build_sidebar(self):
         sb = self._sidebar
 
-        # 1. Pinned Top Header (Logo)
-        logo_f = tk.Frame(sb, bg=COLORS["bg_sidebar"], height=70)
+        # 1. Pinned Top Header (Logo with Pattern Texture)
+        logo_f = tk.Frame(sb, bg=COLORS["bg_sidebar"], height=72)
         logo_f.pack(side="top", fill="x")
         logo_f.pack_propagate(False)
+
+        pat = get_active_customization().get("pattern", "dot_matrix")
+        try:
+            sb_banner = pattern_utils.generate_sidebar_header_banner(
+                SIZES["sidebar_width"], 72, COLORS["bg_sidebar"], COLORS["admin"], pat
+            )
+            self._sb_banner_img = sb_banner
+            sb_bg_lbl = tk.Label(logo_f, image=sb_banner, bg=COLORS["bg_sidebar"], bd=0)
+            sb_bg_lbl.place(x=0, y=0, relwidth=1, relheight=1)
+        except Exception:
+            pass
+
         from commitmaster import windows_integration
         logo_img = windows_integration.get_logo_photo(26, app_type="admin")
         if logo_img:
             self._sidebar_logo_img = logo_img
-            tk.Label(logo_f, image=logo_img, bg=COLORS["bg_sidebar"]).pack(side="left", padx=(16, 8), pady=20)
+            tk.Label(logo_f, image=logo_img, bg=COLORS["bg_sidebar"]).pack(side="left", padx=(14, 6), pady=20)
             tk.Label(logo_f, text="CommitMaster Admin", font=FONTS["heading_sm"],
                      fg=COLORS["text_primary"], bg=COLORS["bg_sidebar"]).pack(side="left", pady=20)
         else:
             tk.Label(logo_f, text="🛡 CommitMaster Admin", font=FONTS["heading_sm"],
                      fg=COLORS["admin"], bg=COLORS["bg_sidebar"]).pack(
-                side="left", padx=16, pady=20)
+                side="left", padx=14, pady=20)
 
-        tk.Frame(sb, height=1, bg=COLORS["border"]).pack(side="top", fill="x")
+        pro_chip = tk.Frame(logo_f, bg=COLORS["bg_medium"], highlightthickness=1,
+                            highlightbackground=COLORS["admin"], padx=6, pady=2)
+        pro_chip.pack(side="right", padx=(0, 12), pady=20)
+        tk.Label(pro_chip, text="ADMIN", font=("Segoe UI", 8, "bold"),
+                 fg=COLORS["admin"], bg=COLORS["bg_medium"]).pack()
+
+        tk.Frame(sb, height=2, bg=COLORS["admin"]).pack(side="top", fill="x")
 
         # 2. Pinned Bottom Footer (Back button)
         footer_f = tk.Frame(sb, bg=COLORS["bg_sidebar"])
@@ -245,20 +264,39 @@ class AdminPortal:
 
 
     def _build_header(self):
-        header = tk.Frame(self._main, bg=COLORS["bg_dark"], height=56)
+        header = tk.Frame(self._main, bg=COLORS["bg_dark"], height=58)
         self._header_frame = header
         header.pack(fill="x")
         header.pack_propagate(False)
+
+        # Background pattern banner label
+        self._hdr_bg_lbl = tk.Label(header, bg=COLORS["bg_dark"], bd=0)
+        self._hdr_bg_lbl.place(x=0, y=0, relwidth=1, relheight=1)
+
+        def _update_hdr_bg(e=None):
+            w = header.winfo_width()
+            if w > 10:
+                pat = get_active_customization().get("pattern", "dot_matrix")
+                banner = pattern_utils.generate_header_banner(
+                    w, 58, COLORS["bg_dark"], COLORS["admin"], pat
+                )
+                self._hdr_bg_lbl.config(image=banner)
+                self._hdr_bg_lbl._photo = banner
+
+        header.bind("<Configure>", _update_hdr_bg)
+
         tk.Frame(self._main, height=2, bg=COLORS["admin"]).pack(fill="x")
+
         self._header_title = tk.Label(header, text="Dashboard",
                                       font=FONTS["heading_md"],
                                       fg=COLORS["text_primary"], bg=COLORS["bg_dark"])
-        self._header_title.pack(side="left", padx=24, pady=12)
+        self._header_title.pack(side="left", padx=(12, 16), pady=12)
+
         # Admin badge
         badge = tk.Label(header, text="  ADMIN  ",
                          font=("Segoe UI", 9, "bold"),
                          fg=COLORS["bg_darkest"], bg=COLORS["admin"])
-        badge.pack(side="right", padx=16, pady=18)
+        badge.pack(side="right", padx=16, pady=16)
 
     def _rebuild_ui(self, nav_to: str = "customize"):
         """Tear down and recreate UI with new theme/tokens."""
@@ -597,16 +635,33 @@ class AdminPortal:
                    color: str, icon: str, subtitle: str = ""):
         card = self._card(parent)
         card.pack(side="left", fill="both", expand=True, padx=6, pady=6)
-        inner = tk.Frame(card, bg=COLORS["bg_card"], padx=20, pady=18)
+
+        # Top 3px accent color stripe
+        tk.Frame(card, height=3, bg=color).pack(fill="x")
+
+        inner = tk.Frame(card, bg=COLORS["bg_card"], padx=16, pady=14)
         inner.pack(fill="both", expand=True)
-        # Top accent bar
-        tk.Frame(card, height=3, bg=color).place(relx=0, rely=0, relwidth=1)
-        tk.Label(inner, text=icon, font=("Segoe UI Emoji", 22),
-                 fg=color, bg=COLORS["bg_card"]).pack(anchor="w")
+
+        top_row = tk.Frame(inner, bg=COLORS["bg_card"])
+        top_row.pack(fill="x", pady=(0, 6))
+
+        # Icon medallion / badge
+        icon_box = tk.Frame(top_row, bg=COLORS["bg_medium"], highlightthickness=1,
+                            highlightbackground=color, padx=6, pady=3)
+        icon_box.pack(side="left")
+        tk.Label(icon_box, text=icon, font=("Segoe UI Emoji", 12),
+                 fg=color, bg=COLORS["bg_medium"]).pack()
+
+        # Mini live pill
+        pill = tk.Frame(top_row, bg=COLORS["bg_card"])
+        pill.pack(side="right")
+        tk.Label(pill, text="● LIVE", font=("Segoe UI", 8, "bold"),
+                 fg=color, bg=COLORS["bg_card"]).pack()
+
         tk.Label(inner, text=value, font=FONTS["heading_lg"],
-                 fg=color, bg=COLORS["bg_card"]).pack(anchor="w", pady=(4, 0))
-        tk.Label(inner, text=title, font=FONTS["label_bold"],
-                 fg=COLORS["text_primary"], bg=COLORS["bg_card"]).pack(anchor="w")
+                 fg=COLORS["text_primary"], bg=COLORS["bg_card"]).pack(anchor="w", pady=(0, 2))
+        tk.Label(inner, text=title.upper(), font=FONTS["caption"],
+                 fg=COLORS["text_secondary"], bg=COLORS["bg_card"]).pack(anchor="w")
         if subtitle:
             tk.Label(inner, text=subtitle, font=FONTS["caption"],
                      fg=COLORS["text_muted"], bg=COLORS["bg_card"]).pack(anchor="w")
@@ -1314,6 +1369,54 @@ class AdminPortal:
             swatch_f.bind("<Button-1>", make_handler())
             self._theme_cards[t_key] = t_card
 
+        # ── Surface Patterns & Procedural Textures Section ────────────────────
+        tk.Label(pad, text="Surface Patterns & Procedural Textures", font=FONTS["label_bold"],
+                 fg=COLORS["text_secondary"], bg=COLORS["bg_dark"]).pack(anchor="w", pady=(8, 4))
+        tk.Label(pad, text="Procedural geometric patterns and tactile textures rendered across headers, cards, and desktop backgrounds (avoids plain flat colors).",
+                 font=FONTS["caption"], fg=COLORS["text_secondary"], bg=COLORS["bg_dark"]).pack(anchor="w", pady=(0, 8))
+
+        pat_grid = tk.Frame(pad, bg=COLORS["bg_dark"])
+        pat_grid.pack(fill="x", pady=(0, 16))
+
+        self._custom_pattern = curr.get("pattern", "dot_matrix")
+        self._pattern_cards = {}
+        for col_idx, (p_key, p_info) in enumerate(pattern_utils.PATTERNS.items()):
+            col = col_idx % 4
+            row = col_idx // 4
+            p_card = tk.Frame(pat_grid, bg=COLORS["bg_card"],
+                              highlightthickness=2,
+                              highlightbackground=COLORS["accent"] if p_key == self._custom_pattern else COLORS["border"],
+                              padx=10, pady=8, cursor="hand2")
+            p_card.grid(row=row, column=col, padx=6, pady=6, sticky="nsew")
+            pat_grid.grid_columnconfigure(col, weight=1)
+
+            # Preview thumbnail
+            try:
+                thumb = pattern_utils.generate_pattern_preview_card(p_key, COLORS["bg_card"], COLORS["accent"], width=130, height=45)
+                thumb_lbl = tk.Label(p_card, image=thumb, bg=COLORS["bg_card"], cursor="hand2", bd=0)
+                thumb_lbl._thumb = thumb
+                thumb_lbl.pack(fill="x", pady=(0, 6))
+            except Exception:
+                thumb_lbl = tk.Label(p_card, text=p_info["icon"], font=("Segoe UI", 16), bg=COLORS["bg_card"])
+                thumb_lbl.pack(pady=(0, 4))
+
+            # Pattern title & description
+            p_title = tk.Label(p_card, text=f"{p_info['icon']}  {p_info['name']}",
+                               font=FONTS["label_bold"], fg=COLORS["text_primary"],
+                               bg=COLORS["bg_card"], cursor="hand2")
+            p_title.pack(anchor="w")
+            p_desc = tk.Label(p_card, text=p_info["desc"],
+                              font=FONTS["caption"], fg=COLORS["text_secondary"],
+                              bg=COLORS["bg_card"], wraplength=140, justify="left", cursor="hand2")
+            p_desc.pack(anchor="w", pady=(2, 0))
+
+            def make_pat_handler(pk=p_key):
+                return lambda e: self._select_pattern_card(pk)
+
+            for w in (p_card, thumb_lbl, p_title, p_desc):
+                w.bind("<Button-1>", make_pat_handler())
+            self._pattern_cards[p_key] = p_card
+
         # Accent Colors Section
         tk.Label(pad, text="Primary Accent Color", font=FONTS["label_bold"],
                  fg=COLORS["text_secondary"], bg=COLORS["bg_dark"]).pack(anchor="w", pady=(8, 10))
@@ -1428,6 +1531,18 @@ class AdminPortal:
                               padx=14, pady=10, command=self._reset_customization)
         reset_btn.pack(side="left")
 
+    def _select_pattern_card(self, pattern_key: str):
+        self._custom_pattern = pattern_key
+        for k, card in getattr(self, "_pattern_cards", {}).items():
+            border_c = COLORS["accent"] if k == pattern_key else COLORS["border"]
+            card.config(highlightbackground=border_c)
+        apply_customization(pattern=pattern_key)
+        try:
+            db.update_preferences(self.admin_user["id"], bg_pattern=pattern_key)
+        except Exception:
+            pass
+        self._rebuild_ui("customize")
+
     def _select_theme_card(self, theme_key: str):
         self._custom_theme = theme_key
         for k, card in self._theme_cards.items():
@@ -1455,6 +1570,7 @@ class AdminPortal:
         family = self._custom_font_family.get()
         scale = self._custom_font_scale.get()
         density = self._custom_density.get()
+        pattern = getattr(self, "_custom_pattern", "dot_matrix")
         auto_push = 1 if self._custom_auto_push.get() else 0
 
         db.update_preferences(
@@ -1464,6 +1580,7 @@ class AdminPortal:
             font_family=family,
             font_scale=scale,
             ui_density=density,
+            bg_pattern=pattern,
             auto_push=auto_push,
         )
 
@@ -1473,6 +1590,7 @@ class AdminPortal:
             font_family=family,
             font_scale=scale,
             ui_density=density,
+            pattern=pattern,
         )
 
         messagebox.showinfo("Applied", "Interface customization applied successfully!", parent=self.root)
@@ -1486,8 +1604,9 @@ class AdminPortal:
             font_family="Segoe UI",
             font_scale="standard",
             ui_density="comfortable",
+            bg_pattern="dot_matrix",
         )
-        apply_customization("github_dark", "green", "Segoe UI", "standard", "comfortable")
+        apply_customization("github_dark", "green", "Segoe UI", "standard", "comfortable", "dot_matrix")
         self._rebuild_ui("customize")
 
     # ── Helpers ───────────────────────────────────────────────────────────────
