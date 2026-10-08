@@ -56,7 +56,7 @@ class AdminPortal:
         sh = self.root.winfo_screenheight()
         self.root.geometry(f"{w}x{h}+{(sw - w)//2}+{(sh - h)//2}")
         from commitmaster import windows_integration
-        windows_integration.apply_windows_theme(self.root, "CommitMaster — Admin Portal")
+        windows_integration.apply_windows_theme(self.root, "CommitMaster Admin — Admin Portal", app_type="admin")
 
     # ── Layout ────────────────────────────────────────────────────────────────
 
@@ -95,16 +95,22 @@ class AdminPortal:
         navigation.install_shortcuts(
             self.root, self._nav_order, self._go, self._nav_back, self._nav_forward)
 
-    def _on_frame_configure(self, event):
+    def _on_frame_configure(self, event=None):
         bbox = self._canvas.bbox("all")
-        if getattr(self, "_last_scrollregion", None) != bbox:
-            self._last_scrollregion = bbox
-            self._canvas.configure(scrollregion=bbox)
+        if bbox and (bbox[2] > 1 or bbox[3] > 1):
+            if getattr(self, "_last_scrollregion", None) != bbox:
+                self._last_scrollregion = bbox
+                self._canvas.configure(scrollregion=bbox)
+        elif event and getattr(event, "height", 0) > 1:
+            self._canvas.configure(scrollregion=(0, 0, max(event.width, self._canvas.winfo_width()), event.height))
 
     def _on_canvas_configure(self, event):
         if getattr(self, "_last_canvas_width", None) != event.width:
             self._last_canvas_width = event.width
             self._canvas.itemconfig(self._cw, width=event.width)
+        bbox = self._canvas.bbox("all")
+        if bbox and (bbox[2] > 1 or bbox[3] > 1):
+            self._canvas.configure(scrollregion=bbox)
 
     # ── Sidebar ───────────────────────────────────────────────────────────────
 
@@ -116,14 +122,14 @@ class AdminPortal:
         logo_f.pack(side="top", fill="x")
         logo_f.pack_propagate(False)
         from commitmaster import windows_integration
-        logo_img = windows_integration.get_logo_photo(26)
+        logo_img = windows_integration.get_logo_photo(26, app_type="admin")
         if logo_img:
             self._sidebar_logo_img = logo_img
             tk.Label(logo_f, image=logo_img, bg=COLORS["bg_sidebar"]).pack(side="left", padx=(16, 8), pady=20)
-            tk.Label(logo_f, text="Admin Portal", font=FONTS["heading_sm"],
+            tk.Label(logo_f, text="CommitMaster Admin", font=FONTS["heading_sm"],
                      fg=COLORS["text_primary"], bg=COLORS["bg_sidebar"]).pack(side="left", pady=20)
         else:
-            tk.Label(logo_f, text="🛡 Admin Portal", font=FONTS["heading_sm"],
+            tk.Label(logo_f, text="🛡 CommitMaster Admin", font=FONTS["heading_sm"],
                      fg=COLORS["admin"], bg=COLORS["bg_sidebar"]).pack(
                 side="left", padx=16, pady=20)
 
@@ -1562,19 +1568,22 @@ class _UserDialog:
             if key == "username" and is_edit:
                 e.config(state="disabled")
 
-        # Role picker
+        # Role (strictly locked: only saumya.patel@Admin_# is admin)
         rf = tk.Frame(pad, bg=COLORS["bg_dark"])
         rf.pack(fill="x", pady=(0, 10))
-        tk.Label(rf, text="Role", font=FONTS["label_bold"],
-                 fg=COLORS["text_secondary"], bg=COLORS["bg_dark"]).pack(anchor="w")
-        self._role_var = tk.StringVar(value=self.user.get("role", "user") if is_edit else "user")
-        for r_val, r_label in [("user", "User"), ("admin", "Admin")]:
-            rb = tk.Radiobutton(rf, text=r_label, variable=self._role_var,
-                                value=r_val, font=FONTS["body_md"],
-                                fg=COLORS["text_primary"], bg=COLORS["bg_dark"],
-                                selectcolor=COLORS["bg_input"],
-                                activebackground=COLORS["bg_dark"])
-            rb.pack(side="left", padx=(0, 12))
+        is_saumya = is_edit and self.user.get("username") == "saumya.patel@Admin_#"
+        if is_saumya:
+            self._role_var = tk.StringVar(value="admin")
+            tk.Label(rf, text="Role: Administrator", font=FONTS["label_bold"],
+                     fg=COLORS["admin"], bg=COLORS["bg_dark"]).pack(anchor="w")
+            tk.Label(rf, text="Primary Administrator — role cannot be changed",
+                     font=FONTS["caption"], fg=COLORS["text_muted"], bg=COLORS["bg_dark"]).pack(anchor="w")
+        else:
+            self._role_var = tk.StringVar(value="user")
+            tk.Label(rf, text="Role: Standard User", font=FONTS["label_bold"],
+                     fg=COLORS["accent"], bg=COLORS["bg_dark"]).pack(anchor="w")
+            tk.Label(rf, text="Account role locked to User (only saumya.patel@Admin_# holds Admin rights)",
+                     font=FONTS["caption"], fg=COLORS["text_muted"], bg=COLORS["bg_dark"]).pack(anchor="w")
 
         # Buttons
         btn_f = tk.Frame(pad, bg=COLORS["bg_dark"])
