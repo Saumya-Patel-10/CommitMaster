@@ -7,14 +7,16 @@ import json
 import os
 import threading
 import tkinter as tk
-from tkinter import filedialog, messagebox, ttk
+from tkinter import colorchooser, filedialog, messagebox, ttk
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from commitmaster.app_styles import (
     COLORS, FONTS, SIZES, AVATAR_COLORS, THEMES, ACCENTS, FONT_FAMILIES, FONT_SCALES,
     apply_customization, get_active_customization
 )
+from commitmaster import pattern_utils
 from commitmaster import database as db
+from commitmaster import avatar_utils
 from commitmaster import commit_engine, ai_messages, ui, github_service, file_inspector
 from commitmaster import commit_composer, charts, navigation, issue_view
 from commitmaster.config import load_config
@@ -46,6 +48,7 @@ class UserDashboard:
             font_family=prefs.get("font_family"),
             font_scale=prefs.get("font_scale"),
             ui_density=prefs.get("ui_density"),
+            pattern=prefs.get("bg_pattern"),
         )
 
         self.root = tk.Tk()
@@ -405,23 +408,41 @@ class UserDashboard:
     def _build_sidebar(self):
         sb = self._sidebar
 
-        # 1. Pinned Top Header (Logo)
-        logo_f = tk.Frame(sb, bg=COLORS["bg_sidebar"], height=70)
+        # 1. Pinned Top Header (Logo with Pattern Texture)
+        logo_f = tk.Frame(sb, bg=COLORS["bg_sidebar"], height=72)
         logo_f.pack(side="top", fill="x")
         logo_f.pack_propagate(False)
+
+        pat = get_active_customization().get("pattern", "dot_matrix")
+        try:
+            sb_banner = pattern_utils.generate_sidebar_header_banner(
+                SIZES["sidebar_width"], 72, COLORS["bg_sidebar"], COLORS["accent"], pat
+            )
+            self._sb_banner_img = sb_banner
+            sb_bg_lbl = tk.Label(logo_f, image=sb_banner, bg=COLORS["bg_sidebar"], bd=0)
+            sb_bg_lbl.place(x=0, y=0, relwidth=1, relheight=1)
+        except Exception:
+            pass
+
         from commitmaster import windows_integration
         logo_img = windows_integration.get_logo_photo(26)
         if logo_img:
             self._sidebar_logo_img = logo_img
-            tk.Label(logo_f, image=logo_img, bg=COLORS["bg_sidebar"]).pack(side="left", padx=(16, 8), pady=20)
+            tk.Label(logo_f, image=logo_img, bg=COLORS["bg_sidebar"]).pack(side="left", padx=(14, 6), pady=20)
             tk.Label(logo_f, text="CommitMaster", font=FONTS["heading_sm"],
                      fg=COLORS["text_primary"], bg=COLORS["bg_sidebar"]).pack(side="left", pady=20)
         else:
             tk.Label(logo_f, text="⬡ CommitMaster", font=FONTS["heading_sm"],
                      fg=COLORS["accent"], bg=COLORS["bg_sidebar"]).pack(
-                side="left", padx=16, pady=20)
+                side="left", padx=14, pady=20)
 
-        tk.Frame(sb, height=1, bg=COLORS["border"]).pack(side="top", fill="x")
+        pro_chip = tk.Frame(logo_f, bg=COLORS["bg_medium"], highlightthickness=1,
+                            highlightbackground=COLORS["accent"], padx=6, pady=2)
+        pro_chip.pack(side="right", padx=(0, 12), pady=20)
+        tk.Label(pro_chip, text="PRO", font=("Segoe UI", 8, "bold"),
+                 fg=COLORS["accent"], bg=COLORS["bg_medium"]).pack()
+
+        tk.Frame(sb, height=2, bg=COLORS["accent"]).pack(side="top", fill="x")
 
         # 2. Pinned Bottom Footer (Switch Account & Sign Out)
         footer_f = tk.Frame(sb, bg=COLORS["bg_sidebar"])
@@ -475,14 +496,13 @@ class UserDashboard:
         # Avatar + name
         av_f = tk.Frame(target, bg=COLORS["bg_sidebar"], pady=16)
         av_f.pack(fill="x", padx=16)
-        color = self.user.get("avatar_color", AVATAR_COLORS[0])
-        initials = self._get_initials()
-        av = tk.Label(av_f, text=initials, font=FONTS["heading_sm"],
-                      bg=color, fg="white", width=4, height=2)
-        av.pack(anchor="w")
-        tk.Label(av_f, text=self.user.get("full_name") or self.user["username"],
+        self._sidebar_av_lbl = tk.Label(av_f, bg=COLORS["bg_sidebar"])
+        self._sidebar_av_lbl.pack(anchor="w")
+        self._sidebar_name_lbl = tk.Label(av_f, text=self.user.get("full_name") or self.user["username"],
                  font=FONTS["label_bold"], fg=COLORS["text_primary"],
-                 bg=COLORS["bg_sidebar"], wraplength=160).pack(anchor="w", pady=(4, 0))
+                 bg=COLORS["bg_sidebar"], wraplength=160)
+        self._sidebar_name_lbl.pack(anchor="w", pady=(4, 0))
+        self._refresh_sidebar_avatar()
         is_admin = db.is_admin_username(self.user.get("username", "")) and self.user.get("role") == "admin"
         role_tag = "● Admin" if is_admin else "● User"
         role_color = COLORS["admin"] if is_admin else COLORS["success"]
@@ -588,19 +608,43 @@ class UserDashboard:
     # ── Header ─────────────────────────────────────────────────────────────────
 
     def _build_header(self):
-        header = tk.Frame(self._main, bg=COLORS["bg_dark"], height=56)
+        header = tk.Frame(self._main, bg=COLORS["bg_dark"], height=58)
         self._header_frame = header
         header.pack(fill="x")
         header.pack_propagate(False)
-        tk.Frame(self._main, height=1, bg=COLORS["border"]).pack(fill="x")
+
+        # Background pattern banner label
+        self._hdr_bg_lbl = tk.Label(header, bg=COLORS["bg_dark"], bd=0)
+        self._hdr_bg_lbl.place(x=0, y=0, relwidth=1, relheight=1)
+
+        def _update_hdr_bg(e=None):
+            w = header.winfo_width()
+            if w > 10:
+                pat = get_active_customization().get("pattern", "dot_matrix")
+                banner = pattern_utils.generate_header_banner(
+                    w, 58, COLORS["bg_dark"], COLORS["accent"], pat
+                )
+                self._hdr_bg_lbl.config(image=banner)
+                self._hdr_bg_lbl._photo = banner
+
+        header.bind("<Configure>", _update_hdr_bg)
+
+        # Bottom glowing accent line
+        tk.Frame(self._main, height=2, bg=COLORS["accent"]).pack(fill="x")
+
         self._header_title = tk.Label(header, text="Overview",
                                       font=FONTS["heading_md"],
                                       fg=COLORS["text_primary"], bg=COLORS["bg_dark"])
-        self._header_title.pack(side="left", padx=24, pady=12)
-        # Right side: switch account & version badge
-        tk.Label(header, text="v3.0", font=FONTS["caption"],
-                 fg=COLORS["text_muted"], bg=COLORS["bg_dark"]).pack(
-            side="right", padx=(4, 16))
+        self._header_title.pack(side="left", padx=(12, 16), pady=12)
+
+        # Right side: live status pill & switch account
+        status_pill = tk.Frame(header, bg=COLORS["bg_card"], highlightthickness=1,
+                               highlightbackground=COLORS["border"], padx=8, pady=3)
+        status_pill.pack(side="right", padx=(4, 16), pady=12)
+        tk.Label(status_pill, text="●", font=("Segoe UI", 8),
+                 fg=COLORS["accent"], bg=COLORS["bg_card"]).pack(side="left", padx=(0, 4))
+        tk.Label(status_pill, text="Git Ready", font=FONTS["caption"],
+                 fg=COLORS["text_secondary"], bg=COLORS["bg_card"]).pack(side="left")
 
         hdr_switch_btn = tk.Button(
             header, text="👥 Switch Account", font=FONTS["caption"],
@@ -609,7 +653,7 @@ class UserDashboard:
             relief="flat", bd=0, cursor="hand2", padx=10, pady=4,
             command=self._open_account_switcher
         )
-        hdr_switch_btn.pack(side="right", padx=6)
+        hdr_switch_btn.pack(side="right", padx=6, pady=12)
         self._add_hover(hdr_switch_btn, COLORS["bg_card_hover"], COLORS["bg_card"])
 
     def _set_header(self, title: str):
@@ -632,13 +676,32 @@ class UserDashboard:
     def _stat_card(self, parent, title: str, value: str, color: str, icon: str):
         card = self._card(parent)
         card.pack(side="left", fill="both", expand=True, padx=6, pady=6)
-        inner = tk.Frame(card, bg=COLORS["bg_card"], padx=18, pady=16)
+
+        # Top 3px accent color stripe
+        tk.Frame(card, height=3, bg=color).pack(fill="x")
+
+        inner = tk.Frame(card, bg=COLORS["bg_card"], padx=16, pady=14)
         inner.pack(fill="both", expand=True)
-        tk.Label(inner, text=icon, font=("Segoe UI Emoji", 20),
-                 fg=color, bg=COLORS["bg_card"]).pack(anchor="w")
+
+        top_row = tk.Frame(inner, bg=COLORS["bg_card"])
+        top_row.pack(fill="x", pady=(0, 6))
+
+        # Icon medallion / badge
+        icon_box = tk.Frame(top_row, bg=COLORS["bg_medium"], highlightthickness=1,
+                            highlightbackground=color, padx=6, pady=3)
+        icon_box.pack(side="left")
+        tk.Label(icon_box, text=icon, font=("Segoe UI Emoji", 12),
+                 fg=color, bg=COLORS["bg_medium"]).pack()
+
+        # Mini live pill
+        pill = tk.Frame(top_row, bg=COLORS["bg_card"])
+        pill.pack(side="right")
+        tk.Label(pill, text="● LIVE", font=("Segoe UI", 8, "bold"),
+                 fg=color, bg=COLORS["bg_card"]).pack()
+
         tk.Label(inner, text=value, font=FONTS["heading_lg"],
-                 fg=color, bg=COLORS["bg_card"]).pack(anchor="w", pady=(4, 0))
-        tk.Label(inner, text=title, font=FONTS["body_sm"],
+                 fg=COLORS["text_primary"], bg=COLORS["bg_card"]).pack(anchor="w", pady=(0, 2))
+        tk.Label(inner, text=title.upper(), font=FONTS["caption"],
                  fg=COLORS["text_secondary"], bg=COLORS["bg_card"]).pack(anchor="w")
 
     # ── Pages ──────────────────────────────────────────────────────────────────
@@ -649,14 +712,70 @@ class UserDashboard:
         pad = tk.Frame(p, bg=COLORS["bg_dark"], padx=24, pady=20)
         pad.pack(fill="both", expand=True)
 
-        # Greeting
+        # ── Hero Pattern Banner Card ──────────────────────────────────────────
         name = self.user.get("full_name") or self.user["username"]
-        tk.Label(pad, text=f"Welcome back, {name}! 👋",
+        hero_card = tk.Frame(pad, bg=COLORS["bg_card"], highlightthickness=1,
+                             highlightbackground=COLORS["border"])
+        hero_card.pack(fill="x", pady=(0, 20))
+
+        hero_bg_lbl = tk.Label(hero_card, bg=COLORS["bg_card"], bd=0)
+        hero_bg_lbl.place(x=0, y=0, relwidth=1, relheight=1)
+
+        def _update_hero_bg(e=None):
+            w = hero_card.winfo_width()
+            if w > 20:
+                pat = get_active_customization().get("pattern", "dot_matrix")
+                banner = pattern_utils.generate_hero_card_banner(
+                    w, 105, COLORS["bg_card"], COLORS["accent"], pat
+                )
+                hero_bg_lbl.config(image=banner)
+                hero_bg_lbl._photo = banner
+
+        hero_card.bind("<Configure>", _update_hero_bg)
+        tk.Frame(hero_card, height=2, bg=COLORS["accent"]).pack(fill="x")
+
+        hero_inner = tk.Frame(hero_card, bg=COLORS["bg_card"], padx=22, pady=16)
+        hero_inner.pack(fill="both")
+
+        top_info = tk.Frame(hero_inner, bg=COLORS["bg_card"])
+        top_info.pack(fill="x", pady=(0, 6))
+
+        tk.Label(top_info, text=f"Welcome back, {name}! 👋",
                  font=FONTS["heading_lg"], fg=COLORS["text_primary"],
-                 bg=COLORS["bg_dark"]).pack(anchor="w")
-        tk.Label(pad, text="Here's your coding activity at a glance.",
-                 font=FONTS["body_md"], fg=COLORS["text_secondary"],
-                 bg=COLORS["bg_dark"]).pack(anchor="w", pady=(2, 20))
+                 bg=COLORS["bg_card"]).pack(side="left")
+
+        hero_badge = tk.Frame(top_info, bg=COLORS["bg_medium"], highlightthickness=1,
+                              highlightbackground=COLORS["accent"], padx=8, pady=3)
+        hero_badge.pack(side="right")
+        tk.Label(hero_badge, text="⚡ GIT ACTIVE", font=("Segoe UI", 8, "bold"),
+                 fg=COLORS["accent"], bg=COLORS["bg_medium"]).pack()
+
+        tk.Label(hero_inner, text="Intelligent session companion, automated Git commits, and real-time developer metrics.",
+                 font=FONTS["body_sm"], fg=COLORS["text_secondary"],
+                 bg=COLORS["bg_card"]).pack(anchor="w", pady=(0, 10))
+
+        actions_bar = tk.Frame(hero_inner, bg=COLORS["bg_card"])
+        actions_bar.pack(anchor="w")
+
+        btn1 = tk.Button(actions_bar, text="🚀 Review & Commit", font=FONTS["caption"],
+                         bg=COLORS["accent"], fg="#ffffff", activebackground=COLORS["accent_hover"],
+                         relief="flat", bd=0, cursor="hand2", padx=12, pady=5,
+                         command=lambda: self._go("git_desktop"))
+        btn1.pack(side="left", padx=(0, 8))
+
+        btn2 = tk.Button(actions_bar, text="📁 Watched Repos", font=FONTS["caption"],
+                         bg=COLORS["bg_medium"], fg=COLORS["text_primary"],
+                         activebackground=COLORS["bg_card_hover"],
+                         relief="flat", bd=0, cursor="hand2", padx=12, pady=5,
+                         command=lambda: self._go("watched_repos"))
+        btn2.pack(side="left", padx=(0, 8))
+
+        btn3 = tk.Button(actions_bar, text="🎨 Surface Patterns", font=FONTS["caption"],
+                         bg=COLORS["bg_medium"], fg=COLORS["text_secondary"],
+                         activebackground=COLORS["bg_card_hover"],
+                         relief="flat", bd=0, cursor="hand2", padx=12, pady=5,
+                         command=lambda: self._go("customize"))
+        btn3.pack(side="left")
 
         # Stats row
         activity = db.get_activity_log(self.user["id"], limit=1000)
@@ -1818,27 +1937,143 @@ class UserDashboard:
 
         tk.Label(pad, text="Profile", font=FONTS["heading_lg"],
                  fg=COLORS["text_primary"], bg=COLORS["bg_dark"]).pack(anchor="w")
-        tk.Label(pad, text="Manage your personal information.",
+        tk.Label(pad, text="Manage your personal profile, custom avatar logo, and account settings.",
                  font=FONTS["body_sm"], fg=COLORS["text_secondary"],
                  bg=COLORS["bg_dark"]).pack(anchor="w", pady=(2, 16))
 
-        # Avatar selector row
-        av_row = tk.Frame(pad, bg=COLORS["bg_dark"])
-        av_row.pack(anchor="w", pady=(0, 16))
+        # ── Avatar & Profile Picture Studio ────────────────────────────────────
+        av_card = self._card(pad, padx=20, pady=16)
+        av_card.pack(fill="x", pady=(0, 14))
+
+        tk.Label(av_card, text="Avatar & Profile Picture", font=FONTS["heading_sm"],
+                 fg=COLORS["text_primary"], bg=COLORS["bg_card"]).pack(anchor="w", pady=(0, 10))
+
+        av_main_row = tk.Frame(av_card, bg=COLORS["bg_card"])
+        av_main_row.pack(fill="x")
+
+        # Live avatar preview
+        self._prof_av_lbl = tk.Label(av_main_row, bg=COLORS["bg_card"])
+        self._prof_av_lbl.pack(side="left", padx=(0, 20), anchor="n")
+
+        av_ctrl_f = tk.Frame(av_main_row, bg=COLORS["bg_card"])
+        av_ctrl_f.pack(side="left", fill="both", expand=True)
+
         self._selected_color = tk.StringVar(value=self.user.get("avatar_color", AVATAR_COLORS[0]))
 
-        tk.Label(av_row, text="Avatar Color:", font=FONTS["label_bold"],
-                 fg=COLORS["text_secondary"], bg=COLORS["bg_dark"]).pack(side="left")
-        for color in AVATAR_COLORS:
-            dot = tk.Label(av_row, text="  ", bg=color, width=3,
-                           cursor="hand2",
-                           highlightthickness=2,
-                           highlightbackground=COLORS["border"])
-            dot.pack(side="left", padx=4)
-            dot.bind("<Button-1>", lambda e, c=color: self._selected_color.set(c))
+        def _refresh_prof_preview():
+            try:
+                self.user["avatar_color"] = self._selected_color.get()
+                photo = avatar_utils.get_avatar_photo(self.user, size=72, rounded=True, master=self.root)
+                if photo:
+                    self._prof_av_lbl.config(image=photo, text="", width=72, height=72)
+                    self._prof_av_lbl.image = photo
+                else:
+                    self._prof_av_lbl.config(
+                        image="", text=self._get_initials(),
+                        font=FONTS["heading_lg"], fg="white",
+                        bg=self._selected_color.get(), width=4, height=2
+                    )
+            except Exception:
+                pass
 
+        _refresh_prof_preview()
+
+        # Image PFP actions
+        pfp_actions_f = tk.Frame(av_ctrl_f, bg=COLORS["bg_card"])
+        pfp_actions_f.pack(anchor="w", pady=(0, 12))
+
+        def _upload_pfp():
+            filetypes = [
+                ("Image files", "*.png *.jpg *.jpeg *.webp *.bmp *.gif"),
+                ("All files", "*.*")
+            ]
+            path = filedialog.askopenfilename(
+                title="Select Profile Picture",
+                filetypes=filetypes,
+                parent=self.root
+            )
+            if not path:
+                return
+            ok, res = avatar_utils.save_avatar_image(self.user["id"], path)
+            if ok:
+                self.user["avatar_image"] = res
+                _refresh_prof_preview()
+                self._refresh_sidebar_avatar()
+                messagebox.showinfo("Profile Picture Updated", "Your new profile picture has been saved successfully!", parent=self.root)
+            else:
+                messagebox.showerror("Error", res, parent=self.root)
+
+        def _remove_pfp():
+            if not self.user.get("avatar_image"):
+                messagebox.showinfo("No Picture", "You are already using a custom avatar logo.", parent=self.root)
+                return
+            if avatar_utils.remove_avatar_image(self.user["id"]):
+                self.user["avatar_image"] = ""
+                _refresh_prof_preview()
+                self._refresh_sidebar_avatar()
+                messagebox.showinfo("Picture Removed", "Profile picture removed. Reverted to custom avatar logo.", parent=self.root)
+            else:
+                messagebox.showerror("Error", "Could not remove profile picture.", parent=self.root)
+
+        btn_upload = tk.Button(
+            pfp_actions_f, text="  📁  Upload Image PFP", font=FONTS["caption"],
+            bg=COLORS["accent"], fg="white", activebackground=COLORS["accent_hover"],
+            activeforeground="white", relief="flat", bd=0, cursor="hand2", padx=14, pady=6,
+            command=_upload_pfp
+        )
+        btn_upload.pack(side="left", padx=(0, 8))
+        self._add_hover(btn_upload, COLORS["accent_hover"], COLORS["accent"])
+
+        btn_remove = tk.Button(
+            pfp_actions_f, text="  ✕  Remove Picture", font=FONTS["caption"],
+            bg=COLORS["bg_medium"], fg=COLORS["text_secondary"],
+            activebackground=COLORS["bg_darkest"], activeforeground="white",
+            relief="flat", bd=0, cursor="hand2", padx=12, pady=6,
+            command=_remove_pfp
+        )
+        btn_remove.pack(side="left")
+        self._add_hover(btn_remove, COLORS["bg_card_hover"], COLORS["bg_medium"])
+
+        # Custom Avatar Logo / Color Picker
+        tk.Label(av_ctrl_f, text="Or customize your avatar logo color:",
+                 font=FONTS["label_bold"], fg=COLORS["text_secondary"],
+                 bg=COLORS["bg_card"]).pack(anchor="w", pady=(0, 6))
+
+        color_row = tk.Frame(av_ctrl_f, bg=COLORS["bg_card"])
+        color_row.pack(anchor="w")
+
+        for color in AVATAR_COLORS:
+            dot = tk.Label(color_row, text="  ", bg=color, width=3,
+                           cursor="hand2", highlightthickness=2,
+                           highlightbackground=COLORS["border"])
+            dot.pack(side="left", padx=3)
+            def _make_c_cb(c):
+                return lambda e: (self._selected_color.set(c), _refresh_prof_preview(), self._refresh_sidebar_avatar())
+            dot.bind("<Button-1>", _make_c_cb(color))
+
+        def _pick_custom_color():
+            current = self._selected_color.get() or "#3fb950"
+            chosen = colorchooser.askcolor(color=current, title="Pick Custom Avatar Color", parent=self.root)
+            if chosen and chosen[1]:
+                self._selected_color.set(chosen[1])
+                _refresh_prof_preview()
+                self._refresh_sidebar_avatar()
+
+        custom_col_btn = tk.Button(
+            color_row, text="🎨 Custom Color...", font=FONTS["caption"],
+            bg=COLORS["bg_input"], fg=COLORS["text_primary"],
+            activebackground=COLORS["bg_card_hover"], relief="flat", bd=0,
+            cursor="hand2", padx=10, pady=3, highlightthickness=1,
+            highlightbackground=COLORS["border"], command=_pick_custom_color
+        )
+        custom_col_btn.pack(side="left", padx=(8, 0))
+
+        # ── Personal Information Card ──────────────────────────────────────────
         card = self._card(pad, padx=20, pady=16)
-        card.pack(fill="x", pady=(0, 12))
+        card.pack(fill="x", pady=(0, 14))
+
+        tk.Label(card, text="Personal Information", font=FONTS["heading_sm"],
+                 fg=COLORS["text_primary"], bg=COLORS["bg_card"]).pack(anchor="w", pady=(0, 10))
 
         fields = [
             ("Full Name", self.user.get("full_name", ""), "full_name"),
@@ -1858,46 +2093,6 @@ class UserDashboard:
                          relief="flat", highlightthickness=1,
                          highlightbackground=COLORS["border"])
             e.pack(side="left", fill="x", expand=True, ipady=6)
-
-        # ── Verification Status & Google Account OTP
-        ver_row = tk.Frame(card, bg=COLORS["bg_card"])
-        ver_row.pack(fill="x", pady=(0, 10))
-        tk.Label(ver_row, text="Verification:", font=FONTS["label_bold"],
-                 fg=COLORS["text_secondary"], bg=COLORS["bg_card"],
-                 width=12, anchor="w").pack(side="left")
-
-        is_ver = db.is_user_verified(self.user["id"])
-        if is_ver:
-            tk.Label(ver_row, text="✔ Verified Google Account", font=FONTS["label_bold"],
-                     fg=COLORS["success"], bg=COLORS["bg_card"]).pack(side="left")
-        else:
-            tk.Label(ver_row, text="⚠️ Unverified", font=FONTS["label"],
-                     fg=COLORS["warning"], bg=COLORS["bg_card"]).pack(side="left")
-
-            def _trigger_google_otp():
-                u_email = self._profile_vars["email"].get().strip() or self.user.get("email", "")
-                if not u_email:
-                    messagebox.showwarning("No Email", "Please enter an email address first.", parent=self.root)
-                    return
-                from commitmaster import otp_service
-                ok, msg, code = otp_service.send_google_otp(u_email, purpose="verify_account")
-                if not ok:
-                    messagebox.showerror("Error", msg, parent=self.root)
-                    return
-
-                def _on_v():
-                    db.mark_user_verified(self.user["id"])
-                    self.user["is_verified"] = 1
-                    messagebox.showinfo("Verified", "Your Google account has been verified successfully!", parent=self.root)
-                    self._nav_to("profile")
-
-                otp_service.GoogleOtpDialog(self.root, u_email, on_success=_on_v, purpose="verify_account", initial_code=code)
-
-            otp_v_btn = tk.Button(ver_row, text="🔐 Verify with Google OTP", font=FONTS["caption"],
-                                  fg="white", bg=COLORS["accent"], relief="flat", bd=0, cursor="hand2",
-                                  padx=10, pady=2, command=_trigger_google_otp)
-            otp_v_btn.pack(side="left", padx=12)
-            self._add_hover(otp_v_btn, COLORS["accent_hover"], COLORS["accent"])
 
         # Bio
         bio_f = tk.Frame(card, bg=COLORS["bg_card"])
@@ -1919,12 +2114,12 @@ class UserDashboard:
                              activeforeground="white", relief="flat", bd=0,
                              cursor="hand2", padx=20, pady=10,
                              command=self._save_profile)
-        save_btn.pack(anchor="w", pady=(0, 16))
+        save_btn.pack(anchor="w", pady=(0, 14))
         self._add_hover(save_btn, COLORS["accent_hover"], COLORS["accent"])
 
         # ── Change password ────────────────────────────────────────────────────
         card2 = self._card(pad, padx=20, pady=16)
-        card2.pack(fill="x")
+        card2.pack(fill="x", pady=(0, 14))
         tk.Label(card2, text="Change Password", font=FONTS["heading_sm"],
                  fg=COLORS["text_primary"], bg=COLORS["bg_card"]).pack(anchor="w", pady=(0, 10))
 
@@ -1954,15 +2149,86 @@ class UserDashboard:
                            command=self._change_password)
         pw_btn.pack(anchor="w", pady=(4, 0))
 
+        # ── Danger Zone: Delete Account ─────────────────────────────────────────
+        danger_card = tk.Frame(pad, bg=COLORS["bg_card"],
+                               highlightbackground="#da3633", highlightthickness=1,
+                               padx=20, pady=16)
+        danger_card.pack(fill="x", pady=(0, 14))
+
+        tk.Label(danger_card, text="⚠️ Danger Zone — Delete Account",
+                 font=FONTS["heading_sm"], fg="#f85149", bg=COLORS["bg_card"]).pack(anchor="w")
+        tk.Label(danger_card,
+                 text="Once requested, your account will be deactivated. You will have 30 days to log back in to recover it.\n"
+                      "After 30 days without logging in, your account and all associated data will be permanently wiped.",
+                 font=FONTS["caption"], fg=COLORS["text_secondary"], bg=COLORS["bg_card"],
+                 justify="left").pack(anchor="w", pady=(4, 12))
+
+        del_btn = tk.Button(
+            danger_card, text="  🗑  Delete My Account",
+            font=FONTS["label_bold"], fg="white", bg="#da3633",
+            activebackground="#b62324", activeforeground="white",
+            relief="flat", bd=0, cursor="hand2", padx=16, pady=8,
+            command=self._confirm_delete_account
+        )
+        del_btn.pack(anchor="w")
+
     def _save_profile(self):
+        color = self._selected_color.get()
         db.update_user(
             self.user["id"],
-            full_name=self._profile_vars["full_name"].get(),
-            email=self._profile_vars["email"].get(),
+            full_name=self._profile_vars["full_name"].get().strip(),
+            email=self._profile_vars["email"].get().strip(),
             bio=self._bio_text.get("1.0", "end-1c"),
-            avatar_color=self._selected_color.get(),
+            avatar_color=color,
         )
+        updated = db.get_user(self.user["id"])
+        if updated:
+            self.user.update(updated)
+        self._refresh_sidebar_avatar()
         messagebox.showinfo("Saved", "Profile updated successfully!", parent=self.root)
+
+    def _confirm_delete_account(self):
+        """Prompt user with confirmation, notify 30-day recovery policy, and soft-delete."""
+        is_primary_admin = db.is_admin_username(self.user.get("username", ""))
+        if is_primary_admin:
+            messagebox.showwarning(
+                "Primary Admin Protected",
+                "The primary administrator account cannot be deleted.\n\n"
+                "Secondary user accounts can be deleted at any time.",
+                parent=self.root
+            )
+            return
+
+        confirmed = messagebox.askyesno(
+            "Confirm Account Deletion",
+            "Are you sure you want to delete your account?\n\n"
+            "This will immediately deactivate your account and log you out.",
+            icon="warning",
+            parent=self.root
+        )
+        if not confirmed:
+            return
+
+        ok, msg = db.soft_delete_user(self.user["id"])
+        if not ok:
+            messagebox.showerror("Error", f"Failed to delete account: {msg}", parent=self.root)
+            return
+
+        try:
+            from commitmaster import account_manager
+            account_manager.remove_account(self.user["id"])
+        except Exception:
+            pass
+
+        messagebox.showinfo(
+            "Account Scheduled for Deletion",
+            "Your account has been scheduled for deletion.\n\n"
+            "You have 30 days to re-login and recover your account.\n"
+            "If you do not log in within 30 days, your account and all associated data will be permanently deleted.",
+            parent=self.root
+        )
+
+        self._do_logout()
 
     def _change_password(self):
         new_pw = self._pw_vars["new_pw"].get()
@@ -2974,6 +3240,53 @@ class UserDashboard:
             swatch_f.bind("<Button-1>", make_handler())
             self._theme_cards[t_key] = t_card
 
+        # ── Surface Patterns & Procedural Textures Section ────────────────────
+        self._section_title(pad, "Surface Patterns & Procedural Textures", pady=(8, 4))
+        tk.Label(pad, text="Procedural geometric patterns and tactile textures rendered across headers, cards, and desktop backgrounds (avoids plain flat colors).",
+                 font=FONTS["caption"], fg=COLORS["text_secondary"], bg=COLORS["bg_dark"]).pack(anchor="w", pady=(0, 8))
+
+        pat_grid = tk.Frame(pad, bg=COLORS["bg_dark"])
+        pat_grid.pack(fill="x", pady=(0, 16))
+
+        self._custom_pattern = curr.get("pattern", "dot_matrix")
+        self._pattern_cards = {}
+        for col_idx, (p_key, p_info) in enumerate(pattern_utils.PATTERNS.items()):
+            col = col_idx % 4
+            row = col_idx // 4
+            p_card = tk.Frame(pat_grid, bg=COLORS["bg_card"],
+                              highlightthickness=2,
+                              highlightbackground=COLORS["accent"] if p_key == self._custom_pattern else COLORS["border"],
+                              padx=10, pady=8, cursor="hand2")
+            p_card.grid(row=row, column=col, padx=6, pady=6, sticky="nsew")
+            pat_grid.grid_columnconfigure(col, weight=1)
+
+            # Preview thumbnail
+            try:
+                thumb = pattern_utils.generate_pattern_preview_card(p_key, COLORS["bg_card"], COLORS["accent"], width=130, height=45)
+                thumb_lbl = tk.Label(p_card, image=thumb, bg=COLORS["bg_card"], cursor="hand2", bd=0)
+                thumb_lbl._thumb = thumb
+                thumb_lbl.pack(fill="x", pady=(0, 6))
+            except Exception:
+                thumb_lbl = tk.Label(p_card, text=p_info["icon"], font=("Segoe UI", 16), bg=COLORS["bg_card"])
+                thumb_lbl.pack(pady=(0, 4))
+
+            # Pattern title & description
+            p_title = tk.Label(p_card, text=f"{p_info['icon']}  {p_info['name']}",
+                               font=FONTS["label_bold"], fg=COLORS["text_primary"],
+                               bg=COLORS["bg_card"], cursor="hand2")
+            p_title.pack(anchor="w")
+            p_desc = tk.Label(p_card, text=p_info["desc"],
+                              font=FONTS["caption"], fg=COLORS["text_secondary"],
+                              bg=COLORS["bg_card"], wraplength=140, justify="left", cursor="hand2")
+            p_desc.pack(anchor="w", pady=(2, 0))
+
+            def make_pat_handler(pk=p_key):
+                return lambda e: self._select_pattern_card(pk)
+
+            for w in (p_card, thumb_lbl, p_title, p_desc):
+                w.bind("<Button-1>", make_pat_handler())
+            self._pattern_cards[p_key] = p_card
+
         # ── Accent Colors Section ─────────────────────────────────────────────
         self._section_title(pad, "Primary Accent Color", pady=(8, 10))
         accent_card = self._card(pad, padx=20, pady=16)
@@ -3086,6 +3399,18 @@ class UserDashboard:
         reset_btn.pack(side="left")
         self._add_hover(reset_btn, COLORS["bg_card_hover"], COLORS["bg_medium"])
 
+    def _select_pattern_card(self, pattern_key: str):
+        self._custom_pattern = pattern_key
+        for k, card in getattr(self, "_pattern_cards", {}).items():
+            border_c = COLORS["accent"] if k == pattern_key else COLORS["border"]
+            card.config(highlightbackground=border_c)
+        apply_customization(pattern=pattern_key)
+        try:
+            db.update_preferences(self.user["id"], bg_pattern=pattern_key)
+        except Exception:
+            pass
+        self._rebuild_ui("customize")
+
     def _select_theme_card(self, theme_key: str):
         self._custom_theme = theme_key
         for k, card in self._theme_cards.items():
@@ -3113,6 +3438,7 @@ class UserDashboard:
         family = self._custom_font_family.get()
         scale = self._custom_font_scale.get()
         density = self._custom_density.get()
+        pattern = getattr(self, "_custom_pattern", "dot_matrix")
         auto_push = 1 if self._custom_auto_push.get() else 0
 
         db.update_preferences(
@@ -3122,6 +3448,7 @@ class UserDashboard:
             font_family=family,
             font_scale=scale,
             ui_density=density,
+            bg_pattern=pattern,
             auto_push=auto_push,
         )
 
@@ -3131,6 +3458,7 @@ class UserDashboard:
             font_family=family,
             font_scale=scale,
             ui_density=density,
+            pattern=pattern,
         )
 
         messagebox.showinfo("Applied", "Interface customization applied successfully!", parent=self.root)
@@ -3144,8 +3472,9 @@ class UserDashboard:
             font_family="Segoe UI",
             font_scale="standard",
             ui_density="comfortable",
+            bg_pattern="dot_matrix",
         )
-        apply_customization("github_dark", "green", "Segoe UI", "standard", "comfortable")
+        apply_customization("github_dark", "green", "Segoe UI", "standard", "comfortable", "dot_matrix")
         self._rebuild_ui("customize")
 
     # ── Helpers ───────────────────────────────────────────────────────────────
@@ -3156,6 +3485,23 @@ class UserDashboard:
         if len(parts) >= 2:
             return (parts[0][0] + parts[-1][0]).upper()
         return name[:2].upper()
+
+    def _refresh_sidebar_avatar(self):
+        try:
+            from commitmaster import avatar_utils
+            photo = avatar_utils.get_avatar_photo(self.user, size=46, rounded=True, master=self.root)
+            if photo and hasattr(self, "_sidebar_av_lbl"):
+                self._sidebar_av_lbl.config(image=photo, text="", bg=COLORS["bg_sidebar"], width=46, height=46)
+                self._sidebar_av_lbl.image = photo
+            elif hasattr(self, "_sidebar_av_lbl"):
+                color = self.user.get("avatar_color", AVATAR_COLORS[0])
+                initials = self._get_initials()
+                self._sidebar_av_lbl.config(image="", text=initials, font=FONTS["heading_sm"],
+                                            bg=color, fg="white", width=4, height=2)
+            if hasattr(self, "_sidebar_name_lbl"):
+                self._sidebar_name_lbl.config(text=self.user.get("full_name") or self.user["username"])
+        except Exception:
+            pass
 
     def _do_logout(self):
         if hasattr(self, "_reminder_service") and self._reminder_service:
