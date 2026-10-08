@@ -8,6 +8,7 @@
   "skip_sensitive_files": true,
   "sensitive_patterns": [".env", ".pem", ".key", "secret", "credential", ".p12", "id_rsa"],
   "github_desktop_path": "",
+  "server_url": "",
   "ai": {
     "provider": "bionic",
     "base_url": "http://localhost:1234/v1",
