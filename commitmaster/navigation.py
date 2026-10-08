@@ -86,10 +86,17 @@ class PageNavigator:
                 w.destroy()
             render()
             self.root.update_idletasks()
-            self.canvas.configure(scrollregion=self.canvas.bbox("all"))
-            self.canvas.yview_moveto(0)
         finally:
             self.canvas.itemconfigure(self.window_id, state="normal")
+            self.root.update_idletasks()
+            bbox = self.canvas.bbox("all")
+            if bbox and (bbox[2] > 1 or bbox[3] > 1):
+                self.canvas.configure(scrollregion=bbox)
+            else:
+                req_h = self.content.winfo_reqheight()
+                req_w = max(self.content.winfo_reqwidth(), self.canvas.winfo_width())
+                self.canvas.configure(scrollregion=(0, 0, req_w, max(req_h, self.canvas.winfo_height())))
+            self.canvas.yview_moveto(0)
             self.refresh_buttons()
 
     def step(self, delta: int) -> Optional[str]:
