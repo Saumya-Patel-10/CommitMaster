@@ -23,3 +23,9 @@ venv/
 *.log
 .admin_session
 .session_token
+.commitmaster_accounts.json
+.env
+.env.*
+*.log
+commitmaster.log
+msix_layout/
