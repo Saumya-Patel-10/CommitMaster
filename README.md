@@ -89,6 +89,12 @@ CommitMaster has evolved from a lightweight background script into a full-fledge
 - **Custom Accent Colors**: Emerald Green, Cyan, Electric Blue, Purple, Orange, or custom Hex.
 - **Typography & Density Scaling**: Font family selection, UI density controls (Comfortable / Compact), and font scaling (90% to 115%).
 
+### 🔔 Bottom-Right Notification Reminder System
+- **1. Interval-Based Reminders (Timer)**: Set custom intervals in hours and minutes (with quick presets like 30m, 1h, 2h, 4h). CommitMaster automatically alerts you via a floating card in the bottom-right corner of your screen.
+- **2. App & IDE Monitoring (Session Lifecycle)**: Keeps an eye on your desktop for IDEs (VS Code, Cursor, Antigravity, PyCharm, IntelliJ, etc.). When you start your IDE, CommitMaster tracks your session. When you close the IDE, a reminder appears to ensure you commit your work and changes.
+- **Interactive Bottom-Right Toast**: Displays a native Windows work-area anchored card with dirty repository previews, **"🚀 Review & Commit"** action button, **"⏱ Snooze (15m)"**, and hover-aware auto-dismiss.
+- **Smart Filters & Test Preview**: Option to only notify if uncommitted changes exist, plus an instant "🔔 Test Bottom-Right Alert" button to preview the experience.
+
 ---
 
 ## 📐 Architecture Diagram
