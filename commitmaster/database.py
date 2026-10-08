@@ -130,15 +130,20 @@ def init_db() -> None:
         CREATE TABLE IF NOT EXISTS users (
             id          INTEGER PRIMARY KEY AUTOINCREMENT,
             username    TEXT    NOT NULL UNIQUE,
-            email       TEXT    NOT NULL UNIQUE,
+            email       TEXT    NOT NULL,
             full_name   TEXT    NOT NULL DEFAULT '',
             password_hash TEXT  NOT NULL,
             role        TEXT    NOT NULL DEFAULT 'user',
             avatar_color TEXT   NOT NULL DEFAULT '#3fb950',
+            avatar_image TEXT   DEFAULT '',
             is_active   INTEGER NOT NULL DEFAULT 1,
             created_at  TEXT    NOT NULL DEFAULT (datetime('now')),
             last_login  TEXT,
-            bio         TEXT    DEFAULT ''
+            bio         TEXT    DEFAULT '',
+            is_verified INTEGER NOT NULL DEFAULT 0,
+            google_id   TEXT    DEFAULT '',
+            deleted_at  TEXT    DEFAULT NULL,
+            deletion_scheduled_until TEXT DEFAULT NULL
         )
     """)
 
@@ -312,6 +317,7 @@ def init_db() -> None:
             "reminder_interval_minutes": "ALTER TABLE user_preferences ADD COLUMN reminder_interval_minutes INTEGER DEFAULT 0",
             "reminder_app_monitor_enabled": "ALTER TABLE user_preferences ADD COLUMN reminder_app_monitor_enabled INTEGER DEFAULT 1",
             "reminder_only_if_dirty": "ALTER TABLE user_preferences ADD COLUMN reminder_only_if_dirty INTEGER DEFAULT 1",
+            "bg_pattern": "ALTER TABLE user_preferences ADD COLUMN bg_pattern TEXT DEFAULT 'dot_matrix'",
         }
         for col_name, ddl in migration_ddls.items():
             if col_name not in existing_cols:
@@ -326,10 +332,57 @@ def init_db() -> None:
             cur.execute("ALTER TABLE users ADD COLUMN is_verified INTEGER NOT NULL DEFAULT 0")
         if "google_id" not in user_cols:
             cur.execute("ALTER TABLE users ADD COLUMN google_id TEXT DEFAULT ''")
+        if "avatar_image" not in user_cols:
+            cur.execute("ALTER TABLE users ADD COLUMN avatar_image TEXT DEFAULT ''")
+        if "deleted_at" not in user_cols:
+            cur.execute("ALTER TABLE users ADD COLUMN deleted_at TEXT DEFAULT NULL")
+        if "deletion_scheduled_until" not in user_cols:
+            cur.execute("ALTER TABLE users ADD COLUMN deletion_scheduled_until TEXT DEFAULT NULL")
+
+        # Migrate users table if unique constraint exists on email
+        sql_row = cur.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='users'").fetchone()
+        if sql_row and "email TEXT NOT NULL UNIQUE" in (sql_row[0] or ""):
+            cur.execute("PRAGMA foreign_keys=OFF")
+            cur.execute("""
+                CREATE TABLE users_migrated (
+                    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                    username    TEXT    NOT NULL UNIQUE,
+                    email       TEXT    NOT NULL,
+                    full_name   TEXT    NOT NULL DEFAULT '',
+                    password_hash TEXT  NOT NULL,
+                    role        TEXT    NOT NULL DEFAULT 'user',
+                    avatar_color TEXT   NOT NULL DEFAULT '#3fb950',
+                    avatar_image TEXT   DEFAULT '',
+                    is_active   INTEGER NOT NULL DEFAULT 1,
+                    created_at  TEXT    NOT NULL DEFAULT (datetime('now')),
+                    last_login  TEXT,
+                    bio         TEXT    DEFAULT '',
+                    is_verified INTEGER NOT NULL DEFAULT 0,
+                    google_id   TEXT    DEFAULT '',
+                    deleted_at  TEXT    DEFAULT NULL,
+                    deletion_scheduled_until TEXT DEFAULT NULL
+                )
+            """)
+            cur.execute("""
+                INSERT INTO users_migrated (id, username, email, full_name, password_hash, role, avatar_color, avatar_image, is_active, created_at, last_login, bio, is_verified, google_id)
+                SELECT id, username, email, full_name, password_hash, role, avatar_color,
+                       COALESCE(avatar_image, ''), is_active, created_at, last_login, bio,
+                       COALESCE(is_verified, 0), COALESCE(google_id, '')
+                FROM users
+            """)
+            cur.execute("DROP TABLE users")
+            cur.execute("ALTER TABLE users_migrated RENAME TO users")
+            cur.execute("PRAGMA foreign_keys=ON")
     except Exception:
         pass
 
     conn.commit()
+
+    # Automatically purge any accounts whose 30-day recovery grace period has expired
+    try:
+        clean_expired_deleted_accounts()
+    except Exception:
+        pass
 
     # Create default admin if no users exist
     _ensure_default_admin(conn)
@@ -514,10 +567,10 @@ def _ensure_default_admin(conn: sqlite3.Connection) -> None:
 
 # ── User CRUD ──────────────────────────────────────────────────────────────────
 
-def check_user_exists(username: str, email: str) -> Optional[str]:
+def check_user_exists(username: str, email: str = "") -> Optional[str]:
     """
     Check if a username or email is already taken.
-    Returns 'username' if username exists, 'email' if email exists, or None if available.
+    Returns 'username' if username exists, 'email' if email exists, or None.
     """
     url = get_server_url()
     if url:
@@ -536,20 +589,21 @@ def check_user_exists(username: str, email: str) -> Optional[str]:
     conn = get_conn()
     cur = conn.execute("""
         SELECT username, email FROM users
-        WHERE LOWER(username) = LOWER(?) OR LOWER(email) = LOWER(?)
-    """, (username.strip(), email.strip()))
-    row = cur.fetchone()
-    if row:
+        WHERE LOWER(username) = LOWER(?) OR (LOWER(email) = LOWER(?) AND ? != '')
+    """, (username.strip(), email.strip().lower(), email.strip()))
+    rows = cur.fetchall()
+    for row in rows:
         if row["username"].lower() == username.strip().lower():
             return "username"
-        return "email"
+        if email.strip() and row["email"] and row["email"].lower() == email.strip().lower():
+            return "email"
     return None
 
 
 def create_user(username: str, email: str, full_name: str, password: str,
-                role: str = "user", avatar_color: str = "#3fb950") -> Optional[int]:
+                role: str = "user", avatar_color: str = "#3fb950", avatar_image: str = "") -> Optional[int]:
     """Create a new user. Returns user ID or None on failure."""
-    # Enforce strictly: only designated admin username is admin
+    # Enforce strictly: only designated admin username is admin. All other accounts are strictly standard users.
     if not is_admin_username(username.strip()):
         role = "user"
     url = get_server_url()
@@ -562,6 +616,7 @@ def create_user(username: str, email: str, full_name: str, password: str,
                 "password": password,
                 "role": role,
                 "avatar_color": avatar_color,
+                "avatar_image": avatar_image,
             }, timeout=8)
             if resp.status_code in (200, 201):
                 data = resp.json()
@@ -578,9 +633,9 @@ def create_user(username: str, email: str, full_name: str, password: str,
     try:
         pw_hash = _hash_password(password)
         cur = conn.execute("""
-            INSERT INTO users (username, email, full_name, password_hash, role, avatar_color)
-            VALUES (?, ?, ?, ?, ?, ?)
-        """, (username.strip(), email.strip().lower(), full_name.strip(), pw_hash, role, avatar_color))
+            INSERT INTO users (username, email, full_name, password_hash, role, avatar_color, avatar_image, is_verified)
+            VALUES (?, ?, ?, ?, ?, ?, ?, 1)
+        """, (username.strip(), email.strip().lower(), full_name.strip(), pw_hash, role, avatar_color, avatar_image))
         uid = cur.lastrowid
         conn.execute("INSERT OR IGNORE INTO user_preferences (user_id) VALUES (?)", (uid,))
         conn.commit()
@@ -590,7 +645,12 @@ def create_user(username: str, email: str, full_name: str, password: str,
 
 
 def authenticate(username_or_email: str, password: str) -> Optional[Dict]:
-    """Authenticate user by username or email. Returns user dict or None."""
+    """
+    Authenticate user by username or email.
+    Supports accounts sharing an email by checking candidates against the password.
+    If an account was scheduled for deletion within the last 30 days, it is automatically recovered.
+    If the 30-day recovery period has elapsed, the account is permanently deleted.
+    """
     url = get_server_url()
     if url:
         try:
@@ -613,14 +673,48 @@ def authenticate(username_or_email: str, password: str) -> Optional[Dict]:
     conn = get_conn()
     cur = conn.execute("""
         SELECT * FROM users
-        WHERE (LOWER(username) = LOWER(?) OR LOWER(email) = LOWER(?)) AND is_active = 1
+        WHERE LOWER(username) = LOWER(?) OR LOWER(email) = LOWER(?)
     """, (username_or_email.strip(), username_or_email.strip()))
-    row = cur.fetchone()
-    if row and _verify_password(password, row["password_hash"]):
-        conn.execute("UPDATE users SET last_login = datetime('now') WHERE id = ?", (row["id"],))
-        conn.commit()
-        _record_daily_session(row["id"])
-        return dict(row)
+    candidates = cur.fetchall()
+    now_dt = datetime.now()
+
+    for row in candidates:
+        if _verify_password(password, row["password_hash"]):
+            # Check 30-day deletion recovery
+            if row["deleted_at"] is not None:
+                until_str = row["deletion_scheduled_until"]
+                is_expired = False
+                if until_str:
+                    try:
+                        until_dt = datetime.strptime(until_str, "%Y-%m-%d %H:%M:%S")
+                        if now_dt > until_dt:
+                            is_expired = True
+                    except Exception:
+                        pass
+
+                if is_expired:
+                    # Grace period expired: permanently delete
+                    if not is_admin_username(row["username"]):
+                        hard_delete_user(row["id"])
+                        return None
+                else:
+                    # Inside 30 days: restore account!
+                    recover_deleted_user(row["id"])
+                    user_dict = dict(get_user(row["id"]))
+                    user_dict["account_recovered"] = True
+                    conn.execute("UPDATE users SET last_login = datetime('now') WHERE id = ?", (row["id"],))
+                    conn.commit()
+                    _record_daily_session(row["id"])
+                    return user_dict
+
+            if row["is_active"] != 1:
+                continue
+
+            conn.execute("UPDATE users SET last_login = datetime('now') WHERE id = ?", (row["id"],))
+            conn.commit()
+            _record_daily_session(row["id"])
+            return dict(row)
+
     return None
 
 
@@ -730,13 +824,18 @@ def change_password(user_id: int, new_password: str) -> bool:
     return True
 
 
-def delete_user(user_id: int) -> bool:
-    """Soft-delete a user (deactivate)."""
+def soft_delete_user(user_id: int) -> Tuple[bool, str]:
+    """
+    Schedule a user account for deletion with a 30-day recovery grace period.
+    The user can log back in within 30 days to automatically restore and recover their account.
+    """
     conn = get_conn()
-    cur = conn.execute("SELECT username FROM users WHERE id = ?", (user_id,))
+    cur = conn.execute("SELECT id, username FROM users WHERE id = ?", (user_id,))
     target = cur.fetchone()
-    if target and is_admin_username(target["username"]):
-        return False  # Protected admin account cannot be deleted
+    if not target:
+        return False, "User not found."
+    if is_admin_username(target["username"]):
+        return False, "The exclusive Admin account cannot be deleted. You can reassign the admin username in Settings first."
 
     url = get_server_url()
     if url:
@@ -745,9 +844,68 @@ def delete_user(user_id: int) -> bool:
         except Exception:
             pass
 
-    conn.execute("UPDATE users SET is_active = 0 WHERE id = ?", (user_id,))
+    now = datetime.now()
+    scheduled_until = now + timedelta(days=30)
+    now_str = now.strftime("%Y-%m-%d %H:%M:%S")
+    until_str = scheduled_until.strftime("%Y-%m-%d %H:%M:%S")
+
+    conn.execute("""
+        UPDATE users
+        SET is_active = 0,
+            deleted_at = ?,
+            deletion_scheduled_until = ?
+        WHERE id = ?
+    """, (now_str, until_str, user_id))
+    conn.execute("DELETE FROM sessions WHERE user_id = ?", (user_id,))
+    conn.commit()
+
+    try:
+        from commitmaster import account_manager
+        account_manager.remove_saved_account(user_id)
+    except Exception:
+        pass
+
+    return True, "Your account has been scheduled for deletion. You have 30 days to log back in to recover it."
+
+
+def delete_user(user_id: int) -> bool:
+    """Soft-delete a user with a 30-day recovery grace period."""
+    ok, _ = soft_delete_user(user_id)
+    return ok
+
+
+def recover_deleted_user(user_id: int) -> bool:
+    """Restore a soft-deleted user account upon login within the 30-day grace period."""
+    conn = get_conn()
+    conn.execute("""
+        UPDATE users
+        SET is_active = 1,
+            deleted_at = NULL,
+            deletion_scheduled_until = NULL
+        WHERE id = ?
+    """, (user_id,))
     conn.commit()
     return True
+
+
+def clean_expired_deleted_accounts() -> int:
+    """Permanently delete accounts whose 30-day recovery grace period has expired."""
+    conn = get_conn()
+    cur = conn.cursor()
+    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    cur.execute("""
+        SELECT id, username FROM users
+        WHERE deleted_at IS NOT NULL
+          AND deletion_scheduled_until IS NOT NULL
+          AND deletion_scheduled_until < ?
+    """, (now_str,))
+    expired = cur.fetchall()
+    count = 0
+    for u in expired:
+        if not is_admin_username(u["username"]):
+            hard_delete_user(u["id"])
+            count += 1
+    return count
 
 
 def hard_delete_user(user_id: int) -> bool:
@@ -800,7 +958,7 @@ def update_preferences(user_id: int, **kwargs) -> bool:
         "ask_before_push", "ai_provider", "openai_api_key", "claude_api_key",
         "gemini_api_key", "openai_model", "claude_model", "gemini_model",
         "reminder_interval_enabled", "reminder_interval_hours", "reminder_interval_minutes",
-        "reminder_app_monitor_enabled", "reminder_only_if_dirty"
+        "reminder_app_monitor_enabled", "reminder_only_if_dirty", "bg_pattern"
     }
     updates = {k: v for k, v in kwargs.items() if k in allowed}
     if not updates:
