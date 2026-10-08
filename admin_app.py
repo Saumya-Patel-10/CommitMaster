@@ -34,6 +34,7 @@ from commitmaster.app_styles import (
 from commitmaster.github_service import mask_token, verify_github_token
 from commitmaster.github_account_dialog import GitHubAccountDialog, SelectGitHubReposDialog
 from commitmaster.login_window import LoginWindow
+from commitmaster.reminder_service import ReminderService
 
 _TOKEN_FILE = os.path.join(APP_DIR, ".admin_session")
 
@@ -151,9 +152,20 @@ class AdminApp:
 
         self._setup_window()
         self._build_layout()
+
+        # Commit Reminder Service (Intervals & IDE Monitoring)
+        self._reminder_service = ReminderService(
+            user_id=self.user["id"],
+            on_commit_action=self._on_reminder_commit,
+            on_need_commit_action=self._handle_ide_close_uncommitted,
+            master=self.root,
+            grace_period_seconds=int(prefs.get("session_end_grace", 2)),
+        )
+        self._reminder_service.start()
+
         self._nav_to("overview")
 
-    # ── Window ────────────────────────────────────────────────────────────────
+    # ── Window & Lifecycle ───────────────────────────────────────────────────
 
     def _setup_window(self):
         name = self.user.get("full_name") or self.user["username"]
@@ -167,6 +179,54 @@ class AdminApp:
         self.root.geometry(f"{w}x{h}+{(sw - w)//2}+{(sh - h)//2}")
         from commitmaster import windows_integration
         windows_integration.apply_windows_theme(self.root, f"CommitMaster Admin — Workspace  ({name})", app_type="admin")
+        self.root.protocol("WM_DELETE_WINDOW", self._on_close_window)
+
+    def _on_reminder_commit(self):
+        """Action handler when user clicks 'Review & Commit' in the bottom-right toast."""
+        try:
+            self.root.deiconify()
+            self.root.lift()
+            self.root.focus_force()
+            self._nav_to("git_desktop")
+        except Exception:
+            pass
+
+    def _handle_ide_close_uncommitted(self, project_path: str, dirty_repos: List[str]):
+        """
+        Triggered when user closes their coding IDE and clicks 'No, help me commit'.
+        Brings CommitMaster to front, navigates to Git Desktop, selects the detected repository.
+        """
+        try:
+            self.root.deiconify()
+            self.root.lift()
+            self.root.focus_force()
+        except Exception:
+            pass
+
+        target_repo = project_path or (dirty_repos[0] if dirty_repos else "")
+        if target_repo and commit_engine.is_git_repo(target_repo):
+            try:
+                db.add_or_update_watched_repo(
+                    user_id=self.user["id"],
+                    repo_full_name=os.path.basename(target_repo),
+                    repo_name=os.path.basename(target_repo),
+                    local_path=target_repo,
+                    is_active=1,
+                )
+            except Exception:
+                pass
+            self._gd_selected_repo = target_repo
+
+        self._nav_to("git_desktop")
+
+    def _on_close_window(self):
+        """Clean shutdown when closing the admin workspace window."""
+        if hasattr(self, "_reminder_service") and self._reminder_service:
+            try:
+                self._reminder_service.stop()
+            except Exception:
+                pass
+        self.root.destroy()
 
     # ── Layout skeleton ───────────────────────────────────────────────────────
 
@@ -249,7 +309,7 @@ class AdminApp:
         pat = get_active_customization().get("pattern", "dot_matrix")
         try:
             sb_banner = pattern_utils.generate_sidebar_header_banner(
-                SIZES["sidebar_width"], 72, COLORS["bg_sidebar"], COLORS["accent"], pat
+                240, 72, COLORS["bg_sidebar"], COLORS["accent"], pat
             )
             self._sb_banner_img = sb_banner
             sb_bg_lbl = tk.Label(logo_f, image=sb_banner, bg=COLORS["bg_sidebar"], bd=0)
@@ -326,9 +386,21 @@ class AdminApp:
 
         target = self._sb_frame
 
-        # Avatar
-        av_f = tk.Frame(target, bg=COLORS["bg_sidebar"], pady=12)
-        av_f.pack(fill="x", padx=14)
+        # Avatar & Profile Card (Pattern Covered)
+        av_card = tk.Frame(target, bg=COLORS["bg_sidebar"], highlightthickness=1, highlightbackground=COLORS["border"])
+        av_card.pack(fill="x", padx=10, pady=(10, 6))
+        av_bg_lbl = tk.Label(av_card, bg=COLORS["bg_sidebar"], bd=0)
+        av_bg_lbl.place(x=0, y=0, relwidth=1, relheight=1)
+        try:
+            av_p_img = pattern_utils.generate_panel_banner(240, 84, COLORS["bg_sidebar"], COLORS["accent"], pat)
+            av_bg_lbl.config(image=av_p_img)
+            av_bg_lbl._photo = av_p_img
+        except Exception:
+            pass
+
+        av_f = tk.Frame(av_card, bg=COLORS["bg_sidebar"], padx=10, pady=10)
+        av_f.pack(fill="both")
+
         self._sidebar_av_lbl = tk.Label(av_f, bg=COLORS["bg_sidebar"])
         self._sidebar_av_lbl.pack(anchor="w")
         self._sidebar_name_lbl = tk.Label(av_f, text=self.user.get("full_name") or self.user["username"],
@@ -546,6 +618,44 @@ class AdminApp:
         f = tk.Frame(self._cf, bg=COLORS["bg_dark"], padx=24, pady=20)
         f.pack(fill="both", expand=True)
         return f
+
+    def _create_page_header_panel(self, parent, title: str, subtitle: str, icon: str = "", actions_fn: Optional[Callable] = None) -> tk.Frame:
+        """Build a rich textured pattern panel banner for page headers (Requirement 1)."""
+        hdr_panel = tk.Frame(parent, bg=COLORS["bg_card"], highlightthickness=1, highlightbackground=COLORS["border"])
+        hdr_panel.pack(fill="x", pady=(0, 16))
+
+        bg_lbl = tk.Label(hdr_panel, bg=COLORS["bg_card"], bd=0)
+        bg_lbl.place(x=0, y=0, relwidth=1, relheight=1)
+
+        def _update_bg(e=None):
+            w = hdr_panel.winfo_width()
+            if w > 20:
+                pat = get_active_customization().get("pattern", "dot_matrix")
+                banner = pattern_utils.generate_panel_banner(w, 80, COLORS["bg_card"], COLORS["accent"], pat)
+                bg_lbl.config(image=banner)
+                bg_lbl._photo = banner
+
+        hdr_panel.bind("<Configure>", _update_bg)
+        tk.Frame(hdr_panel, height=2, bg=COLORS["accent"]).pack(fill="x")
+
+        inner = tk.Frame(hdr_panel, bg=COLORS["bg_card"], padx=20, pady=14)
+        inner.pack(fill="both")
+
+        top_row = tk.Frame(inner, bg=COLORS["bg_card"])
+        top_row.pack(fill="x")
+
+        t_lbl = tk.Label(top_row, text=f"{icon} {title}".strip(), font=FONTS["heading_lg"],
+                         fg=COLORS["text_primary"], bg=COLORS["bg_card"])
+        t_lbl.pack(side="left")
+
+        if actions_fn:
+            actions_fn(top_row)
+
+        if subtitle:
+            tk.Label(inner, text=subtitle, font=FONTS["body_sm"],
+                     fg=COLORS["text_secondary"], bg=COLORS["bg_card"]).pack(anchor="w", pady=(2, 0))
+
+        return hdr_panel
 
     def _card(self, parent, **kw) -> tk.Frame:
         return tk.Frame(parent, bg=COLORS["bg_card"],
@@ -1033,11 +1143,11 @@ class AdminApp:
 
     def _page_commits(self):
         p = self._pad()
-        tk.Label(p, text="My Commit History", font=FONTS["heading_lg"],
-                 fg=COLORS["text_primary"], bg=COLORS["bg_dark"]).pack(anchor="w")
-        tk.Label(p, text="All commits you've made through CommitMaster.",
-                 font=FONTS["body_sm"], fg=COLORS["text_secondary"],
-                 bg=COLORS["bg_dark"]).pack(anchor="w", pady=(2, 16))
+        self._create_page_header_panel(
+            p, "My Commit History",
+            "Chronological log of all commits authored through CommitMaster.",
+            icon="📝"
+        )
 
         activity = db.get_activity_log(self.user["id"], limit=500)
         if not activity:
@@ -1729,11 +1839,11 @@ class AdminApp:
         pad = tk.Frame(self._cf, bg=COLORS["bg_dark"], padx=24, pady=20)
         pad.pack(fill="both", expand=True)
 
-        tk.Label(pad, text="Watched GitHub Repositories", font=FONTS["heading_lg"],
-                 fg=COLORS["text_primary"], bg=COLORS["bg_dark"]).pack(anchor="w")
-        tk.Label(pad,
-                 text="Select which repositories to actively keep an eye on. CommitMaster monitors watched repositories for changes and assists with local AI comments before asking to push.",
-                 font=FONTS["body_sm"], fg=COLORS["text_secondary"], bg=COLORS["bg_dark"], wraplength=700).pack(anchor="w", pady=(2, 14))
+        self._create_page_header_panel(
+            pad, "Watched Repositories",
+            "Monitor local git repositories for changes and track commit readiness across your workspace.",
+            icon="📁"
+        )
 
         watched_all = db.get_watched_repos(self.user["id"])
         active_count = sum(1 for r in watched_all if r.get("is_active_watch"))
@@ -1987,11 +2097,11 @@ class AdminApp:
     def _page_customize(self):
         p = self._pad()
 
-        tk.Label(p, text="Customize Interface", font=FONTS["heading_lg"],
-                 fg=COLORS["text_primary"], bg=COLORS["bg_dark"]).pack(anchor="w")
-        tk.Label(p, text="Personalize themes, accent colors, typography, and density for your workspace.",
-                 font=FONTS["body_sm"], fg=COLORS["text_secondary"],
-                 bg=COLORS["bg_dark"]).pack(anchor="w", pady=(2, 16))
+        self._create_page_header_panel(
+            p, "Customize Interface",
+            "Personalize themes, accent colors, typography, and density for your workspace.",
+            icon="🎨"
+        )
 
         prefs = db.get_preferences(self.user["id"]) or {}
         curr = get_active_customization()
@@ -2290,11 +2400,11 @@ class AdminApp:
         except Exception:
             proj_dirs = []
 
-        tk.Label(p, text="CommitMaster Settings", font=FONTS["heading_lg"],
-                 fg=COLORS["text_primary"], bg=COLORS["bg_dark"]).pack(anchor="w")
-        tk.Label(p, text="Your personal monitoring preferences.",
-                 font=FONTS["body_sm"], fg=COLORS["text_secondary"],
-                 bg=COLORS["bg_dark"]).pack(anchor="w", pady=(2, 16))
+        self._create_page_header_panel(
+            p, "CommitMaster Settings",
+            "Personal monitoring intervals, IDE integration hooks, and AI assistance configurations.",
+            icon="⚙️"
+        )
 
         # Reminder card
         rem_card = self._card(p, padx=20, pady=16)
@@ -2610,11 +2720,11 @@ class AdminApp:
 
     def _page_profile(self):
         p = self._pad()
-        tk.Label(p, text="My Profile", font=FONTS["heading_lg"],
-                 fg=COLORS["text_primary"], bg=COLORS["bg_dark"]).pack(anchor="w")
-        tk.Label(p, text="Your personal profile, custom avatar logo, and profile picture.",
-                 font=FONTS["body_sm"], fg=COLORS["text_secondary"],
-                 bg=COLORS["bg_dark"]).pack(anchor="w", pady=(2, 16))
+        self._create_page_header_panel(
+            p, "My Profile",
+            "Personal developer identity, avatar styling, and account details.",
+            icon="👤"
+        )
 
         # Avatar & Profile Picture Studio
         av_card = self._card(p, padx=20, pady=16)
@@ -2787,12 +2897,12 @@ class AdminApp:
 
     def _page_admin_dashboard(self):
         p = self._pad()
-        tk.Label(p, text="Admin Dashboard", font=FONTS["heading_lg"],
-                 fg=COLORS["text_primary"], bg=COLORS["bg_dark"]).pack(anchor="w")
         from datetime import datetime as dt
-        tk.Label(p, text=dt.now().strftime("%A, %B %d %Y"),
-                 font=FONTS["body_sm"], fg=COLORS["text_secondary"],
-                 bg=COLORS["bg_dark"]).pack(anchor="w", pady=(2, 20))
+        self._create_page_header_panel(
+            p, "Admin Dashboard",
+            f"System telemetry, user governance, and metrics — {dt.now().strftime('%A, %B %d, %Y')}",
+            icon="🛡️"
+        )
 
         stats = db.get_dashboard_stats()
         row = tk.Frame(p, bg=COLORS["bg_dark"])
@@ -2832,16 +2942,18 @@ class AdminApp:
     def _page_users(self):
         from commitmaster.admin_portal import AdminPortal, _UserDialog
         p = self._pad()
-        top = tk.Frame(p, bg=COLORS["bg_dark"])
-        top.pack(fill="x", pady=(0, 14))
-        tk.Label(top, text="User Management", font=FONTS["heading_lg"],
-                 fg=COLORS["text_primary"], bg=COLORS["bg_dark"]).pack(side="left")
-        tk.Button(top, text="  ＋ Add User",
-                  font=FONTS["label_bold"], fg="white",
-                  bg=COLORS["accent"], activebackground=COLORS["accent_hover"],
-                  activeforeground="white", relief="flat", bd=0,
-                  cursor="hand2", padx=14, pady=6,
-                  command=lambda: self._add_user(p)).pack(side="right")
+        def _add_user_action(top):
+            tk.Button(top, text="  ＋ Add User",
+                      font=FONTS["label_bold"], fg="white",
+                      bg=COLORS["accent"], activebackground=COLORS["accent_hover"],
+                      activeforeground="white", relief="flat", bd=0,
+                      cursor="hand2", padx=14, pady=6,
+                      command=lambda: self._add_user(p)).pack(side="right")
+        self._create_page_header_panel(
+            p, "User Management",
+            "View and manage registered accounts, assign administrative roles, and inspect activities.",
+            icon="👥", actions_fn=_add_user_action
+        )
 
         sf = tk.Frame(p, bg=COLORS["bg_dark"])
         sf.pack(fill="x", pady=(0, 10))
@@ -2992,11 +3104,11 @@ class AdminApp:
 
     def _page_activity(self):
         p = self._pad()
-        tk.Label(p, text="System Activity Log", font=FONTS["heading_lg"],
-                 fg=COLORS["text_primary"], bg=COLORS["bg_dark"]).pack(anchor="w")
-        tk.Label(p, text="All commits across all users.",
-                 font=FONTS["body_sm"], fg=COLORS["text_secondary"],
-                 bg=COLORS["bg_dark"]).pack(anchor="w", pady=(2, 16))
+        self._create_page_header_panel(
+            p, "System Activity Log",
+            "Audit trail of commits, repository interactions, and system events across all users.",
+            icon="📋"
+        )
         activity = db.get_activity_log(limit=200)
         hdr = tk.Frame(p, bg=COLORS["bg_medium"])
         hdr.pack(fill="x")
@@ -3033,21 +3145,21 @@ class AdminApp:
 
     def _page_charts(self):
         p = self._pad()
-        tk.Label(p, text="Usage Analytics", font=FONTS["heading_lg"],
-                 fg=COLORS["text_primary"], bg=COLORS["bg_dark"]).pack(anchor="w")
-        tk.Label(p, text="System-wide usage across all users.",
-                 font=FONTS["body_sm"], fg=COLORS["text_secondary"],
-                 bg=COLORS["bg_dark"]).pack(anchor="w", pady=(2, 20))
+        self._create_page_header_panel(
+            p, "Usage Analytics & Metrics",
+            "System-wide coding activity, daily commit velocity, and user engagement trends.",
+            icon="📈"
+        )
 
         charts.build_admin_analytics(p, days=30)
 
     def _page_global_settings(self):
         p = self._pad()
-        tk.Label(p, text="Global Settings", font=FONTS["heading_lg"],
-                 fg=COLORS["text_primary"], bg=COLORS["bg_dark"]).pack(anchor="w")
-        tk.Label(p, text="Defaults applied to all new users.",
-                 font=FONTS["body_sm"], fg=COLORS["text_secondary"],
-                 bg=COLORS["bg_dark"]).pack(anchor="w", pady=(2, 16))
+        self._create_page_header_panel(
+            p, "Global Settings",
+            "Organization defaults and system policies applied to all workspace instances.",
+            icon="🌐"
+        )
         card = self._card(p, padx=24, pady=20)
         card.pack(fill="x")
         self._global_vars = {}
@@ -3263,6 +3375,11 @@ class AdminApp:
         try:
             from commitmaster.account_manager import AccountSwitcherDialog
             def on_switched(switched_user):
+                if hasattr(self, "_reminder_service") and self._reminder_service:
+                    try:
+                        self._reminder_service.stop()
+                    except Exception:
+                        pass
                 self.root.destroy()
                 if self.on_switch_account:
                     self.on_switch_account(switched_user)
@@ -3288,6 +3405,11 @@ class AdminApp:
             messagebox.showerror("Account Switcher", f"Could not open account switcher: {exc}", parent=self.root)
 
     def _logout(self):
+        if hasattr(self, "_reminder_service") and self._reminder_service:
+            try:
+                self._reminder_service.stop()
+            except Exception:
+                pass
         try:
             db.revoke_session_token(self.user["id"])
         except Exception:
