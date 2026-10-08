@@ -1,6 +1,8 @@
 """
 CommitMaster — Database layer.
-Manages SQLite database for users, sessions, and activity logs.
+Manages database operations with dual-mode support:
+  1. Central Cloud Backend Server (REST API via server_url for multi-device sync)
+  2. Local SQLite fallback (commitmaster.db)
 """
 import sqlite3
 import hashlib
@@ -8,13 +10,94 @@ import os
 import secrets
 import threading
 from datetime import datetime, timedelta
-from typing import Optional, Dict, List, Any
+from typing import Optional, Dict, List, Any, Tuple
+import requests
 
-# Database file path (same directory as config.json)
+# Database file path (same directory as config.json or %LOCALAPPDATA%)
 APP_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DB_PATH = os.path.join(APP_DIR, "commitmaster.db")
 
 _local = threading.local()
+
+
+def get_server_url() -> str:
+    """Return configured CommitMaster Cloud Backend Server URL or empty string."""
+    env_url = os.getenv("COMMITMASTER_SERVER_URL", "").strip()
+    if env_url:
+        return env_url.rstrip("/")
+    try:
+        from commitmaster.config import load_config
+        cfg = load_config()
+        url = (cfg.get("server_url") or "").strip()
+        if url:
+            return url.rstrip("/")
+    except Exception:
+        pass
+    return ""
+
+
+def set_server_url(url: str) -> None:
+    """Save the server URL into config.json and reload."""
+    clean_url = (url or "").strip().rstrip("/")
+    try:
+        from commitmaster.config import load_config, save_config, get_manager
+        cfg = load_config()
+        cfg["server_url"] = clean_url
+        save_config(cfg)
+        try:
+            get_manager().reload()
+        except Exception:
+            pass
+    except Exception:
+        pass
+
+
+def test_server_connection(url: Optional[str] = None) -> Tuple[bool, str]:
+    """Test connectivity to the backend server."""
+    target_url = (url if url is not None else get_server_url()).strip().rstrip("/")
+    if not target_url:
+        return False, "No server URL provided (Local Mode)"
+    try:
+        resp = requests.get(f"{target_url}/api/health", timeout=6)
+        if resp.status_code == 200:
+            data = resp.json()
+            ver = data.get("version", "3.0")
+            count = data.get("users_count", 0)
+            return True, f"Connected to {data.get('service', 'CommitMaster Server')} (v{ver}, {count} users)"
+        return False, f"Server responded with status {resp.status_code}"
+    except requests.exceptions.Timeout:
+        return False, "Connection timed out (server took too long to respond)"
+    except requests.exceptions.ConnectionError:
+        return False, f"Cannot connect to {target_url}. Check if the server is running."
+    except Exception as exc:
+        return False, f"Connection error: {exc}"
+
+
+def _cache_user_locally(user: Dict, password: Optional[str] = None) -> None:
+    """Cache user in local SQLite database for offline resiliency."""
+    try:
+        conn = get_conn()
+        pw_hash = _hash_password(password) if password else user.get("password_hash", "")
+        conn.execute("""
+            INSERT INTO users (id, username, email, full_name, password_hash, role, avatar_color, is_active)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+                username = excluded.username,
+                email = excluded.email,
+                full_name = excluded.full_name,
+                role = excluded.role,
+                avatar_color = excluded.avatar_color,
+                is_active = excluded.is_active
+        """, (
+            user["id"], user["username"], user["email"],
+            user.get("full_name", ""), pw_hash or "remote_auth",
+            user.get("role", "user"), user.get("avatar_color", "#3fb950"),
+            user.get("is_active", 1)
+        ))
+        conn.execute("INSERT OR IGNORE INTO user_preferences (user_id) VALUES (?)", (user["id"],))
+        conn.commit()
+    except Exception:
+        pass
 
 
 def get_conn() -> sqlite3.Connection:
@@ -25,6 +108,16 @@ def get_conn() -> sqlite3.Connection:
         _local.conn.execute("PRAGMA journal_mode=WAL")
         _local.conn.execute("PRAGMA foreign_keys=ON")
     return _local.conn
+
+
+def close_conn() -> None:
+    """Close and clear the thread-local database connection."""
+    if hasattr(_local, "conn") and _local.conn is not None:
+        try:
+            _local.conn.close()
+        except Exception:
+            pass
+        _local.conn = None
 
 
 def init_db() -> None:
@@ -61,7 +154,12 @@ def init_db() -> None:
             ai_base_url         TEXT    DEFAULT 'http://localhost:1234/v1',
             ai_model            TEXT    DEFAULT '',
             theme               TEXT    DEFAULT 'dark',
-            notifications       INTEGER DEFAULT 1
+            notifications       INTEGER DEFAULT 1,
+            reminder_interval_enabled    INTEGER DEFAULT 1,
+            reminder_interval_hours      INTEGER DEFAULT 1,
+            reminder_interval_minutes    INTEGER DEFAULT 0,
+            reminder_app_monitor_enabled INTEGER DEFAULT 1,
+            reminder_only_if_dirty       INTEGER DEFAULT 1
         )
     """)
 
@@ -178,6 +276,20 @@ def init_db() -> None:
     """)
     cur.execute("CREATE INDEX IF NOT EXISTS idx_app_events_kind_time ON app_events(kind, created_at)")
 
+    # ── Verification OTPs (for Google and account verification) ────────────────
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS verification_otps (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            email       TEXT    NOT NULL,
+            otp_code    TEXT    NOT NULL,
+            purpose     TEXT    NOT NULL DEFAULT 'verify_account',
+            created_at  TEXT    NOT NULL DEFAULT (datetime('now')),
+            expires_at  TEXT    NOT NULL,
+            is_used     INTEGER NOT NULL DEFAULT 0
+        )
+    """)
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_verification_otps_email ON verification_otps(email, purpose, is_used)")
+
     # ── Migrations for existing user_preferences ──────────────────────────────
     try:
         existing_cols = {row[1] for row in cur.execute("PRAGMA table_info(user_preferences)")}
@@ -195,10 +307,25 @@ def init_db() -> None:
             "openai_model": "ALTER TABLE user_preferences ADD COLUMN openai_model TEXT DEFAULT 'gpt-4o-mini'",
             "claude_model": "ALTER TABLE user_preferences ADD COLUMN claude_model TEXT DEFAULT 'claude-3-5-haiku-20241022'",
             "gemini_model": "ALTER TABLE user_preferences ADD COLUMN gemini_model TEXT DEFAULT 'gemini-1.5-flash'",
+            "reminder_interval_enabled": "ALTER TABLE user_preferences ADD COLUMN reminder_interval_enabled INTEGER DEFAULT 1",
+            "reminder_interval_hours": "ALTER TABLE user_preferences ADD COLUMN reminder_interval_hours INTEGER DEFAULT 1",
+            "reminder_interval_minutes": "ALTER TABLE user_preferences ADD COLUMN reminder_interval_minutes INTEGER DEFAULT 0",
+            "reminder_app_monitor_enabled": "ALTER TABLE user_preferences ADD COLUMN reminder_app_monitor_enabled INTEGER DEFAULT 1",
+            "reminder_only_if_dirty": "ALTER TABLE user_preferences ADD COLUMN reminder_only_if_dirty INTEGER DEFAULT 1",
         }
         for col_name, ddl in migration_ddls.items():
             if col_name not in existing_cols:
                 cur.execute(ddl)
+    except Exception:
+        pass
+
+    # ── Migrations for existing users table ────────────────────────────────────
+    try:
+        user_cols = {row[1] for row in cur.execute("PRAGMA table_info(users)")}
+        if "is_verified" not in user_cols:
+            cur.execute("ALTER TABLE users ADD COLUMN is_verified INTEGER NOT NULL DEFAULT 0")
+        if "google_id" not in user_cols:
+            cur.execute("ALTER TABLE users ADD COLUMN google_id TEXT DEFAULT ''")
     except Exception:
         pass
 
@@ -237,29 +364,216 @@ def _verify_password(password: str, password_hash: str) -> bool:
         return False
 
 
-def _ensure_default_admin(conn: sqlite3.Connection) -> None:
-    """Create default admin account if the users table is empty."""
+DEFAULT_ADMIN_USERNAME = "saumya.patel@Admin_#"
+
+
+def get_admin_username() -> str:
+    """Return the designated admin username, defaults to 'saumya.patel@Admin_#'."""
+    return get_system_setting("admin_username", DEFAULT_ADMIN_USERNAME) or DEFAULT_ADMIN_USERNAME
+
+
+def is_admin_username(username: Optional[str]) -> bool:
+    """Check if the provided username is the designated admin username."""
+    if not username:
+        return False
+    return username.strip().lower() == get_admin_username().strip().lower()
+
+
+def set_admin_username(new_username: str, admin_user_id: Optional[int] = None) -> Tuple[bool, str]:
+    """
+    Update the designated admin username in system settings and users table.
+    From then on, ONLY this username can access the Admin Portal.
+    """
+    new_username = new_username.strip()
+    if not new_username:
+        return False, "Username cannot be empty."
+    if " " in new_username:
+        return False, "Username cannot contain spaces."
+
+    current_admin = get_admin_username()
+    if new_username == current_admin:
+        return True, "Admin username is already set to this value."
+
+    conn = get_conn()
     cur = conn.cursor()
-    cur.execute("SELECT COUNT(*) FROM users")
-    count = cur.fetchone()[0]
-    if count == 0:
+
+    # Check if another user already has this username
+    cur.execute("SELECT id, username FROM users WHERE LOWER(username) = LOWER(?)", (new_username,))
+    existing = cur.fetchone()
+    if existing and (not admin_user_id or existing["id"] != admin_user_id):
+        return False, f"Username '{new_username}' is already in use by another user."
+
+    if admin_user_id:
+        cur.execute("SELECT id, username FROM users WHERE id = ?", (admin_user_id,))
+    else:
+        cur.execute("SELECT id, username FROM users WHERE LOWER(username) = LOWER(?)", (current_admin,))
+    admin_row = cur.fetchone()
+
+    if admin_row:
+        cur.execute("UPDATE users SET username = ?, role = 'admin' WHERE id = ?", (new_username, admin_row["id"]))
+    elif existing:
+        cur.execute("UPDATE users SET role = 'admin' WHERE id = ?", (existing["id"],))
+
+    # Demote any other accounts claiming admin
+    cur.execute("UPDATE users SET role = 'user' WHERE role = 'admin' AND LOWER(username) != LOWER(?)", (new_username,))
+
+    set_system_setting("admin_username", new_username, user_id=admin_user_id)
+    conn.commit()
+    return True, f"Admin username successfully changed to '{new_username}'."
+
+
+def mark_user_verified(user_id_or_email: Any, google_id: str = "") -> bool:
+    """Mark a user account as email/Google verified."""
+    conn = get_conn()
+    if google_id:
+        if isinstance(user_id_or_email, int):
+            conn.execute("UPDATE users SET is_verified = 1, google_id = ? WHERE id = ?", (google_id, user_id_or_email))
+        else:
+            conn.execute("UPDATE users SET is_verified = 1, google_id = ? WHERE LOWER(email) = LOWER(?)", (google_id, str(user_id_or_email).strip()))
+    else:
+        if isinstance(user_id_or_email, int):
+            conn.execute("UPDATE users SET is_verified = 1 WHERE id = ?", (user_id_or_email,))
+        else:
+            conn.execute("UPDATE users SET is_verified = 1 WHERE LOWER(email) = LOWER(?)", (str(user_id_or_email).strip(),))
+    conn.commit()
+    return True
+
+
+def save_verification_otp(email: str, code: str, purpose: str = "verify_account", expiry_minutes: int = 10) -> bool:
+    """Save a 6-digit verification OTP with expiration."""
+    conn = get_conn()
+    conn.execute("UPDATE verification_otps SET is_used = 1 WHERE LOWER(email) = LOWER(?) AND purpose = ?", (email.strip(), purpose))
+    expires_at = (datetime.now() + timedelta(minutes=expiry_minutes)).strftime("%Y-%m-%d %H:%M:%S")
+    conn.execute("""
+        INSERT INTO verification_otps (email, otp_code, purpose, expires_at, is_used)
+        VALUES (?, ?, ?, ?, 0)
+    """, (email.strip().lower(), code.strip(), purpose, expires_at))
+    conn.commit()
+    return True
+
+
+def verify_stored_otp(email: str, code: str, purpose: str = "verify_account") -> Tuple[bool, str]:
+    """Verify stored OTP code for email."""
+    conn = get_conn()
+    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    cur = conn.execute("""
+        SELECT id, otp_code, expires_at, is_used FROM verification_otps
+        WHERE LOWER(email) = LOWER(?) AND purpose = ? AND is_used = 0
+        ORDER BY id DESC LIMIT 1
+    """, (email.strip(), purpose))
+    row = cur.fetchone()
+    if not row:
+        return False, "No active verification code found for this email. Please request a new code."
+    if row["expires_at"] < now_str:
+        return False, "Verification code has expired. Please request a new code."
+    if row["otp_code"] != code.strip():
+        return False, "Invalid verification code. Please check and try again."
+    conn.execute("UPDATE verification_otps SET is_used = 1 WHERE id = ?", (row["id"],))
+    conn.commit()
+    mark_user_verified(email)
+    return True, "Verification successful!"
+
+
+def is_user_verified(user_id_or_email: Any) -> bool:
+    """Check if a user is verified."""
+    conn = get_conn()
+    try:
+        if isinstance(user_id_or_email, int):
+            cur = conn.execute("SELECT is_verified FROM users WHERE id = ?", (user_id_or_email,))
+        else:
+            cur = conn.execute("SELECT is_verified FROM users WHERE LOWER(email) = LOWER(?)", (str(user_id_or_email).strip(),))
+        row = cur.fetchone()
+        return bool(row["is_verified"]) if row and "is_verified" in row.keys() else False
+    except Exception:
+        return False
+
+
+def _ensure_default_admin(conn: sqlite3.Connection) -> None:
+    """Ensure there is one and only one admin account matching get_admin_username()."""
+    admin_uname = get_admin_username()
+    cur = conn.cursor()
+    # Remove any generic admin user
+    cur.execute("DELETE FROM users WHERE username = 'admin'")
+    # Demote any other accounts claiming the admin role
+    cur.execute("UPDATE users SET role = 'user' WHERE role = 'admin' AND username != ?", (admin_uname,))
+
+    cur.execute("SELECT id FROM users WHERE username = ?", (admin_uname,))
+    row = cur.fetchone()
+    if not row:
         pw_hash = _hash_password("admin123")
         cur.execute("""
-            INSERT INTO users (username, email, full_name, password_hash, role, avatar_color)
-            VALUES (?, ?, ?, ?, ?, ?)
-        """, ("admin", "admin@commitmaster.local", "Administrator", pw_hash, "admin", "#f0883e"))
+            INSERT INTO users (username, email, full_name, password_hash, role, avatar_color, is_verified)
+            VALUES (?, ?, ?, ?, 'admin', '#3fb950', 1)
+        """, (admin_uname, "saumya.a.patel@gmail.com", "Saumya Patel", pw_hash))
         admin_id = cur.lastrowid
-        cur.execute("""
-            INSERT INTO user_preferences (user_id) VALUES (?)
-        """, (admin_id,))
-        conn.commit()
+        cur.execute("INSERT OR IGNORE INTO user_preferences (user_id) VALUES (?)", (admin_id,))
+    else:
+        cur.execute("UPDATE users SET role = 'admin', is_verified = 1 WHERE username = ?", (admin_uname,))
+    conn.commit()
 
 
 # ── User CRUD ──────────────────────────────────────────────────────────────────
 
+def check_user_exists(username: str, email: str) -> Optional[str]:
+    """
+    Check if a username or email is already taken.
+    Returns 'username' if username exists, 'email' if email exists, or None if available.
+    """
+    url = get_server_url()
+    if url:
+        try:
+            resp = requests.post(f"{url}/api/auth/check", json={
+                "username": username.strip(),
+                "email": email.strip().lower()
+            }, timeout=6)
+            if resp.status_code == 200:
+                conflict = resp.json().get("conflict")
+                if conflict:
+                    return conflict
+        except Exception:
+            pass
+
+    conn = get_conn()
+    cur = conn.execute("""
+        SELECT username, email FROM users
+        WHERE LOWER(username) = LOWER(?) OR LOWER(email) = LOWER(?)
+    """, (username.strip(), email.strip()))
+    row = cur.fetchone()
+    if row:
+        if row["username"].lower() == username.strip().lower():
+            return "username"
+        return "email"
+    return None
+
+
 def create_user(username: str, email: str, full_name: str, password: str,
                 role: str = "user", avatar_color: str = "#3fb950") -> Optional[int]:
     """Create a new user. Returns user ID or None on failure."""
+    # Enforce strictly: only designated admin username is admin
+    if not is_admin_username(username.strip()):
+        role = "user"
+    url = get_server_url()
+    if url:
+        try:
+            resp = requests.post(f"{url}/api/auth/register", json={
+                "username": username.strip(),
+                "email": email.strip().lower(),
+                "full_name": full_name.strip(),
+                "password": password,
+                "role": role,
+                "avatar_color": avatar_color,
+            }, timeout=8)
+            if resp.status_code in (200, 201):
+                data = resp.json()
+                u = data.get("user")
+                if u:
+                    _cache_user_locally(u, password=password)
+                    return u["id"]
+            elif resp.status_code == 409:
+                return None
+        except Exception:
+            pass
+
     conn = get_conn()
     try:
         pw_hash = _hash_password(password)
@@ -268,7 +582,7 @@ def create_user(username: str, email: str, full_name: str, password: str,
             VALUES (?, ?, ?, ?, ?, ?)
         """, (username.strip(), email.strip().lower(), full_name.strip(), pw_hash, role, avatar_color))
         uid = cur.lastrowid
-        conn.execute("INSERT INTO user_preferences (user_id) VALUES (?)", (uid,))
+        conn.execute("INSERT OR IGNORE INTO user_preferences (user_id) VALUES (?)", (uid,))
         conn.commit()
         return uid
     except sqlite3.IntegrityError:
@@ -277,11 +591,30 @@ def create_user(username: str, email: str, full_name: str, password: str,
 
 def authenticate(username_or_email: str, password: str) -> Optional[Dict]:
     """Authenticate user by username or email. Returns user dict or None."""
+    url = get_server_url()
+    if url:
+        try:
+            resp = requests.post(f"{url}/api/auth/login", json={
+                "username_or_email": username_or_email.strip(),
+                "password": password,
+            }, timeout=8)
+            if resp.status_code == 200:
+                data = resp.json()
+                user = data.get("user")
+                if user:
+                    _cache_user_locally(user, password=password)
+                    _record_daily_session(user["id"])
+                    return user
+            elif resp.status_code == 401:
+                return None
+        except Exception:
+            pass
+
     conn = get_conn()
     cur = conn.execute("""
         SELECT * FROM users
-        WHERE (username = ? OR email = ?) AND is_active = 1
-    """, (username_or_email, username_or_email))
+        WHERE (LOWER(username) = LOWER(?) OR LOWER(email) = LOWER(?)) AND is_active = 1
+    """, (username_or_email.strip(), username_or_email.strip()))
     row = cur.fetchone()
     if row and _verify_password(password, row["password_hash"]):
         conn.execute("UPDATE users SET last_login = datetime('now') WHERE id = ?", (row["id"],))
@@ -293,14 +626,49 @@ def authenticate(username_or_email: str, password: str) -> Optional[Dict]:
 
 def get_user(user_id: int) -> Optional[Dict]:
     """Get user by ID."""
+    url = get_server_url()
+    if url:
+        try:
+            resp = requests.get(f"{url}/api/users/{user_id}", timeout=6)
+            if resp.status_code == 200:
+                u = resp.json().get("user")
+                if u:
+                    return u
+        except Exception:
+            pass
+
     conn = get_conn()
     cur = conn.execute("SELECT * FROM users WHERE id = ?", (user_id,))
     row = cur.fetchone()
     return dict(row) if row else None
 
 
+def get_user_by_username_or_email(identifier: str) -> Optional[Dict]:
+    """Get user by username or email."""
+    if not identifier:
+        return None
+    conn = get_conn()
+    cur = conn.execute("""
+        SELECT * FROM users
+        WHERE LOWER(username) = LOWER(?) OR LOWER(email) = LOWER(?)
+    """, (identifier.strip(), identifier.strip()))
+    row = cur.fetchone()
+    return dict(row) if row else None
+
+
 def get_all_users() -> List[Dict]:
     """Get all users (admin view)."""
+    url = get_server_url()
+    if url:
+        try:
+            resp = requests.get(f"{url}/api/admin/users", timeout=8)
+            if resp.status_code == 200:
+                users = resp.json().get("users")
+                if users is not None:
+                    return users
+        except Exception:
+            pass
+
     conn = get_conn()
     cur = conn.execute("""
         SELECT u.*, 
@@ -317,7 +685,27 @@ def update_user(user_id: int, **kwargs) -> bool:
     updates = {k: v for k, v in kwargs.items() if k in allowed}
     if not updates:
         return False
+
     conn = get_conn()
+    cur = conn.execute("SELECT username FROM users WHERE id = ?", (user_id,))
+    target_row = cur.fetchone()
+    if target_row:
+        uname = target_row["username"]
+        # Enforce single admin rules
+        if is_admin_username(uname):
+            if "role" in updates and updates["role"] != "admin":
+                updates["role"] = "admin"  # cannot demote
+        else:
+            if updates.get("role") == "admin":
+                updates["role"] = "user"  # cannot promote others to admin
+
+    url = get_server_url()
+    if url:
+        try:
+            requests.put(f"{url}/api/users/{user_id}", json=updates, timeout=6)
+        except Exception:
+            pass
+
     set_clause = ", ".join(f"{k} = ?" for k in updates)
     conn.execute(f"UPDATE users SET {set_clause} WHERE id = ?",
                  (*updates.values(), user_id))
@@ -327,6 +715,14 @@ def update_user(user_id: int, **kwargs) -> bool:
 
 def change_password(user_id: int, new_password: str) -> bool:
     """Change a user's password."""
+    url = get_server_url()
+    if url:
+        try:
+            requests.post(f"{url}/api/users/{user_id}/password",
+                          json={"new_password": new_password}, timeout=6)
+        except Exception:
+            pass
+
     conn = get_conn()
     pw_hash = _hash_password(new_password)
     conn.execute("UPDATE users SET password_hash = ? WHERE id = ?", (pw_hash, user_id))
@@ -337,6 +733,18 @@ def change_password(user_id: int, new_password: str) -> bool:
 def delete_user(user_id: int) -> bool:
     """Soft-delete a user (deactivate)."""
     conn = get_conn()
+    cur = conn.execute("SELECT username FROM users WHERE id = ?", (user_id,))
+    target = cur.fetchone()
+    if target and is_admin_username(target["username"]):
+        return False  # Protected admin account cannot be deleted
+
+    url = get_server_url()
+    if url:
+        try:
+            requests.delete(f"{url}/api/admin/users/{user_id}?hard=false", timeout=6)
+        except Exception:
+            pass
+
     conn.execute("UPDATE users SET is_active = 0 WHERE id = ?", (user_id,))
     conn.commit()
     return True
@@ -345,6 +753,18 @@ def delete_user(user_id: int) -> bool:
 def hard_delete_user(user_id: int) -> bool:
     """Permanently delete a user and all their data."""
     conn = get_conn()
+    cur = conn.execute("SELECT username FROM users WHERE id = ?", (user_id,))
+    target = cur.fetchone()
+    if target and is_admin_username(target["username"]):
+        return False  # Protected admin account cannot be deleted
+
+    url = get_server_url()
+    if url:
+        try:
+            requests.delete(f"{url}/api/admin/users/{user_id}?hard=true", timeout=6)
+        except Exception:
+            pass
+
     conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
     conn.commit()
     return True
@@ -354,6 +774,17 @@ def hard_delete_user(user_id: int) -> bool:
 
 def get_preferences(user_id: int) -> Optional[Dict]:
     """Get user preferences."""
+    url = get_server_url()
+    if url:
+        try:
+            resp = requests.get(f"{url}/api/users/{user_id}/preferences", timeout=6)
+            if resp.status_code == 200:
+                p = resp.json().get("preferences")
+                if p:
+                    return p
+        except Exception:
+            pass
+
     conn = get_conn()
     cur = conn.execute("SELECT * FROM user_preferences WHERE user_id = ?", (user_id,))
     row = cur.fetchone()
@@ -367,11 +798,21 @@ def update_preferences(user_id: int, **kwargs) -> bool:
         "session_end_grace", "ai_base_url", "ai_model", "theme", "notifications",
         "accent_color", "font_family", "font_scale", "ui_density", "auto_push",
         "ask_before_push", "ai_provider", "openai_api_key", "claude_api_key",
-        "gemini_api_key", "openai_model", "claude_model", "gemini_model"
+        "gemini_api_key", "openai_model", "claude_model", "gemini_model",
+        "reminder_interval_enabled", "reminder_interval_hours", "reminder_interval_minutes",
+        "reminder_app_monitor_enabled", "reminder_only_if_dirty"
     }
     updates = {k: v for k, v in kwargs.items() if k in allowed}
     if not updates:
         return False
+
+    url = get_server_url()
+    if url:
+        try:
+            requests.put(f"{url}/api/users/{user_id}/preferences", json=updates, timeout=6)
+        except Exception:
+            pass
+
     conn = get_conn()
     set_clause = ", ".join(f"{k} = ?" for k in updates)
     conn.execute(f"UPDATE user_preferences SET {set_clause} WHERE user_id = ?",
@@ -387,6 +828,21 @@ def log_commit(user_id: int, repo_path: str, commit_msg: str,
                status: str = "committed") -> None:
     """Log a commit action."""
     repo_name = os.path.basename(repo_path.rstrip("/\\"))
+    url = get_server_url()
+    if url:
+        try:
+            requests.post(f"{url}/api/activity/commits", json={
+                "user_id": user_id,
+                "repo_path": repo_path,
+                "repo_name": repo_name,
+                "commit_hash": commit_hash,
+                "commit_msg": commit_msg,
+                "files_count": files_count,
+                "status": status,
+            }, timeout=6)
+        except Exception:
+            pass
+
     conn = get_conn()
     conn.execute("""
         INSERT INTO commit_activity (user_id, repo_path, repo_name, commit_hash, commit_msg, files_count, status)
@@ -438,6 +894,20 @@ def get_metrics_timeseries(days: int = 30, user_id: Optional[int] = None) -> Dic
     sessions, active_users, commits, files_committed, pushes, scans,
     vulnerabilities, errors, warnings, commit_failures, push_failures, ai_generations
     """
+    url = get_server_url()
+    if url:
+        try:
+            params = {"days": days}
+            if user_id:
+                params["user_id"] = user_id
+            resp = requests.get(f"{url}/api/metrics/timeseries", params=params, timeout=6)
+            if resp.status_code == 200:
+                data = resp.json()
+                if "dates" in data and "series" in data:
+                    return data
+        except Exception:
+            pass
+
     dates = _day_range(days)
     idx = {d: i for i, d in enumerate(dates)}
     names = ["sessions", "active_users", "commits", "files_committed", "pushes", "scans",
@@ -499,6 +969,17 @@ def get_metrics_timeseries(days: int = 30, user_id: Optional[int] = None) -> Dic
 
 def get_user_commit_series(days: int = 30, limit: int = 5) -> Dict[str, Any]:
     """Daily commit counts for the `limit` most active users (for multi-line charts)."""
+    url = get_server_url()
+    if url:
+        try:
+            resp = requests.get(f"{url}/api/metrics/user-commits", params={"days": days, "limit": limit}, timeout=6)
+            if resp.status_code == 200:
+                data = resp.json()
+                if "dates" in data and "series" in data:
+                    return data
+        except Exception:
+            pass
+
     dates = _day_range(days)
     idx = {d: i for i, d in enumerate(dates)}
     conn = get_conn()
@@ -520,6 +1001,17 @@ def get_user_commit_series(days: int = 30, limit: int = 5) -> Dict[str, Any]:
 
 def get_recent_security_events(limit: int = 8) -> List[Dict]:
     """Latest scans that found security problems or errors (for the admin dashboard)."""
+    url = get_server_url()
+    if url:
+        try:
+            resp = requests.get(f"{url}/api/events/security", params={"limit": limit}, timeout=6)
+            if resp.status_code == 200:
+                evs = resp.json().get("events")
+                if evs is not None:
+                    return evs
+        except Exception:
+            pass
+
     conn = get_conn()
     cur = conn.execute("""
         SELECT e.*, u.username FROM app_events e LEFT JOIN users u ON u.id = e.user_id
@@ -530,6 +1022,20 @@ def get_recent_security_events(limit: int = 8) -> List[Dict]:
 
 def get_activity_log(user_id: Optional[int] = None, limit: int = 100) -> List[Dict]:
     """Get commit activity log, optionally filtered by user."""
+    url = get_server_url()
+    if url:
+        try:
+            params = {"limit": limit}
+            if user_id:
+                params["user_id"] = user_id
+            resp = requests.get(f"{url}/api/activity/commits", params=params, timeout=6)
+            if resp.status_code == 200:
+                act = resp.json().get("activity")
+                if act is not None:
+                    return act
+        except Exception:
+            pass
+
     conn = get_conn()
     if user_id:
         cur = conn.execute("""
@@ -575,6 +1081,20 @@ def _increment_daily_commits(user_id: int) -> None:
 
 def get_usage_stats(user_id: Optional[int] = None, days: int = 30) -> List[Dict]:
     """Get daily usage stats for charts."""
+    url = get_server_url()
+    if url:
+        try:
+            params = {"days": days}
+            if user_id:
+                params["user_id"] = user_id
+            resp = requests.get(f"{url}/api/usage/stats", params=params, timeout=6)
+            if resp.status_code == 200:
+                stats = resp.json().get("stats")
+                if stats is not None:
+                    return stats
+        except Exception:
+            pass
+
     conn = get_conn()
     since = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
     if user_id:
@@ -595,6 +1115,17 @@ def get_usage_stats(user_id: Optional[int] = None, days: int = 30) -> List[Dict]
 
 def get_dashboard_stats() -> Dict[str, Any]:
     """Get aggregate stats for the admin dashboard."""
+    url = get_server_url()
+    if url:
+        try:
+            resp = requests.get(f"{url}/api/admin/stats", timeout=6)
+            if resp.status_code == 200:
+                stats = resp.json().get("stats")
+                if stats:
+                    return stats
+        except Exception:
+            pass
+
     conn = get_conn()
     stats = {}
 
@@ -630,9 +1161,7 @@ def get_dashboard_stats() -> Dict[str, Any]:
 
 # ── Session tokens ─────────────────────────────────────────────────────────────
 
-def create_session_token(user_id: int) -> str:
-    """Create a session token for a user (for auto-login)."""
-    token = secrets.token_urlsafe(32)
+def _save_local_session(token: str, user_id: int):
     expires = (datetime.now() + timedelta(days=30)).strftime("%Y-%m-%d %H:%M:%S")
     conn = get_conn()
     conn.execute("DELETE FROM sessions WHERE user_id = ?", (user_id,))
@@ -641,11 +1170,40 @@ def create_session_token(user_id: int) -> str:
         (token, user_id, expires)
     )
     conn.commit()
+
+
+def create_session_token(user_id: int) -> str:
+    """Create a session token for a user (for auto-login)."""
+    url = get_server_url()
+    if url:
+        try:
+            resp = requests.post(f"{url}/api/auth/session", json={"action": "create", "user_id": user_id}, timeout=6)
+            if resp.status_code == 200:
+                tok = resp.json().get("token")
+                if tok:
+                    _save_local_session(tok, user_id)
+                    return tok
+        except Exception:
+            pass
+
+    token = secrets.token_urlsafe(32)
+    _save_local_session(token, user_id)
     return token
 
 
 def validate_session_token(token: str) -> Optional[Dict]:
     """Validate a session token and return the user dict if valid."""
+    url = get_server_url()
+    if url:
+        try:
+            resp = requests.post(f"{url}/api/auth/session", json={"action": "validate", "token": token}, timeout=6)
+            if resp.status_code == 200:
+                data = resp.json()
+                if data.get("valid") and data.get("user"):
+                    return data["user"]
+        except Exception:
+            pass
+
     conn = get_conn()
     cur = conn.execute("""
         SELECT u.* FROM sessions s
@@ -658,6 +1216,12 @@ def validate_session_token(token: str) -> Optional[Dict]:
 
 def revoke_session_token(user_id: int) -> None:
     """Revoke all session tokens for a user (logout)."""
+    url = get_server_url()
+    if url:
+        try:
+            requests.post(f"{url}/api/auth/session", json={"action": "revoke", "user_id": user_id}, timeout=6)
+        except Exception:
+            pass
     conn = get_conn()
     conn.execute("DELETE FROM sessions WHERE user_id = ?", (user_id,))
     conn.commit()
@@ -834,6 +1398,17 @@ def get_all_repo_bindings(user_id: int) -> Dict[str, int]:
 
 def get_system_setting(key: str, default: str = "") -> str:
     """Get a system setting value."""
+    url = get_server_url()
+    if url:
+        try:
+            resp = requests.get(f"{url}/api/settings", timeout=5)
+            if resp.status_code == 200:
+                settings = resp.json().get("settings", {})
+                if key in settings:
+                    return settings[key]
+        except Exception:
+            pass
+
     conn = get_conn()
     cur = conn.execute("SELECT value FROM system_settings WHERE key = ?", (key,))
     row = cur.fetchone()
@@ -842,6 +1417,13 @@ def get_system_setting(key: str, default: str = "") -> str:
 
 def set_system_setting(key: str, value: str, user_id: Optional[int] = None) -> bool:
     """Set a system setting value."""
+    url = get_server_url()
+    if url:
+        try:
+            requests.post(f"{url}/api/settings", json={"key": key, "value": str(value), "user_id": user_id}, timeout=5)
+        except Exception:
+            pass
+
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     conn = get_conn()
     conn.execute("""
@@ -856,6 +1438,17 @@ def set_system_setting(key: str, value: str, user_id: Optional[int] = None) -> b
 
 def get_all_system_settings() -> Dict[str, str]:
     """Get all system settings as a dictionary."""
+    url = get_server_url()
+    if url:
+        try:
+            resp = requests.get(f"{url}/api/settings", timeout=5)
+            if resp.status_code == 200:
+                s = resp.json().get("settings")
+                if s is not None:
+                    return s
+        except Exception:
+            pass
+
     conn = get_conn()
     cur = conn.execute("SELECT key, value FROM system_settings")
     return {row["key"]: row["value"] for row in cur.fetchall()}
