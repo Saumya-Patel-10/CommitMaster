@@ -25,13 +25,16 @@ class LoginWindow:
         self.on_success = on_success
         self.app_type = app_type
 
-        # Apply system default theme if configured
+        # Apply system default theme and pattern if configured
         sys_theme = db.get_system_setting("default_theme")
         sys_accent = db.get_system_setting("default_accent")
         sys_font = db.get_system_setting("default_font_family")
-        if sys_theme or sys_accent or sys_font:
+        sys_pattern = db.get_system_setting("default_pattern") or "dot_matrix"
+        if sys_theme or sys_accent or sys_font or sys_pattern:
             from commitmaster.app_styles import apply_customization
-            apply_customization(theme=sys_theme or None, accent=sys_accent or None, font_family=sys_font or None)
+            apply_customization(theme=sys_theme or None, accent=sys_accent or None, font_family=sys_font or None, pattern=sys_pattern)
+
+        self._active_pattern = sys_pattern or "dot_matrix"
 
         self.root = tk.Tk()
         self._mode = "login"  # or "register"
@@ -77,12 +80,20 @@ class LoginWindow:
         self.root.bind("<MouseWheel>", self._on_mousewheel)
 
         outer = tk.Frame(self._content, bg=COLORS["bg_darkest"])
-        outer.pack(fill="both", expand=True, padx=36, pady=20)
+        outer.pack(fill="both", expand=True, padx=36, pady=16)
+
+        # ── Tech Suite Badge ──────────────────────────────────────────────────
+        badge_frame = tk.Frame(outer, bg=COLORS["bg_card"], padx=10, pady=3,
+                               highlightthickness=1, highlightbackground=COLORS["border"])
+        badge_frame.pack(pady=(0, 6))
+        suite_title = "ADMIN CONSOLE" if self.app_type == "admin" else "DEVELOPER SUITE"
+        tk.Label(badge_frame, text=f"⚡ COMMITMASTER PRO  •  {suite_title}",
+                 font=("Consolas", 8, "bold"), fg=COLORS["accent"], bg=COLORS["bg_card"]).pack()
 
         # ── Logo ──────────────────────────────────────────────────────────────
         self._logo_canvas = tk.Canvas(outer, width=64, height=64,
                                       bg=COLORS["bg_darkest"], highlightthickness=0)
-        self._logo_canvas.pack(pady=(4, 0))
+        self._logo_canvas.pack(pady=(2, 0))
         self._draw_logo(0)
 
         # ── App name & tagline ────────────────────────────────────────────────
@@ -97,10 +108,16 @@ class LoginWindow:
         self._build_saved_accounts_ui(outer)
 
         # ── Card ──────────────────────────────────────────────────────────────
-        card = tk.Frame(outer, bg=COLORS["bg_card"], relief="flat", bd=0)
+        card = tk.Frame(outer, bg=COLORS["bg_card"], relief="flat", bd=0,
+                        highlightthickness=1, highlightbackground=COLORS["border"])
         card.pack(fill="x", pady=(0, 16))
-        self._border_top = tk.Frame(card, height=2, bg=COLORS["accent"])
+        self._border_top = tk.Frame(card, height=3, bg=COLORS["accent"])
         self._border_top.pack(fill="x")
+
+        # Patterned card accent banner
+        self._card_banner_lbl = tk.Label(card, bd=0, highlightthickness=0, bg=COLORS["bg_card"])
+        self._card_banner_lbl.pack(fill="x")
+        self._render_card_banner()
 
         self._card_inner = tk.Frame(card, bg=COLORS["bg_card"], padx=24, pady=18)
         self._card_inner.pack(fill="both")
@@ -223,6 +240,22 @@ class LoginWindow:
 
     def _on_canvas_configure(self, event):
         self._canvas.itemconfig(self._canvas_window, width=event.width)
+        self._render_card_banner(width=max(360, event.width - 72))
+
+    def _render_card_banner(self, width: int = 388):
+        try:
+            from commitmaster import pattern_utils
+            banner_img = pattern_utils.generate_hero_card_banner(
+                width=max(320, width), height=22,
+                bg_hex=COLORS["bg_card"],
+                accent_hex=COLORS["accent"],
+                pattern_name=getattr(self, "_active_pattern", "dot_matrix")
+            )
+            if hasattr(self, "_card_banner_lbl"):
+                self._card_banner_lbl.configure(image=banner_img)
+                self._card_banner_lbl.image = banner_img
+        except Exception:
+            pass
 
     def _on_mousewheel(self, event):
         if self._canvas.winfo_height() < self._content.winfo_reqheight():
