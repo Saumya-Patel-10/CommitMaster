@@ -195,9 +195,21 @@ class AdminPortal:
 
         target = self._sb_frame
 
-        # Admin avatar
-        av_f = tk.Frame(target, bg=COLORS["bg_sidebar"], pady=12)
-        av_f.pack(fill="x", padx=16)
+        # Admin avatar (Pattern Covered)
+        pat = get_active_customization().get("pattern", "dot_matrix")
+        av_card = tk.Frame(target, bg=COLORS["bg_sidebar"], highlightthickness=1, highlightbackground=COLORS["border"])
+        av_card.pack(fill="x", padx=10, pady=(10, 6))
+        av_bg_lbl = tk.Label(av_card, bg=COLORS["bg_sidebar"], bd=0)
+        av_bg_lbl.place(x=0, y=0, relwidth=1, relheight=1)
+        try:
+            av_p_img = pattern_utils.generate_panel_banner(SIZES["sidebar_width"], 84, COLORS["bg_sidebar"], COLORS["admin"], pat)
+            av_bg_lbl.config(image=av_p_img)
+            av_bg_lbl._photo = av_p_img
+        except Exception:
+            pass
+
+        av_f = tk.Frame(av_card, bg=COLORS["bg_sidebar"], padx=10, pady=10)
+        av_f.pack(fill="both")
         color = self.admin_user.get("avatar_color", AVATAR_COLORS[0])
         initials = self._get_initials()
         tk.Label(av_f, text=initials, font=FONTS["heading_sm"],
