@@ -131,6 +131,41 @@ class SettingsWindow:
                         text="Skip sensitive files  (.env, keys, certificates)",
                         variable=self.var_skip_sensitive).pack(anchor="w", padx=4, pady=3)
 
+        # ── Reminder notifications section
+        rem_cfg = self.cfg.get("reminder", {})
+        self.var_rem_interval = tk.BooleanVar(value=rem_cfg.get("interval_enabled", True))
+        self.var_rem_hours = tk.StringVar(value=str(rem_cfg.get("interval_hours", 1)))
+        self.var_rem_minutes = tk.StringVar(value=str(rem_cfg.get("interval_minutes", 0)))
+        self.var_rem_app_monitor = tk.BooleanVar(value=rem_cfg.get("app_monitor_enabled", True))
+        self.var_rem_only_dirty = tk.BooleanVar(value=rem_cfg.get("only_if_dirty", True))
+
+        sec_rem = self._section(f, "Commit Reminder Notifications (Bottom-Right Corner)")
+        ttk.Checkbutton(sec_rem,
+                        text="Interval-based reminders (Timer)",
+                        variable=self.var_rem_interval).pack(anchor="w", padx=4, pady=2)
+
+        rem_time_row = ttk.Frame(sec_rem)
+        rem_time_row.pack(anchor="w", padx=20, pady=2)
+        ttk.Label(rem_time_row, text="Remind every: ").pack(side="left")
+        ttk.Entry(rem_time_row, textvariable=self.var_rem_hours, width=3).pack(side="left", padx=2)
+        ttk.Label(rem_time_row, text="hrs").pack(side="left", padx=(0, 6))
+        ttk.Entry(rem_time_row, textvariable=self.var_rem_minutes, width=3).pack(side="left", padx=2)
+        ttk.Label(rem_time_row, text="mins").pack(side="left")
+
+        ttk.Checkbutton(sec_rem,
+                        text="App & IDE monitoring (Alert when IDE closes)",
+                        variable=self.var_rem_app_monitor).pack(anchor="w", padx=4, pady=2)
+
+        ttk.Checkbutton(sec_rem,
+                        text="Only alert when uncommitted changes exist in repos",
+                        variable=self.var_rem_only_dirty).pack(anchor="w", padx=4, pady=2)
+
+        test_btn_row = ttk.Frame(sec_rem)
+        test_btn_row.pack(anchor="w", padx=4, pady=(4, 2))
+        ttk.Button(test_btn_row, text="🔔 Test Bottom-Right Alert",
+                   style="Secondary.TButton",
+                   command=self._test_toast).pack(side="left")
+
         sec2 = self._section(f, "Timing  (seconds)")
         grid = ttk.Frame(sec2)
         grid.pack(anchor="w")
@@ -150,8 +185,9 @@ class SettingsWindow:
         sec = self._section(f, "Project Folders  (contain your cloned repos)")
         self.lst_dirs = self._list_editor(sec, self.cfg["projects_dirs"], browse=True, height=4)
 
-        sec2 = self._section(f, "Watched Coding Apps  (process names — Task Manager → Details)")
-        self.lst_apps = self._list_editor(sec2, self.cfg["watched_apps"], browse=False, height=5)
+        sec2 = self._section(f, "Watched Coding Apps & IDEs")
+        from commitmaster.ide_selector import IdeSelectorWidget
+        self._ide_selector = IdeSelectorWidget(sec2, self.cfg.get("watched_apps", []))
 
     def _list_editor(self, parent, values, browse: bool, height: int) -> tk.Listbox:
         frame = ttk.Frame(parent)
@@ -381,6 +417,24 @@ class SettingsWindow:
 
     def _build_advanced(self) -> None:
         f = self.tab_advanced
+
+        # ── Cloud Backend Server ──────────────────────────────────────────────
+        sec_cloud = self._section(f, "🌐 Cloud Backend & Central Server (Multi-Device)")
+        row_c = ttk.Frame(sec_cloud); row_c.pack(fill="x", pady=3)
+        ttk.Label(row_c, text="Server URL:", width=12).pack(side="left")
+        self.ent_server_url = ttk.Entry(row_c)
+        self.ent_server_url.insert(0, self.cfg.get("server_url", ""))
+        self.ent_server_url.pack(side="left", fill="x", expand=True, padx=6)
+        ttk.Button(row_c, text="🔌 Test", command=self._test_cloud_server,
+                   style="Secondary.TButton").pack(side="left")
+
+        self.lbl_cloud_status = ttk.Label(sec_cloud, text="", foreground=C["text2"])
+        self.lbl_cloud_status.pack(anchor="w", padx=6, pady=(2, 4))
+
+        ttk.Label(f, text="  Enter your deployed server URL (e.g. https://your-server.onrender.com) or leave blank for local mode.",
+                  foreground=C["text2"]).pack(anchor="w", padx=16, pady=(2, 10))
+
+        # ── GitHub Desktop ────────────────────────────────────────────────────
         sec = self._section(f, "GitHub Desktop")
 
         row = ttk.Frame(sec); row.pack(fill="x", pady=3)
@@ -403,6 +457,13 @@ class SettingsWindow:
                   text="  To restore all defaults: delete config.json and restart CommitMaster.",
                   foreground=C["text2"]).pack(anchor="w", padx=16, pady=(12, 0))
 
+    def _test_cloud_server(self) -> None:
+        url = self.ent_server_url.get().strip()
+        from commitmaster import database as db
+        ok, msg = db.test_server_connection(url)
+        color = C["accent"] if ok else C["err_fg"]
+        self.lbl_cloud_status.config(text=("✅ " if ok else "⚠ ") + msg, foreground=color)
+
     def _detect_gd(self) -> None:
         path = commit_engine.find_github_desktop()
         if path:
@@ -423,14 +484,36 @@ class SettingsWindow:
         _label(bar, "Changes apply immediately — no restart needed.",
                fg=C["text2"], bg=C["bg2"], font_size=9).pack(side="left")
 
+    def _test_toast(self) -> None:
+        from commitmaster.notification_toast import show_toast
+        show_toast(
+            title="🔔 Notification Reminder Preview",
+            message="This is a preview of the bottom-right corner reminder! Both interval timers and IDE app monitoring use this card.",
+            badge_text="TEST PREVIEW",
+            master=self.root,
+        )
+
     # ── Save ──────────────────────────────────────────────────────────────────
 
     def _save(self) -> None:
         try:
             prov = self._provider_map.get(self.cmb_provider.get(), "bionic")
             m_val = self._model_value()
+
+            try:
+                r_hrs = max(0, int(self.var_rem_hours.get().strip()))
+            except Exception:
+                r_hrs = 1
+            try:
+                r_mins = max(0, int(self.var_rem_minutes.get().strip()))
+            except Exception:
+                r_mins = 0
+
+            watched_selected = self._ide_selector.get_selected_apps() if hasattr(self, "_ide_selector") else (
+                self._listbox_values(self.lst_apps) if hasattr(self, "lst_apps") else self.cfg.get("watched_apps", [])
+            )
             new_cfg = {
-                "watched_apps":             self._listbox_values(self.lst_apps),
+                "watched_apps":             watched_selected,
                 "projects_dirs":            self._listbox_values(self.lst_dirs),
                 "poll_interval_seconds":    int(self.spin_poll_interval_seconds.get()),
                 "repo_scan_interval_seconds": int(self.spin_repo_scan_interval_seconds.get()),
@@ -439,6 +522,14 @@ class SettingsWindow:
                 "skip_sensitive_files":     self.var_skip_sensitive.get(),
                 "sensitive_patterns":       [p.strip() for p in self.ent_sensitive.get().split(",") if p.strip()],
                 "github_desktop_path":      self.ent_gd.get().strip(),
+                "server_url":               self.ent_server_url.get().strip(),
+                "reminder": {
+                    "interval_enabled":     self.var_rem_interval.get(),
+                    "interval_hours":       r_hrs,
+                    "interval_minutes":     r_mins,
+                    "app_monitor_enabled":  self.var_rem_app_monitor.get(),
+                    "only_if_dirty":        self.var_rem_only_dirty.get(),
+                },
                 "ai": {
                     "base_url":         self.ent_base_url.get().strip(),
                     "model":            m_val if prov in ("bionic", "ollama") else "",
