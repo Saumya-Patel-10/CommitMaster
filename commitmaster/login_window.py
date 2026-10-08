@@ -2,14 +2,17 @@
 CommitMaster — Login & Registration window.
 A premium dark-mode login screen with animated branding and responsive layout.
 """
+import secrets
 import tkinter as tk
-from tkinter import ttk
+from tkinter import ttk, simpledialog
 import threading
 import time
 from typing import Callable, Optional
 
 from commitmaster.app_styles import COLORS, FONTS
 from commitmaster import database as db
+from commitmaster import otp_service
+from commitmaster import account_manager
 
 
 class LoginWindow:
@@ -18,8 +21,9 @@ class LoginWindow:
     Calls on_success(user_dict) when the user successfully authenticates or registers.
     """
 
-    def __init__(self, on_success: Callable[[dict], None]):
+    def __init__(self, on_success: Callable[[dict], None], app_type: str = "user"):
         self.on_success = on_success
+        self.app_type = app_type
 
         # Apply system default theme if configured
         sys_theme = db.get_system_setting("default_theme")
@@ -38,7 +42,8 @@ class LoginWindow:
     # ── Window setup ──────────────────────────────────────────────────────────
 
     def _setup_window(self):
-        self.root.title("CommitMaster — Sign In")
+        title = "CommitMaster Admin — Sign In" if self.app_type == "admin" else "CommitMaster — Sign In"
+        self.root.title(title)
         self.root.geometry("460x540")
         self.root.minsize(440, 500)
         self.root.resizable(True, True)
@@ -53,7 +58,7 @@ class LoginWindow:
         self.root.geometry(f"460x540+{x}+{y}")
         self.root.protocol("WM_DELETE_WINDOW", self.root.destroy)
         from commitmaster import windows_integration
-        windows_integration.apply_windows_theme(self.root, "CommitMaster — Sign In")
+        windows_integration.apply_windows_theme(self.root, title, app_type=self.app_type)
 
     # ── UI construction ───────────────────────────────────────────────────────
 
@@ -86,7 +91,10 @@ class LoginWindow:
         self._tagline = tk.Label(outer, text="Your coding session companion",
                                  font=FONTS["body_sm"], fg=COLORS["text_secondary"],
                                  bg=COLORS["bg_darkest"])
-        self._tagline.pack(pady=(2, 14))
+        self._tagline.pack(pady=(2, 10))
+
+        # ── Saved Accounts quick switcher (if any accounts saved) ───────────
+        self._build_saved_accounts_ui(outer)
 
         # ── Card ──────────────────────────────────────────────────────────────
         card = tk.Frame(outer, bg=COLORS["bg_card"], relief="flat", bd=0)
@@ -122,7 +130,7 @@ class LoginWindow:
 
         # 3. Email Address (register only)
         self._email_frame = tk.Frame(self._card_inner, bg=COLORS["bg_card"])
-        tk.Label(self._email_frame, text="Email Address",
+        tk.Label(self._email_frame, text="Email Address (Google Account @gmail.com supported)",
                  font=FONTS["label_bold"], fg=COLORS["text_secondary"],
                  bg=COLORS["bg_card"]).pack(anchor="w")
         self._email_entry = self._make_entry(self._email_frame)
@@ -159,9 +167,19 @@ class LoginWindow:
         )
         self._add_hover(self._submit_btn, COLORS["accent_hover"], COLORS["accent"])
 
+        # Google Account OTP sign in button
+        self._google_otp_btn = tk.Button(
+            self._card_inner, text="🔐 Sign in with Google (OTP)", font=FONTS["body_sm"],
+            bg=COLORS["bg_medium"], fg=COLORS["text_primary"],
+            activebackground=COLORS["bg_card_hover"], activeforeground=COLORS["accent"],
+            relief="flat", cursor="hand2", bd=0,
+            command=self._google_otp_signin, padx=12, pady=6
+        )
+        self._add_hover(self._google_otp_btn, COLORS["bg_card_hover"], COLORS["bg_medium"])
+
         # ── Toggle login / register footer ────────────────────────────────────
         toggle_f = tk.Frame(outer, bg=COLORS["bg_darkest"])
-        toggle_f.pack(pady=(4, 10))
+        toggle_f.pack(pady=(4, 6))
         self._toggle_lbl = tk.Label(toggle_f, text="Don't have an account? ",
                                     font=FONTS["body_sm"], fg=COLORS["text_secondary"],
                                     bg=COLORS["bg_darkest"])
@@ -172,6 +190,30 @@ class LoginWindow:
                                     cursor="hand2")
         self._toggle_btn.pack(side="left")
         self._toggle_btn.bind("<Button-1>", lambda e: self._toggle_mode())
+
+        # ── Cloud Server / Database Connection status footer ─────────────────
+        srv_f = tk.Frame(outer, bg=COLORS["bg_darkest"])
+        srv_f.pack(pady=(4, 8))
+        self._srv_status_lbl = tk.Label(
+            srv_f, text="", font=FONTS["caption"],
+            fg=COLORS["text_muted"], bg=COLORS["bg_darkest"]
+        )
+        self._srv_status_lbl.pack(side="left")
+
+        srv_sep = tk.Label(srv_f, text=" • ", font=FONTS["caption"],
+                           fg=COLORS["border"], bg=COLORS["bg_darkest"])
+        srv_sep.pack(side="left")
+
+        self._srv_cfg_btn = tk.Label(
+            srv_f, text="⚙ Server Settings",
+            font=("Segoe UI", 9, "underline"),
+            fg=COLORS["info"], bg=COLORS["bg_darkest"],
+            cursor="hand2"
+        )
+        self._srv_cfg_btn.pack(side="left")
+        self._srv_cfg_btn.bind("<Button-1>", lambda e: self._open_server_settings_dialog())
+
+        self._update_server_badge()
 
         # Set initial mode
         self._set_mode("login")
@@ -201,6 +243,98 @@ class LoginWindow:
         widget.bind("<Enter>", lambda e: widget.config(bg=hover_bg))
         widget.bind("<Leave>", lambda e: widget.config(bg=normal_bg))
 
+    def _build_saved_accounts_ui(self, parent):
+        """Display quick-switch buttons for accounts already saved on this PC."""
+        accounts = account_manager.get_saved_accounts()
+        if not accounts:
+            return
+
+        saved_box = tk.Frame(parent, bg=COLORS["bg_card"], padx=14, pady=10,
+                             highlightthickness=1, highlightbackground=COLORS["border"])
+        saved_box.pack(fill="x", pady=(0, 14))
+
+        hdr_row = tk.Frame(saved_box, bg=COLORS["bg_card"])
+        hdr_row.pack(fill="x", pady=(0, 6))
+        tk.Label(hdr_row, text="👥 Switch / Sign in to Saved Account:", font=FONTS["label_bold"],
+                 fg=COLORS["text_secondary"], bg=COLORS["bg_card"]).pack(side="left")
+
+        for acc in accounts[:4]:
+            row = tk.Frame(saved_box, bg=COLORS["bg_card"], pady=3)
+            row.pack(fill="x")
+            initial = (acc.get("full_name") or acc.get("username") or "?")[0].upper()
+            cv = tk.Canvas(row, width=24, height=24, bg=COLORS["bg_card"], highlightthickness=0)
+            cv.pack(side="left", padx=(0, 6))
+            cv.create_oval(1, 1, 23, 23, fill=acc.get("avatar_color", "#3fb950"), outline="")
+            cv.create_text(12, 12, text=initial, fill="white", font=("Segoe UI", 9, "bold"))
+
+            disp = acc.get("full_name") or acc.get("username")
+            admin_tag = " [ADMIN]" if db.is_admin_username(acc.get("username")) else ""
+            tk.Label(row, text=f"{disp} (@{acc.get('username')}){admin_tag}", font=FONTS["body_sm"],
+                     fg=COLORS["text_primary"], bg=COLORS["bg_card"]).pack(side="left")
+
+            def _do_quick_login(target=acc):
+                switched = account_manager.switch_account(target["id"])
+                if switched:
+                    self.root.destroy()
+                    self.on_success(switched)
+
+            btn = tk.Button(row, text="Sign In", font=("Segoe UI", 8, "bold"),
+                            bg=COLORS["accent"], fg="white", relief="flat", bd=0,
+                            cursor="hand2", padx=8, pady=1, command=_do_quick_login)
+            btn.pack(side="right")
+            self._add_hover(btn, COLORS["accent_hover"], COLORS["accent"])
+
+    def _google_otp_signin(self):
+        """Trigger Google Account OTP Sign In / Verification flow."""
+        cur_val = self._user_entry.get().strip()
+        init_val = cur_val if "@" in cur_val else ""
+        email = simpledialog.askstring(
+            "Google Account Sign In / Verification",
+            "Enter your Google Account email address (@gmail.com):",
+            initialvalue=init_val,
+            parent=self.root
+        )
+        if not email or not email.strip():
+            return
+        clean_email = email.strip().lower()
+        if not otp_service.is_google_email(clean_email):
+            self._err_label.config(text="Please enter a valid Google Account address (@gmail.com).", fg=COLORS["error"])
+            return
+
+        self._err_label.config(text=f"Sending verification code to {clean_email}...", fg=COLORS["info"])
+        self.root.update_idletasks()
+        ok, msg, code = otp_service.send_google_otp(clean_email, purpose="login")
+        if not ok:
+            self._err_label.config(text=msg, fg=COLORS["error"])
+            return
+
+        def _on_verified():
+            user = db.get_user_by_username_or_email(clean_email)
+            if not user:
+                # Create user for this Google account
+                uname = clean_email.split("@")[0]
+                base_uname = uname
+                c = 1
+                while db.check_user_exists(uname, clean_email) == "username":
+                    uname = f"{base_uname}{c}"
+                    c += 1
+                rand_pw = secrets.token_urlsafe(12)
+                uid = db.create_user(uname, clean_email, uname.replace(".", " ").title(), rand_pw)
+                if uid:
+                    db.mark_user_verified(uid)
+                    user = db.get_user(uid)
+            else:
+                db.mark_user_verified(user["id"])
+                user = db.get_user(user["id"])
+
+            if user:
+                token = db.create_session_token(user["id"])
+                account_manager.save_account(user, token)
+                self.root.destroy()
+                self.on_success(user)
+
+        otp_service.GoogleOtpDialog(self.root, clean_email, on_success=_on_verified, purpose="login", initial_code=code)
+
     # ── Mode switching ────────────────────────────────────────────────────────
 
     def _set_mode(self, mode: str):
@@ -210,7 +344,7 @@ class LoginWindow:
         # Unpack all form widgets inside card
         for widget in [self._name_frame, self._user_frame, self._email_frame,
                        self._pass_frame, self._confirm_frame, self._err_label,
-                       self._submit_btn]:
+                       self._submit_btn, self._google_otp_btn]:
             widget.pack_forget()
 
         if mode == "login":
@@ -224,12 +358,13 @@ class LoginWindow:
             self._err_label.pack(pady=(2, 6))
             self._submit_btn.config(text="Sign In")
             self._submit_btn.pack(fill="x", pady=(4, 0))
+            self._google_otp_btn.pack(fill="x", pady=(8, 0))
 
             self._toggle_lbl.config(text="Don't have an account? ")
             self._toggle_btn.config(text="Create one")
 
             # Adjust window height for compact login
-            self._resize_window(540)
+            self._resize_window(580)
             self._user_entry.focus()
 
         else:  # register
@@ -251,7 +386,7 @@ class LoginWindow:
             self._toggle_btn.config(text="Sign in")
 
             # Adjust window height for full registration form
-            self._resize_window(690)
+            self._resize_window(720)
             self._name_entry.focus()
 
         # Update scrollregion
@@ -282,95 +417,236 @@ class LoginWindow:
 
     # ── Submit ─────────────────────────────────────────────────────────────────
 
+    def _update_server_badge(self):
+        srv_url = db.get_server_url()
+        if srv_url:
+            short = srv_url.replace("https://", "").replace("http://", "").rstrip("/")
+            if len(short) > 24:
+                short = short[:21] + "..."
+            self._srv_status_lbl.config(
+                text=f"🌐 Cloud: {short}",
+                fg=COLORS["accent"]
+            )
+        else:
+            self._srv_status_lbl.config(
+                text="💻 Local Offline Database",
+                fg=COLORS["text_secondary"]
+            )
+
+    def _open_server_settings_dialog(self):
+        dlg = tk.Toplevel(self.root)
+        dlg.title("CommitMaster — Server & Database Settings")
+        dlg.geometry("500x380")
+        dlg.minsize(460, 340)
+        dlg.configure(bg=COLORS["bg_darkest"])
+        dlg.transient(self.root)
+        dlg.grab_set()
+
+        # Center on parent
+        self.root.update_idletasks()
+        rx, ry = self.root.winfo_x(), self.root.winfo_y()
+        rw, rh = self.root.winfo_width(), self.root.winfo_height()
+        dlg.geometry(f"+{max(0, rx + (rw - 500)//2)}+{max(0, ry + (rh - 380)//2)}")
+
+        p = tk.Frame(dlg, bg=COLORS["bg_darkest"], padx=24, pady=20)
+        p.pack(fill="both", expand=True)
+
+        tk.Label(p, text="🌐 Central Backend & Cloud Database", font=FONTS["heading_sm"],
+                 fg=COLORS["text_primary"], bg=COLORS["bg_darkest"]).pack(anchor="w")
+        tk.Label(p, text="Connect to your deployed CommitMaster server to log in from any Windows device and sync users.",
+                 font=FONTS["body_sm"], fg=COLORS["text_secondary"], bg=COLORS["bg_darkest"],
+                 wraplength=440, justify="left").pack(anchor="w", pady=(4, 14))
+
+        tk.Label(p, text="Server URL", font=FONTS["label_bold"],
+                 fg=COLORS["text_secondary"], bg=COLORS["bg_darkest"]).pack(anchor="w")
+
+        url_ent = tk.Entry(p, font=FONTS["body_md"], bg=COLORS["bg_input"],
+                           fg=COLORS["text_primary"], insertbackground=COLORS["text_primary"],
+                           relief="flat", bd=0, highlightthickness=1,
+                           highlightbackground=COLORS["border"], highlightcolor=COLORS["border_focus"])
+        url_ent.insert(0, db.get_server_url())
+        url_ent.pack(fill="x", ipady=6, ipadx=8, pady=(4, 6))
+
+        res_lbl = tk.Label(p, text="", font=FONTS["body_sm"],
+                           fg=COLORS["text_secondary"], bg=COLORS["bg_darkest"], wraplength=440)
+        res_lbl.pack(anchor="w", pady=(2, 10))
+
+        def _do_test():
+            test_url = url_ent.get().strip()
+            if not test_url:
+                res_lbl.config(text="ℹ Local Mode: App will use local commitmaster.db.", fg=COLORS["info"])
+                return
+            res_lbl.config(text="Connecting to server...", fg=COLORS["text_secondary"])
+            dlg.update_idletasks()
+            ok, msg = db.test_server_connection(test_url)
+            if ok:
+                res_lbl.config(text=f"✔ {msg}", fg=COLORS["success"])
+            else:
+                res_lbl.config(text=f"✖ {msg}", fg=COLORS["error"])
+
+        def _do_save():
+            new_url = url_ent.get().strip()
+            db.set_server_url(new_url)
+            self._update_server_badge()
+            dlg.destroy()
+
+        def _do_local():
+            url_ent.delete(0, "end")
+            db.set_server_url("")
+            self._update_server_badge()
+            res_lbl.config(text="Switched to Local Offline Database mode.", fg=COLORS["info"])
+
+        btn_row = tk.Frame(p, bg=COLORS["bg_darkest"])
+        btn_row.pack(fill="x", pady=(10, 0))
+
+        test_btn = tk.Button(btn_row, text="🔌 Test Connection", font=FONTS["label_bold"],
+                             bg=COLORS["bg_medium"], fg=COLORS["text_primary"],
+                             activebackground=COLORS["bg_card_hover"], relief="flat", bd=0,
+                             cursor="hand2", padx=12, pady=6, command=_do_test)
+        test_btn.pack(side="left", padx=(0, 8))
+
+        local_btn = tk.Button(btn_row, text="💻 Use Local DB", font=FONTS["label_bold"],
+                              bg=COLORS["bg_card"], fg=COLORS["text_secondary"],
+                              activebackground=COLORS["bg_card_hover"], relief="flat", bd=0,
+                              cursor="hand2", padx=12, pady=6, command=_do_local)
+        local_btn.pack(side="left")
+
+        save_btn = tk.Button(btn_row, text="💾 Save & Connect", font=FONTS["label_bold"],
+                             bg=COLORS["accent"], fg="#ffffff",
+                             activebackground=COLORS["accent_hover"], relief="flat", bd=0,
+                             cursor="hand2", padx=14, pady=6, command=_do_save)
+        save_btn.pack(side="right")
+
+    # ── Submit ─────────────────────────────────────────────────────────────────
+
     def _submit(self):
         self._err_label.config(text="")
 
-        if self._mode == "login":
-            username_or_email = self._user_entry.get().strip()
-            password = self._pass_entry.get()
+        try:
+            if self._mode == "login":
+                username_or_email = self._user_entry.get().strip()
+                password = self._pass_entry.get()
 
-            if not username_or_email or not password:
-                self._err_label.config(text="Please enter both username and password.")
-                if not username_or_email:
-                    self._user_entry.focus()
+                if not username_or_email or not password:
+                    self._err_label.config(text="Please enter both username and password.")
+                    if not username_or_email:
+                        self._user_entry.focus()
+                    else:
+                        self._pass_entry.focus()
+                    return
+
+                user = db.authenticate(username_or_email, password)
+                if user:
+                    token = db.create_session_token(user["id"])
+                    account_manager.save_account(user, token)
+                    self.root.destroy()
+                    self.on_success(user)
                 else:
+                    srv = db.get_server_url()
+                    if srv:
+                        self._err_label.config(text="Invalid credentials. Verify your account or check Server Settings.")
+                    else:
+                        self._err_label.config(text="Invalid credentials. Please try again.")
+                    self._pass_entry.delete(0, "end")
                     self._pass_entry.focus()
-                return
 
-            user = db.authenticate(username_or_email, password)
-            if user:
-                self.root.destroy()
-                self.on_success(user)
-            else:
-                self._err_label.config(text="Invalid credentials. Please try again.")
-                self._pass_entry.delete(0, "end")
-                self._pass_entry.focus()
+            else:  # register
+                full_name = self._name_entry.get().strip()
+                username = self._user_entry.get().strip()
+                email = self._email_entry.get().strip()
+                password = self._pass_entry.get()
+                confirm = self._confirm_entry.get()
 
-        else:  # register
-            full_name = self._name_entry.get().strip()
-            username = self._user_entry.get().strip()
-            email = self._email_entry.get().strip()
-            password = self._pass_entry.get()
-            confirm = self._confirm_entry.get()
+                if not full_name:
+                    self._err_label.config(text="Please enter your full name.")
+                    self._name_entry.focus()
+                    return
 
-            if not full_name:
-                self._err_label.config(text="Please enter your full name.")
-                self._name_entry.focus()
-                return
+                if not username:
+                    self._err_label.config(text="Please choose a username.")
+                    self._user_entry.focus()
+                    return
 
-            if not username:
-                self._err_label.config(text="Please choose a username.")
-                self._user_entry.focus()
-                return
+                if len(username) < 3:
+                    self._err_label.config(text="Username must be at least 3 characters.")
+                    self._user_entry.focus()
+                    return
 
-            if len(username) < 3:
-                self._err_label.config(text="Username must be at least 3 characters.")
-                self._user_entry.focus()
-                return
+                if " " in username:
+                    self._err_label.config(text="Username cannot contain spaces.")
+                    self._user_entry.focus()
+                    return
 
-            if " " in username:
-                self._err_label.config(text="Username cannot contain spaces.")
-                self._user_entry.focus()
-                return
+                if not email or "@" not in email or "." not in email:
+                    self._err_label.config(text="Please enter a valid email address.")
+                    self._email_entry.focus()
+                    return
 
-            if not email or "@" not in email or "." not in email:
-                self._err_label.config(text="Please enter a valid email address.")
-                self._email_entry.focus()
-                return
+                if not password:
+                    self._err_label.config(text="Please enter a password.")
+                    self._pass_entry.focus()
+                    return
 
-            if not password:
-                self._err_label.config(text="Please enter a password.")
-                self._pass_entry.focus()
-                return
+                if len(password) < 6:
+                    self._err_label.config(text="Password must be at least 6 characters.")
+                    self._pass_entry.focus()
+                    return
 
-            if len(password) < 6:
-                self._err_label.config(text="Password must be at least 6 characters.")
-                self._pass_entry.focus()
-                return
+                if password != confirm:
+                    self._err_label.config(text="Passwords do not match.")
+                    self._confirm_entry.focus()
+                    return
 
-            if password != confirm:
-                self._err_label.config(text="Passwords do not match.")
-                self._confirm_entry.focus()
-                return
+                # Check for existing username or email before inserting
+                conflict = db.check_user_exists(username, email)
+                if conflict == "username":
+                    self._err_label.config(text=f"Username '{username}' is already taken.")
+                    self._user_entry.focus()
+                    return
+                elif conflict == "email":
+                    self._err_label.config(text=f"Email '{email}' is already registered. Please sign in.")
+                    self._email_entry.focus()
+                    return
 
-            # Check for existing username or email before inserting
-            conflict = db.check_user_exists(username, email)
-            if conflict == "username":
-                self._err_label.config(text=f"Username '{username}' is already taken.")
-                self._user_entry.focus()
-                return
-            elif conflict == "email":
-                self._err_label.config(text=f"Email '{email}' is already registered. Please sign in.")
-                self._email_entry.focus()
-                return
+                # If Google account, trigger OTP verification
+                if otp_service.is_google_email(email):
+                    self._err_label.config(text=f"Sending verification code to {email}...", fg=COLORS["info"])
+                    self.root.update_idletasks()
+                    ok, msg, code = otp_service.send_google_otp(email, purpose="register")
+                    if not ok:
+                        self._err_label.config(text=msg, fg=COLORS["error"])
+                        return
 
-            uid = db.create_user(username, email, full_name, password)
-            if uid:
-                user = db.get_user(uid)
-                self.root.destroy()
-                self.on_success(user)
-            else:
-                self._err_label.config(text="Failed to create account. Please try again.")
+                    def _on_verified():
+                        uid = db.create_user(username, email, full_name, password)
+                        if uid:
+                            db.mark_user_verified(uid)
+                            user = db.get_user(uid)
+                            token = db.create_session_token(uid)
+                            account_manager.save_account(user, token)
+                            self.root.destroy()
+                            self.on_success(user)
+                        else:
+                            self._err_label.config(text="Failed to create account. Please try again.")
+
+                    otp_service.GoogleOtpDialog(self.root, email, on_success=_on_verified, purpose="register", initial_code=code)
+                    return
+
+                uid = db.create_user(username, email, full_name, password)
+                if uid:
+                    user = db.get_user(uid)
+                    if user:
+                        token = db.create_session_token(uid)
+                        account_manager.save_account(user, token)
+                        self.root.destroy()
+                        self.on_success(user)
+                    else:
+                        self._err_label.config(text="Account created! Please sign in with your credentials.")
+                        self._set_mode("login")
+                else:
+                    self._err_label.config(text="Failed to create account. Please check credentials or Server Settings.")
+        except Exception as exc:
+            self._err_label.config(text=f"Error: {exc}")
 
     # ── Logo animation ────────────────────────────────────────────────────────
 
@@ -380,7 +656,7 @@ class LoginWindow:
         from commitmaster import windows_integration
         photo = getattr(self, "_logo_photo", None)
         if photo is None:
-            photo = windows_integration.get_logo_photo(64)
+            photo = windows_integration.get_logo_photo(64, app_type=getattr(self, "app_type", "user"))
             self._logo_photo = photo
         if photo:
             c.create_image(32, 32, image=photo, anchor="center")
