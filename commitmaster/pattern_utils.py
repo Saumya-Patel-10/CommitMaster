@@ -399,6 +399,32 @@ def generate_sidebar_header_banner(width: int, height: int, bg_hex: str, accent_
     return photo
 
 
+def generate_panel_banner(width: int, height: int, bg_hex: str, accent_hex: str, pattern_name: str = "dot_matrix") -> ImageTk.PhotoImage:
+    """Generate a textured pattern banner that covers panel headers or section panels."""
+    w = max(100, width)
+    h = max(24, height)
+    key = _get_cache_key("pnl_banner", w, h, bg_hex, accent_hex, pattern_name)
+    if key in _CACHE:
+        return _CACHE[key]
+
+    bg_rgb = hex_to_rgb(bg_hex)
+    accent_rgb = hex_to_rgb(accent_hex)
+    base_img = tile_pattern(w, h, pattern_name, bg_rgb, accent_rgb)
+    overlay = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(overlay)
+
+    # Soft glowing bottom accent line
+    draw.line([(0, h - 1), (w, h - 1)], fill=(*accent_rgb, 180))
+
+    base_rgba = base_img.convert("RGBA")
+    final_img = Image.alpha_composite(base_rgba, overlay).convert("RGB")
+    photo = ImageTk.PhotoImage(final_img)
+    if len(_CACHE) > _MAX_CACHE_SIZE:
+        _CACHE.clear()
+    _CACHE[key] = photo
+    return photo
+
+
 def generate_pattern_preview_card(pattern_key: str, bg_hex: str, accent_hex: str, width: int = 140, height: int = 80) -> ImageTk.PhotoImage:
     """Generate a crisp thumbnail preview for the pattern picker in Settings/Customization."""
     key = _get_cache_key("preview", pattern_key, bg_hex, accent_hex, width, height)
