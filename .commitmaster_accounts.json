@@ -2,27 +2,15 @@
   "active_user_id": 1,
   "accounts": [
     {
-      "id": 3,
-      "username": "notrealbutfr_yt",
-      "email": "samual100806@gmail.com",
-      "full_name": "Sam Jhonson",
-      "role": "user",
-      "avatar_color": "#3fb950",
-      "is_verified": 0,
-      "token": "",
-      "last_active": "2026-10-08 02:22:26",
-      "is_active": false
-    },
-    {
       "id": 1,
       "username": "saumya.patel@Admin_#",
       "email": "saumya.a.patel@gmail.com",
       "full_name": "Saumya Patel",
       "role": "admin",
       "avatar_color": "#3fb950",
-      "is_verified": 0,
+      "is_verified": 1,
       "token": "",
-      "last_active": "2026-10-08 02:22:43"
+      "last_active": "2026-10-08 03:50:55"
     }
   ]
 }
