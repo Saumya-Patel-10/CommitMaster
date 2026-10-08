@@ -67,34 +67,12 @@ def _clear_token() -> None:
 # ── Entry point ────────────────────────────────────────────────────────────────
 
 def launch_admin_app():
-    try:
-        db.init_db()
-
-        token = _load_token()
-        user = None
-        if token:
-            user = db.validate_session_token(token)
-
-        if user and user.get("role") == "admin":
-            _open_admin_window(dict(user))
-        else:
-            _clear_token()
-            _open_admin_login()
-    except Exception as exc:
-        import traceback
-        err_msg = traceback.format_exc()
-        try:
-            root = tk.Tk()
-            root.withdraw()
-            messagebox.showerror(
-                "CommitMaster Admin — Error",
-                f"An unexpected error occurred while starting CommitMaster Admin:\n\n{err_msg}",
-                parent=root
-            )
-            root.destroy()
-        except Exception:
-            pass
-        raise
+    """
+    CommitMaster is now unified into a single application (app.py).
+    Delegates directly to app.launch_app() so existing shortcuts continue working seamlessly.
+    """
+    import app
+    app.launch_app()
 
 
 
@@ -113,12 +91,12 @@ def _open_admin_login():
         _save_token(token)
         _open_admin_window(user)
 
-    win = LoginWindow(on_success=on_success)
+    win = LoginWindow(on_success=on_success, app_type="admin")
     win.run()
 
 
-def _open_admin_window(user: dict):
-    app = AdminApp(user)
+def _open_admin_window(user: dict, on_logout: Optional[Callable] = None, on_switch_account: Optional[Callable[[Dict], None]] = None):
+    app = AdminApp(user, on_logout=on_logout, on_switch_account=on_switch_account)
     app.run()
 
 
@@ -131,8 +109,10 @@ class AdminApp:
       • ADMIN CONTROL — full admin features (users, logs, charts, global settings, my settings)
     """
 
-    def __init__(self, user: Dict):
+    def __init__(self, user: Dict, on_logout: Optional[Callable] = None, on_switch_account: Optional[Callable[[Dict], None]] = None):
         self.user = user
+        self.on_logout = on_logout
+        self.on_switch_account = on_switch_account
 
         # Apply saved customization
         prefs = db.get_preferences(self.user["id"]) or {}
@@ -183,7 +163,7 @@ class AdminApp:
         sh = self.root.winfo_screenheight()
         self.root.geometry(f"{w}x{h}+{(sw - w)//2}+{(sh - h)//2}")
         from commitmaster import windows_integration
-        windows_integration.apply_windows_theme(self.root, f"CommitMaster — Admin Workspace  ({name})")
+        windows_integration.apply_windows_theme(self.root, f"CommitMaster Admin — Workspace  ({name})", app_type="admin")
 
     # ── Layout skeleton ───────────────────────────────────────────────────────
 
@@ -218,16 +198,22 @@ class AdminApp:
         navigation.install_shortcuts(
             self.root, self._nav_order, self._go, self._nav_back, self._nav_forward)
 
-    def _on_frame_configure(self, event):
+    def _on_frame_configure(self, event=None):
         bbox = self._canvas.bbox("all")
-        if getattr(self, "_last_scrollregion", None) != bbox:
-            self._last_scrollregion = bbox
-            self._canvas.configure(scrollregion=bbox)
+        if bbox and (bbox[2] > 1 or bbox[3] > 1):
+            if getattr(self, "_last_scrollregion", None) != bbox:
+                self._last_scrollregion = bbox
+                self._canvas.configure(scrollregion=bbox)
+        elif event and getattr(event, "height", 0) > 1:
+            self._canvas.configure(scrollregion=(0, 0, max(event.width, self._canvas.winfo_width()), event.height))
 
     def _on_canvas_configure(self, event):
         if getattr(self, "_last_canvas_width", None) != event.width:
             self._last_canvas_width = event.width
             self._canvas.itemconfig(self._cw, width=event.width)
+        bbox = self._canvas.bbox("all")
+        if bbox and (bbox[2] > 1 or bbox[3] > 1):
+            self._canvas.configure(scrollregion=bbox)
 
     def _on_mousewheel(self, event):
         try:
@@ -257,14 +243,14 @@ class AdminApp:
         logo_f.pack(side="top", fill="x")
         logo_f.pack_propagate(False)
         from commitmaster import windows_integration
-        logo_img = windows_integration.get_logo_photo(26)
+        logo_img = windows_integration.get_logo_photo(26, app_type="admin")
         if logo_img:
             self._sidebar_logo_img = logo_img
             tk.Label(logo_f, image=logo_img, bg=COLORS["bg_sidebar"]).pack(side="left", padx=(14, 6), pady=18)
-            tk.Label(logo_f, text="CommitMaster", font=FONTS["heading_sm"],
+            tk.Label(logo_f, text="CommitMaster Admin", font=FONTS["heading_sm"],
                      fg=COLORS["text_primary"], bg=COLORS["bg_sidebar"]).pack(side="left", pady=18)
         else:
-            tk.Label(logo_f, text="⬡ CommitMaster",
+            tk.Label(logo_f, text="⬡ CommitMaster Admin",
                      font=FONTS["heading_sm"], fg=COLORS["accent"],
                      bg=COLORS["bg_sidebar"]).pack(side="left", padx=14, pady=18)
         # Admin badge
@@ -274,21 +260,28 @@ class AdminApp:
 
         tk.Frame(sb, height=1, bg=COLORS["border"]).pack(side="top", fill="x")
 
-        # 2. Pinned Bottom Footer (Sign Out)
+        # 2. Pinned Bottom Footer (Switch Account & Sign Out)
         footer_f = tk.Frame(sb, bg=COLORS["bg_sidebar"])
         footer_f.pack(side="bottom", fill="x")
         tk.Frame(footer_f, height=1, bg=COLORS["border"]).pack(side="top", fill="x")
+
+        switch_btn = tk.Button(
+            footer_f, text="  👥  Switch Account",
+            font=FONTS["label"], fg=COLORS["text_secondary"],
+            bg=COLORS["bg_sidebar"], relief="flat", bd=0,
+            cursor="hand2", anchor="w", padx=14, pady=10,
+            command=self._open_account_switcher)
+        switch_btn.pack(side="top", fill="x")
+        self._add_hover(switch_btn, COLORS["bg_medium"], COLORS["bg_sidebar"])
+
         logout_btn = tk.Button(
             footer_f, text="  ⏻  Sign Out",
             font=FONTS["label"], fg=COLORS["text_secondary"],
             bg=COLORS["bg_sidebar"], relief="flat", bd=0,
-            cursor="hand2", anchor="w", padx=14, pady=11,
+            cursor="hand2", anchor="w", padx=14, pady=10,
             command=self._logout)
         logout_btn.pack(side="bottom", fill="x")
-        logout_btn.bind("<Enter>",
-                        lambda e: logout_btn.config(bg=COLORS["bg_medium"]))
-        logout_btn.bind("<Leave>",
-                        lambda e: logout_btn.config(bg=COLORS["bg_sidebar"]))
+        self._add_hover(logout_btn, COLORS["bg_medium"], COLORS["bg_sidebar"])
 
         # 3. Scrollable Middle Area for Navigation
         middle_f = tk.Frame(sb, bg=COLORS["bg_sidebar"])
@@ -422,12 +415,22 @@ class AdminApp:
             bg=COLORS["bg_dark"])
         self._header_title.pack(side="left", padx=24, pady=12)
 
-        # Right side: section badge
+        # Right side: section badge & switch account
         self._section_badge = tk.Label(
             self._header_bar, text="  MY WORKSPACE  ",
             font=("Segoe UI", 9, "bold"),
             fg=COLORS["bg_darkest"], bg=COLORS["accent"])
-        self._section_badge.pack(side="right", padx=16, pady=18)
+        self._section_badge.pack(side="right", padx=(4, 16), pady=18)
+
+        switch_hdr_btn = tk.Button(
+            self._header_bar, text="👥 Switch Account", font=FONTS["caption"],
+            bg=COLORS["bg_card"], fg=COLORS["text_primary"],
+            activebackground=COLORS["bg_card_hover"], activeforeground=COLORS["accent"],
+            relief="flat", bd=0, cursor="hand2", padx=10, pady=4,
+            command=self._open_account_switcher
+        )
+        switch_hdr_btn.pack(side="right", padx=6)
+        self._add_hover(switch_hdr_btn, COLORS["bg_card_hover"], COLORS["bg_card"])
 
     # ── Navigation ────────────────────────────────────────────────────────────
 
@@ -2122,6 +2125,74 @@ class AdminApp:
                  font=FONTS["body_sm"], fg=COLORS["text_secondary"],
                  bg=COLORS["bg_dark"]).pack(anchor="w", pady=(2, 16))
 
+        # Reminder card
+        rem_card = self._card(p, padx=20, pady=16)
+        rem_card.pack(fill="x", pady=(0, 12))
+        rem_hdr = tk.Frame(rem_card, bg=COLORS["bg_card"])
+        rem_hdr.pack(fill="x", pady=(0, 4))
+        tk.Label(rem_hdr, text="🔔 Commit Reminder Notifications (Bottom-Right Corner)",
+                 font=FONTS["heading_sm"], fg=COLORS["text_primary"],
+                 bg=COLORS["bg_card"]).pack(side="left")
+
+        def _test_admin_toast():
+            from commitmaster.notification_toast import show_toast
+            show_toast(
+                title="🔔 Notification Reminder Preview",
+                message="This is how your bottom-right corner reminder looks when interval or IDE monitoring triggers!",
+                badge_text="TEST PREVIEW",
+                master=self.root,
+            )
+
+        t_btn = tk.Button(rem_hdr, text="🔔 Test Alert", font=("Segoe UI", 9, "bold"),
+                          bg=COLORS["bg_medium"], fg=COLORS["accent"],
+                          activebackground=COLORS["bg_card_hover"], activeforeground=COLORS["accent_hover"],
+                          relief="flat", bd=0, cursor="hand2", padx=8, pady=2, command=_test_admin_toast)
+        t_btn.pack(side="right")
+        self._add_hover(t_btn, COLORS["bg_card_hover"], COLORS["bg_medium"])
+
+        self._rem_int_var = tk.BooleanVar(value=bool(prefs.get("reminder_interval_enabled", 1)))
+        self._rem_h_var = tk.StringVar(value=str(prefs.get("reminder_interval_hours", 1)))
+        self._rem_m_var = tk.StringVar(value=str(prefs.get("reminder_interval_minutes", 0)))
+        self._rem_app_var = tk.BooleanVar(value=bool(prefs.get("reminder_app_monitor_enabled", 1)))
+        self._rem_dirty_var = tk.BooleanVar(value=bool(prefs.get("reminder_only_if_dirty", 1)))
+
+        tk.Checkbutton(rem_card, text="Interval-based reminders (Timer)", variable=self._rem_int_var,
+                       font=FONTS["body_md"], fg=COLORS["text_primary"], bg=COLORS["bg_card"],
+                       selectcolor=COLORS["bg_input"], activebackground=COLORS["bg_card"],
+                       activeforeground=COLORS["text_primary"]).pack(anchor="w", pady=2)
+
+        t_row = tk.Frame(rem_card, bg=COLORS["bg_card"])
+        t_row.pack(anchor="w", padx=20, pady=2)
+        tk.Label(t_row, text="Remind every: ", font=FONTS["body_md"], fg=COLORS["text_secondary"], bg=COLORS["bg_card"]).pack(side="left")
+        tk.Entry(t_row, textvariable=self._rem_h_var, width=3, font=FONTS["mono"], bg=COLORS["bg_input"],
+                 fg=COLORS["text_primary"], relief="flat", highlightthickness=1, highlightbackground=COLORS["border"]).pack(side="left", padx=2)
+        tk.Label(t_row, text="hrs", font=FONTS["body_md"], fg=COLORS["text_secondary"], bg=COLORS["bg_card"]).pack(side="left", padx=(0, 6))
+        tk.Entry(t_row, textvariable=self._rem_m_var, width=3, font=FONTS["mono"], bg=COLORS["bg_input"],
+                 fg=COLORS["text_primary"], relief="flat", highlightthickness=1, highlightbackground=COLORS["border"]).pack(side="left", padx=2)
+        tk.Label(t_row, text="mins", font=FONTS["body_md"], fg=COLORS["text_secondary"], bg=COLORS["bg_card"]).pack(side="left")
+
+        tk.Checkbutton(rem_card, text="App & IDE monitoring (Alert when IDE closes)", variable=self._rem_app_var,
+                       font=FONTS["body_md"], fg=COLORS["text_primary"], bg=COLORS["bg_card"],
+                       selectcolor=COLORS["bg_input"], activebackground=COLORS["bg_card"],
+                       activeforeground=COLORS["text_primary"]).pack(anchor="w", pady=2)
+
+        tk.Checkbutton(rem_card, text="Only alert when uncommitted changes exist in repos", variable=self._rem_dirty_var,
+                       font=FONTS["body_md"], fg=COLORS["text_primary"], bg=COLORS["bg_card"],
+                       selectcolor=COLORS["bg_input"], activebackground=COLORS["bg_card"],
+                       activeforeground=COLORS["text_primary"]).pack(anchor="w", pady=2)
+
+        # Watched Coding Apps & IDEs card
+        apps_card = self._card(p, padx=20, pady=16)
+        apps_card.pack(fill="x", pady=(0, 12))
+        tk.Label(apps_card, text="Watched Coding Apps & IDEs",
+                 font=FONTS["heading_sm"], fg=COLORS["text_primary"],
+                 bg=COLORS["bg_card"]).pack(anchor="w")
+        tk.Label(apps_card, text="Choose which applications and code editors CommitMaster monitors for sessions and reminders.",
+                 font=FONTS["caption"], fg=COLORS["text_secondary"], bg=COLORS["bg_card"]).pack(anchor="w", pady=(2, 10))
+
+        from commitmaster.ide_selector import IdeSelectorWidget
+        self._admin_ide_selector = IdeSelectorWidget(apps_card, watched)
+
         # Session card
         sess_card = self._card(p, padx=20, pady=16)
         sess_card.pack(fill="x", pady=(0, 12))
@@ -2306,12 +2377,29 @@ class AdminApp:
         dirs = list(self._dirs_lb.get(0, "end"))
         prov = getattr(self, "_admin_prov_map", {}).get(self._ai_provider_var.get(), "bionic")
         m_val = self._ai_model_var.get().strip()
+
+        try:
+            rem_h = max(0, int(self._rem_h_var.get().strip()))
+        except Exception:
+            rem_h = 1
+        try:
+            rem_m = max(0, int(self._rem_m_var.get().strip()))
+        except Exception:
+            rem_m = 0
+
+        selected_apps = self._admin_ide_selector.get_selected_apps() if hasattr(self, "_admin_ide_selector") else []
+
         db.update_preferences(
             self.user["id"],
             auto_commit=int(self._auto_var.get()),
             skip_sensitive=int(self._skip_var.get()),
             notifications=int(self._notif_var.get()),
             session_end_grace=int(self._grace_var.get() or 120),
+            reminder_interval_enabled=int(self._rem_int_var.get()),
+            reminder_interval_hours=rem_h,
+            reminder_interval_minutes=rem_m,
+            reminder_app_monitor_enabled=int(self._rem_app_var.get()),
+            reminder_only_if_dirty=int(self._rem_dirty_var.get()),
             ai_provider=prov,
             openai_api_key=self._openai_key_var.get().strip(),
             claude_api_key=self._claude_key_var.get().strip(),
@@ -2322,8 +2410,17 @@ class AdminApp:
             ai_base_url=self._ai_url_var.get().strip(),
             ai_model=m_val,
             projects_dirs=json.dumps(dirs),
+            watched_apps=json.dumps(selected_apps),
         )
         cfg = load_config()
+        cfg["reminder"] = {
+            "interval_enabled": bool(self._rem_int_var.get()),
+            "interval_hours": rem_h,
+            "interval_minutes": rem_m,
+            "app_monitor_enabled": bool(self._rem_app_var.get()),
+            "only_if_dirty": bool(self._rem_dirty_var.get()),
+        }
+        cfg["watched_apps"] = selected_apps
         cfg.setdefault("ai", {})
         cfg["ai"]["provider"] = prov
         cfg["ai"]["openai_api_key"] = self._openai_key_var.get().strip()
@@ -2808,23 +2905,38 @@ class AdminApp:
             messagebox.showwarning("Error",
                                    "That's already your username.", parent=self.root)
             return
-        conn = db.get_conn()
+        old_uname = self.user["username"]
+        ok, msg = db.set_admin_username(new_uname, self.user["id"])
+        if not ok:
+            messagebox.showerror("Error", f"Could not update admin username:\n{msg}", parent=self.root)
+            return
+
+        self.user["username"] = new_uname
+        self._new_uname_var.set("")
+
+        # Update saved account in account_manager
         try:
-            conn.execute("UPDATE users SET username = ? WHERE id = ?",
-                         (new_uname, self.user["id"]))
-            conn.commit()
-            self.user["username"] = new_uname
-            self._new_uname_var.set("")
-            messagebox.showinfo(
-                "Username Changed",
-                f"Your username is now @{new_uname}.\n"
-                "Use this to log in next time.",
-                parent=self.root)
-            self._nav_to("my_settings")
-        except Exception as exc:
-            messagebox.showerror("Error",
-                                 f"Username already taken:\n{exc}",
-                                 parent=self.root)
+            from commitmaster.account_manager import save_account, remove_saved_account
+            save_account(
+                username=new_uname,
+                user_id=self.user["id"],
+                role="admin",
+                full_name=self.user.get("full_name", ""),
+                email=self.user.get("email", ""),
+                avatar_color=self.user.get("avatar_color", "")
+            )
+            if old_uname != new_uname:
+                remove_saved_account(old_uname)
+        except Exception:
+            pass
+
+        messagebox.showinfo(
+            "Admin Username Changed",
+            f"The exclusive Admin Portal username is now: {new_uname}\n\n"
+            f"Only '{new_uname}' can access the Admin Portal moving forward.\n"
+            "Use this username to log in next time.",
+            parent=self.root)
+        self._nav_to("my_settings")
 
     def _change_password(self):
         pw1 = self._pw1_var.get()
@@ -2864,11 +2976,49 @@ class AdminApp:
         parts = name.strip().split()
         return ((parts[0][0] + parts[-1][0]) if len(parts) >= 2 else name[:2]).upper()
 
+    def _open_account_switcher(self):
+        try:
+            from commitmaster.account_manager import AccountSwitcherDialog
+            def on_switched(switched_user):
+                self.root.destroy()
+                if self.on_switch_account:
+                    self.on_switch_account(switched_user)
+                else:
+                    if switched_user.get("role") == "admin" and db.is_admin_username(switched_user.get("username", "")):
+                        _open_admin_window(switched_user)
+                    else:
+                        from commitmaster.user_dashboard import UserDashboard
+                        dash = UserDashboard(switched_user)
+                        dash.run()
+
+            def on_add():
+                self._logout()
+
+            AccountSwitcherDialog(
+                parent=self.root,
+                current_user=self.user,
+                on_account_switched=on_switched,
+                on_add_account=on_add
+            )
+        except Exception as exc:
+            messagebox.showerror("Account Switcher", f"Could not open account switcher: {exc}", parent=self.root)
+
     def _logout(self):
-        db.revoke_session_token(self.user["id"])
+        try:
+            db.revoke_session_token(self.user["id"])
+        except Exception:
+            pass
         _clear_token()
+        try:
+            from commitmaster.account_manager import clear_active_account
+            clear_active_account()
+        except Exception:
+            pass
         self.root.destroy()
-        _open_admin_login()
+        if self.on_logout:
+            self.on_logout()
+        else:
+            _open_admin_login()
 
     def run(self):
         self.root.mainloop()
