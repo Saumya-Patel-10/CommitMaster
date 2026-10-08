@@ -10,7 +10,7 @@ import os
 import secrets
 import threading
 from datetime import datetime, timedelta
-from typing import Optional, Dict, List, Any, Tuple
+from typing import Optional, Dict, List, Any, Tuple, Iterator
 import requests
 
 # Database file path (same directory as config.json or %LOCALAPPDATA%)
@@ -118,6 +118,17 @@ def close_conn() -> None:
         except Exception:
             pass
         _local.conn = None
+
+
+def fetch_rows_iter(query: str, params: tuple = ()) -> Iterator[sqlite3.Row]:
+    """
+    Execute a parameterized SQL query and yield rows row-by-row.
+    Avoids loading full query result sets into memory (Requirement 6).
+    """
+    conn = get_conn()
+    cur = conn.execute(query, params)
+    for row in cur:
+        yield row
 
 
 def init_db() -> None:
@@ -294,6 +305,31 @@ def init_db() -> None:
         )
     """)
     cur.execute("CREATE INDEX IF NOT EXISTS idx_verification_otps_email ON verification_otps(email, purpose, is_used)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_verification_otps_email_only ON verification_otps(email)")
+
+    # ── Foreign Key & Email Indexes (Requirement 5) ──────────────────────────
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_users_email ON users(email)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_commit_activity_user_id ON commit_activity(user_id)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_commit_activity_repo ON commit_activity(user_id, repo_name)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_app_usage_user_id ON app_usage(user_id)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_system_settings_updated_by ON system_settings(updated_by)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_github_accounts_user_id ON github_accounts(user_id)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_repo_github_accounts_user_id ON repo_github_accounts(user_id)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_repo_github_accounts_account_id ON repo_github_accounts(account_id)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_watched_repositories_user_id ON watched_repositories(user_id)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_watched_repositories_github_account_id ON watched_repositories(github_account_id)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_app_events_user_id ON app_events(user_id)")
+
+    # ── Login Rate Limiting Table (Security Checklist Item 11) ───────────────
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS login_rate_limit (
+            identifier  TEXT PRIMARY KEY,
+            fail_count  INTEGER NOT NULL DEFAULT 1,
+            last_failed TEXT NOT NULL,
+            locked_until TEXT DEFAULT NULL
+        )
+    """)
 
     # ── Migrations for existing user_preferences ──────────────────────────────
     try:
@@ -388,33 +424,163 @@ def init_db() -> None:
     _ensure_default_admin(conn)
 
 
+import re
+from typing import Iterator
+
+# ── Row-by-Row Fetching Generator (Requirement 6) ─────────────────────────────
+
+def fetch_rows_iter(query: str, params: tuple = ()) -> Iterator[Dict[str, Any]]:
+    """
+    Fetch database records row by row using a generator cursor to minimize memory footprint.
+    Eliminates allocating large list buffers when querying datasets.
+    """
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute(query, params)
+    while True:
+        row = cur.fetchone()
+        if row is None:
+            break
+        yield dict(row)
+
+
+# ── Input Validation (Security Checklist Item 14) ─────────────────────────────
+
+def validate_username(username: str) -> Tuple[bool, str]:
+    """Validate username length and characters against injection attacks."""
+    if not username or len(username.strip()) < 3:
+        return False, "Username must be at least 3 characters."
+    if len(username.strip()) > 64:
+        return False, "Username cannot exceed 64 characters."
+    if not re.match(r"^[a-zA-Z0-9_@#\.\-]+$", username.strip()):
+        return False, "Username contains forbidden characters (use alphanumeric, _, @, #, ., -)."
+    return True, ""
+
+
+def validate_email(email: str) -> Tuple[bool, str]:
+    """Validate email address format strictly."""
+    if not email or len(email.strip()) < 5:
+        return False, "Email address cannot be empty."
+    if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email.strip()):
+        return False, "Invalid email address format."
+    return True, ""
+
+
+# ── Password Hashing & Verification (Security Checklist Item 10) ─────────────
+
 def _hash_password(password: str) -> str:
-    """Hash a password using SHA-256 with a salt (bcrypt-style fallback)."""
+    """Hash a password using bcrypt if installed, or PBKDF2-HMAC-SHA256 (600,000 iterations)."""
     try:
         import bcrypt
         return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
     except ImportError:
         salt = secrets.token_hex(16)
-        hashed = hashlib.sha256(f"{salt}{password}".encode()).hexdigest()
-        return f"sha256${salt}${hashed}"
+        iterations = 600000
+        key = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt.encode("utf-8"), iterations)
+        return f"pbkdf2:sha256:{iterations}${salt}${key.hex()}"
 
 
 def _verify_password(password: str, password_hash: str) -> bool:
-    """Verify a password against its hash."""
-    try:
-        import bcrypt
-        if password_hash.startswith("sha256$"):
-            # Fallback sha256 path
-            parts = password_hash.split("$")
-            salt, stored = parts[1], parts[2]
-            return hashlib.sha256(f"{salt}{password}".encode()).hexdigest() == stored
-        return bcrypt.checkpw(password.encode(), password_hash.encode())
-    except ImportError:
-        if password_hash.startswith("sha256$"):
-            parts = password_hash.split("$")
-            salt, stored = parts[1], parts[2]
-            return hashlib.sha256(f"{salt}{password}".encode()).hexdigest() == stored
+    """Verify a password against bcrypt, PBKDF2, or legacy salted SHA-256."""
+    if not password_hash:
         return False
+    # Bcrypt
+    if password_hash.startswith("$2b$") or password_hash.startswith("$2a$"):
+        try:
+            import bcrypt
+            return bcrypt.checkpw(password.encode(), password_hash.encode())
+        except Exception:
+            return False
+    # PBKDF2-HMAC-SHA256
+    if password_hash.startswith("pbkdf2:sha256:"):
+        try:
+            parts = password_hash.split("$")
+            iter_part = parts[0].split(":")[2]
+            salt = parts[1]
+            stored_hex = parts[2]
+            iterations = int(iter_part)
+            computed = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt.encode("utf-8"), iterations)
+            return secrets.compare_digest(computed.hex(), stored_hex)
+        except Exception:
+            return False
+    # Legacy salted SHA-256 fallback
+    if password_hash.startswith("sha256$"):
+        try:
+            parts = password_hash.split("$")
+            salt, stored = parts[1], parts[2]
+            computed = hashlib.sha256(f"{salt}{password}".encode()).hexdigest()
+            return secrets.compare_digest(computed, stored)
+        except Exception:
+            return False
+    return False
+
+
+# ── Login Rate Limiting (Security Checklist Item 11) ──────────────────────────
+
+def check_login_rate_limit(identifier: str) -> Tuple[bool, str]:
+    """Check if identifier (username/email) has exceeded failed login attempts."""
+    try:
+        conn = get_conn()
+        now = datetime.now()
+        cur = conn.execute("SELECT fail_count, locked_until FROM login_rate_limit WHERE identifier = ?", (identifier.strip().lower(),))
+        row = cur.fetchone()
+        if not row:
+            return True, ""
+        if row["locked_until"]:
+            locked_dt = datetime.strptime(row["locked_until"], "%Y-%m-%d %H:%M:%S")
+            if now < locked_dt:
+                wait_min = max(1, int((locked_dt - now).total_seconds() // 60) + 1)
+                return False, f"Too many failed login attempts. Temporarily locked for {wait_min} more minute(s)."
+            else:
+                conn.execute("DELETE FROM login_rate_limit WHERE identifier = ?", (identifier.strip().lower(),))
+                conn.commit()
+                return True, ""
+        return True, ""
+    except Exception:
+        return True, ""
+
+
+def record_failed_login(identifier: str) -> None:
+    """Increment failed login attempts and lock after 5 failures for 15 minutes."""
+    try:
+        conn = get_conn()
+        now = datetime.now()
+        now_str = now.strftime("%Y-%m-%d %H:%M:%S")
+        cur = conn.execute("SELECT fail_count FROM login_rate_limit WHERE identifier = ?", (identifier.strip().lower(),))
+        row = cur.fetchone()
+        if row:
+            fails = row["fail_count"] + 1
+            locked_until = (now + timedelta(minutes=15)).strftime("%Y-%m-%d %H:%M:%S") if fails >= 5 else None
+            conn.execute("UPDATE login_rate_limit SET fail_count = ?, last_failed = ?, locked_until = ? WHERE identifier = ?",
+                         (fails, now_str, locked_until, identifier.strip().lower()))
+        else:
+            conn.execute("INSERT INTO login_rate_limit (identifier, fail_count, last_failed) VALUES (?, 1, ?)",
+                         (identifier.strip().lower(), now_str))
+        conn.commit()
+    except Exception:
+        pass
+
+
+def clear_failed_login(identifier: str) -> None:
+    """Reset failed login count upon successful authentication."""
+    try:
+        conn = get_conn()
+        conn.execute("DELETE FROM login_rate_limit WHERE identifier = ?", (identifier.strip().lower(),))
+        conn.commit()
+    except Exception:
+        pass
+
+
+# ── Response Trimming Helper (Security Checklist Item 17) ─────────────────────
+
+def _clean_user_dict(user: Optional[Dict]) -> Optional[Dict]:
+    """Strip password_hash and internal secrets before returning user objects to callers."""
+    if not user:
+        return None
+    d = dict(user)
+    d.pop("password_hash", None)
+    return d
+
 
 
 DEFAULT_ADMIN_USERNAME = "saumya.patel@Admin_#"
@@ -651,6 +817,11 @@ def authenticate(username_or_email: str, password: str) -> Optional[Dict]:
     If an account was scheduled for deletion within the last 30 days, it is automatically recovered.
     If the 30-day recovery period has elapsed, the account is permanently deleted.
     """
+    clean_id = (username_or_email or "").strip().lower()
+    allowed, lock_msg = check_login_rate_limit(clean_id)
+    if not allowed:
+        raise ValueError(lock_msg)
+
     url = get_server_url()
     if url:
         try:
@@ -662,10 +833,12 @@ def authenticate(username_or_email: str, password: str) -> Optional[Dict]:
                 data = resp.json()
                 user = data.get("user")
                 if user:
+                    clear_failed_login(clean_id)
                     _cache_user_locally(user, password=password)
                     _record_daily_session(user["id"])
-                    return user
+                    return _clean_user_dict(user)
             elif resp.status_code == 401:
+                record_failed_login(clean_id)
                 return None
         except Exception:
             pass
@@ -680,6 +853,7 @@ def authenticate(username_or_email: str, password: str) -> Optional[Dict]:
 
     for row in candidates:
         if _verify_password(password, row["password_hash"]):
+            clear_failed_login(clean_id)
             # Check 30-day deletion recovery
             if row["deleted_at"] is not None:
                 until_str = row["deletion_scheduled_until"]
@@ -705,7 +879,7 @@ def authenticate(username_or_email: str, password: str) -> Optional[Dict]:
                     conn.execute("UPDATE users SET last_login = datetime('now') WHERE id = ?", (row["id"],))
                     conn.commit()
                     _record_daily_session(row["id"])
-                    return user_dict
+                    return _clean_user_dict(user_dict)
 
             if row["is_active"] != 1:
                 continue
@@ -713,8 +887,9 @@ def authenticate(username_or_email: str, password: str) -> Optional[Dict]:
             conn.execute("UPDATE users SET last_login = datetime('now') WHERE id = ?", (row["id"],))
             conn.commit()
             _record_daily_session(row["id"])
-            return dict(row)
+            return _clean_user_dict(dict(row))
 
+    record_failed_login(clean_id)
     return None
 
 
@@ -727,14 +902,14 @@ def get_user(user_id: int) -> Optional[Dict]:
             if resp.status_code == 200:
                 u = resp.json().get("user")
                 if u:
-                    return u
+                    return _clean_user_dict(u)
         except Exception:
             pass
 
     conn = get_conn()
     cur = conn.execute("SELECT * FROM users WHERE id = ?", (user_id,))
     row = cur.fetchone()
-    return dict(row) if row else None
+    return _clean_user_dict(dict(row)) if row else None
 
 
 def get_user_by_username_or_email(identifier: str) -> Optional[Dict]:
@@ -747,11 +922,11 @@ def get_user_by_username_or_email(identifier: str) -> Optional[Dict]:
         WHERE LOWER(username) = LOWER(?) OR LOWER(email) = LOWER(?)
     """, (identifier.strip(), identifier.strip()))
     row = cur.fetchone()
-    return dict(row) if row else None
+    return _clean_user_dict(dict(row)) if row else None
 
 
 def get_all_users() -> List[Dict]:
-    """Get all users (admin view)."""
+    """Get all users (admin view). Fetches row-by-row and trims sensitive fields."""
     url = get_server_url()
     if url:
         try:
@@ -759,7 +934,7 @@ def get_all_users() -> List[Dict]:
             if resp.status_code == 200:
                 users = resp.json().get("users")
                 if users is not None:
-                    return users
+                    return [_clean_user_dict(u) for u in users]
         except Exception:
             pass
 
@@ -770,7 +945,10 @@ def get_all_users() -> List[Dict]:
         FROM users u
         ORDER BY u.created_at DESC
     """)
-    return [dict(r) for r in cur.fetchall()]
+    out = []
+    for r in cur:
+        out.append(_clean_user_dict(dict(r)))
+    return out
 
 
 def update_user(user_id: int, **kwargs) -> bool:
@@ -1715,7 +1893,10 @@ def get_watched_repos(user_id: Optional[int] = None, active_only: bool = False) 
 
     query += " ORDER BY wr.is_active_watch DESC, wr.repo_name ASC"
     cur = conn.execute(query, tuple(params))
-    return [dict(r) for r in cur.fetchall()]
+    out = []
+    for r in cur:
+        out.append(dict(r))
+    return out
 
 
 def get_watched_repo_by_path(local_path: str, user_id: Optional[int] = None) -> Optional[Dict]:
