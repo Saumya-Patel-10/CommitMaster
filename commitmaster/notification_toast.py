@@ -405,9 +405,10 @@ def show_toast(
     Thread-safe function to display the bottom-right toast notification.
     Dispatches to Tkinter thread if necessary. Also triggers desktop notification fallback.
     """
-    # Companion notification in Windows Action Center
+    # Companion notification in Windows Action Center (safely fallback if unavail)
     try:
         from plyer import notification
+        # On Windows 11 balloontip can fail without a registered icon handle, so guard against errors
         notification.notify(
             title=f"CommitMaster: {title}",
             message=message,
@@ -415,29 +416,31 @@ def show_toast(
             timeout=8,
         )
     except Exception as exc:
-        log.debug("plyer toast fallback skipped: %s", exc)
+        log.debug("Companion notification skipped: %s", exc)
 
     def _do_show():
-        toast = NotificationToast(
-            title=title,
-            message=message,
-            badge_text=badge_text,
-            dirty_repos=dirty_repos,
-            on_commit=on_commit,
-            on_snooze=on_snooze,
-            on_dismiss=on_dismiss,
-            on_yes=on_yes,
-            on_no=on_no,
-            toast_mode=toast_mode,
-            duration_seconds=duration_seconds,
-            master=master,
-        )
-        toast.show()
+        try:
+            toast = NotificationToast(
+                title=title,
+                message=message,
+                badge_text=badge_text,
+                dirty_repos=dirty_repos,
+                on_commit=on_commit,
+                on_snooze=on_snooze,
+                on_dismiss=on_dismiss,
+                on_yes=on_yes,
+                on_no=on_no,
+                toast_mode=toast_mode,
+                duration_seconds=duration_seconds,
+                master=master,
+            )
+            toast.show()
+        except Exception as exc:
+            log.error("Failed to display NotificationToast: %s", exc)
 
     target_root = master or getattr(tk, "_default_root", None)
-    if target_root and hasattr(target_root, "after"):
+    if target_root and hasattr(target_root, "after") and target_root.winfo_exists():
         target_root.after(0, _do_show)
     else:
-        # Schedule via commitmaster ui thread
         from commitmaster import ui
         ui.run_in_ui_thread(_do_show)
