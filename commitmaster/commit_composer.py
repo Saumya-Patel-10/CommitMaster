@@ -509,6 +509,11 @@ class CommitComposer(tk.Frame):
         if err or not res:
             self.ai_status.config(text=f"❌ Could not generate: {err}", fg=COLORS["error"])
             self._update_commit_button()
+            if hasattr(self.host, "_on_composer_generated") and callable(self.host._on_composer_generated):
+                try:
+                    self.host._on_composer_generated(self, None, err, files)
+                except Exception:
+                    pass
             return
         still_selected = set(selected_paths(self.host))
         for f in files:
@@ -524,6 +529,11 @@ class CommitComposer(tk.Frame):
         self.ai_status.config(text=f"✔ Written for {len(files)} file{'s' if len(files) != 1 else ''} - "
                                    "review and edit before committing", fg=COLORS["success"])
         self.render_body(harvest=False)
+        if hasattr(self.host, "_on_composer_generated") and callable(self.host._on_composer_generated):
+            try:
+                self.host._on_composer_generated(self, res, None, files)
+            except Exception:
+                pass
 
     # ── commit / push ─────────────────────────────────────────────────────────
     def commit(self, push: bool) -> None:
