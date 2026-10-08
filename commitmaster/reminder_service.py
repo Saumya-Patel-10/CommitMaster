@@ -69,7 +69,7 @@ def get_running_ide_processes() -> Set[str]:
 
 class ReminderService(threading.Thread):
     """
-    Background worker thread managing interval-based and IDE-monitoring commit reminders.
+    Background worker thread managing interval-based and IDE monitoring commit reminders.
     """
 
     def __init__(
@@ -78,14 +78,14 @@ class ReminderService(threading.Thread):
         on_commit_action: Optional[Callable] = None,
         on_need_commit_action: Optional[Callable[[str, List[str]], None]] = None,
         master: Optional[object] = None,
-        grace_period_seconds: int = 10,
+        grace_period_seconds: int = 2,
     ):
         super().__init__(daemon=True, name=f"reminder-service-{user_id}")
         self.user_id = user_id
         self.on_commit_action = on_commit_action
         self.on_need_commit_action = on_need_commit_action
         self.master = master
-        self.grace_period_seconds = grace_period_seconds
+        self.grace_period_seconds = max(1, min(grace_period_seconds, 3))
 
         self._stop_event = threading.Event()
         self._lock = threading.Lock()
@@ -98,13 +98,13 @@ class ReminderService(threading.Thread):
         self.only_if_dirty: bool = True
         self.watched_apps: List[str] = list(DEFAULT_WATCHED_IDES)
 
-        # Runtime tracking
+        # Multi-IDE session tracking: maps lower-case exe name -> info dict
+        self._tracked_ide_sessions: Dict[str, Dict[str, Any]] = {}
         self.last_interval_reminder_time: float = time.time()
-        self.monitor_state: str = STATE_IDLE
-        self.active_ide_name: str = ""
         self.detected_project_path: str = ""
         self.detected_project_name: str = ""
-        self.ide_closed_at: float = 0.0
+        self.monitor_state: str = STATE_IDLE
+        self._initial_check_done: bool = False
 
         # Load initial preferences
         self.reload_preferences()
@@ -168,7 +168,6 @@ class ReminderService(threading.Thread):
                 self.only_if_dirty = only_if_dirty
             if watched_apps is not None:
                 self.watched_apps = watched_apps
-            # Reset interval timer when user updates settings
             self.last_interval_reminder_time = time.time()
 
         log.info("ReminderService preferences updated dynamically.")
@@ -183,10 +182,37 @@ class ReminderService(threading.Thread):
         """Signal background thread to exit."""
         self._stop_event.set()
 
+    # ── Notification Message Formatter ────────────────────────────────────────
+
+    def _format_dirty_repo_msg(self, dirty_repos: List[str]) -> str:
+        """
+        Produce user-specified exact format:
+        "There are some files which haven't been commit in _____ repo"
+        """
+        repo_names = [commit_engine.repo_name(p) for p in dirty_repos]
+        unique_names = list(dict.fromkeys(repo_names))
+        if not unique_names:
+            repo_str = "your"
+        elif len(unique_names) == 1:
+            repo_str = unique_names[0]
+        else:
+            repo_str = ", ".join(unique_names)
+        return f"There are some files which haven't been commit in {repo_str} repo"
+
     # ── Main Polling Loop ─────────────────────────────────────────────────────
 
     def run(self) -> None:
         log.info("ReminderService background thread started for user %d.", self.user_id)
+
+        # Baseline running IDEs on startup
+        with self._lock:
+            watched = [a.lower() for a in self.watched_apps]
+        self._tracked_ide_sessions = self._get_running_ide_map(watched)
+
+        # Step 1: Initial startup check — alert user immediately if uncommitted changes exist
+        time.sleep(1.5)
+        if not self._stop_event.is_set():
+            self._check_and_notify_initial_uncommitted()
 
         while not self._stop_event.is_set():
             try:
@@ -208,56 +234,68 @@ class ReminderService(threading.Thread):
                         with self._lock:
                             self.last_interval_reminder_time = time.time()
 
-                # 2. Process App / IDE Monitoring & Active Project Tracking
+                # 2. Process App / IDE Monitoring (Independent per-IDE tracking)
                 if app_enabled:
-                    running_ide, proj_path, proj_name = self._detect_running_ide_and_project(watched)
+                    current_running = self._get_running_ide_map(watched)
 
-                    if running_ide:
-                        # Keep active project updated while IDE is running
-                        if proj_path:
-                            self.detected_project_path = proj_path
-                            self.detected_project_name = proj_name or commit_engine.repo_name(proj_path)
+                    # Detect newly launched IDEs
+                    for ide_k, info in current_running.items():
+                        if ide_k not in self._tracked_ide_sessions:
+                            self._tracked_ide_sessions[ide_k] = info
+                            log.info("IDE started: %s (%s). Session active.", info["name"], ide_k)
+                        else:
+                            # Keep detected project updated
+                            if info.get("project_path"):
+                                self._tracked_ide_sessions[ide_k]["project_path"] = info["project_path"]
+                                self._tracked_ide_sessions[ide_k]["project_name"] = info["project_name"]
+                                self.detected_project_path = info["project_path"]
+                                self.detected_project_name = info["project_name"]
 
-                    if self.monitor_state == STATE_IDLE and running_ide:
-                        self.monitor_state = STATE_ACTIVE
-                        self.active_ide_name = running_ide
-                        log.info(
-                            "IDE detected: %s. Coding session active (detected project: %s).",
-                            running_ide, self.detected_project_name or "scanning..."
+                    # Detect closed IDEs (e.g. VS Code closed even if Antigravity is running)
+                    closed_ides = []
+                    for ide_k, info in list(self._tracked_ide_sessions.items()):
+                        if ide_k not in current_running:
+                            closed_ides.append((ide_k, info))
+
+                    for ide_k, info in closed_ides:
+                        self._tracked_ide_sessions.pop(ide_k, None)
+                        log.info("IDE closed: %s (%s). Triggering uncommitted check.", info["name"], ide_k)
+                        self._handle_ide_closed_trigger(
+                            only_dirty=only_dirty,
+                            ide_name=info["name"],
+                            project_path=info.get("project_path"),
+                            project_name=info.get("project_name")
                         )
-
-                    elif self.monitor_state == STATE_ACTIVE:
-                        if not running_ide:
-                            self.monitor_state = STATE_ENDING
-                            self.ide_closed_at = now
-                            log.info(
-                                "IDE %s closed. Starting %ds grace period.",
-                                self.active_ide_name, self.grace_period_seconds
-                            )
-
-                    elif self.monitor_state == STATE_ENDING:
-                        if running_ide:
-                            # Reopened IDE within grace period
-                            self.monitor_state = STATE_ACTIVE
-                            self.active_ide_name = running_ide
-                            self.ide_closed_at = 0.0
-                            log.info("IDE %s reopened. Session resumed.", running_ide)
-                        elif now - self.ide_closed_at >= self.grace_period_seconds:
-                            # Grace period elapsed: IDE truly closed!
-                            self._handle_ide_closed_trigger(only_dirty, self.active_ide_name)
-                            self.monitor_state = STATE_IDLE
-                            self.active_ide_name = ""
-                            self.ide_closed_at = 0.0
 
             except Exception as exc:
                 log.error("Exception in ReminderService loop: %s", exc, exc_info=True)
 
-            # Sleep short duration between poll iterations
-            self._stop_event.wait(3.0)
+            self._stop_event.wait(2.0)
 
         log.info("ReminderService background thread stopped.")
 
     # ── Notification Triggers ─────────────────────────────────────────────────
+
+    def _check_and_notify_initial_uncommitted(self) -> None:
+        """On app start, alert user if any linked repository has uncommitted changes."""
+        try:
+            dirty_repos = self._scan_user_dirty_repos()
+            if dirty_repos:
+                msg = self._format_dirty_repo_msg(dirty_repos)
+                log.info("Initial startup check: uncommitted changes in %s", dirty_repos)
+                show_toast(
+                    title="CommitMaster Reminder",
+                    message=msg,
+                    badge_text="REMINDER",
+                    dirty_repos=dirty_repos,
+                    toast_mode="did_you_commit",
+                    on_yes=lambda: log.info("User acknowledged initial reminder."),
+                    on_no=lambda: self._launch_commit_flow(dirty_repos[0], dirty_repos),
+                    on_snooze=self.snooze,
+                    master=self.master,
+                )
+        except Exception as exc:
+            log.debug("Initial uncommitted check failed: %s", exc)
 
     def _handle_interval_trigger(self, only_dirty: bool, hours: int, mins: int) -> None:
         """Trigger interval reminder toast."""
@@ -266,72 +304,50 @@ class ReminderService(threading.Thread):
             log.debug("Interval reminder due, but all repositories are clean. Skipping toast.")
             return
 
-        time_str_parts = []
-        if hours > 0:
-            time_str_parts.append(f"{hours}h")
-        if mins > 0 or not time_str_parts:
-            time_str_parts.append(f"{mins}m")
-        time_str = " ".join(time_str_parts)
-
-        repo_cnt = len(dirty_repos)
-        if repo_cnt > 0:
-            msg = f"It's been {time_str} since your last check. You have uncommitted changes in {repo_cnt} repository{'ies' if repo_cnt > 1 else 'y'}."
+        if dirty_repos:
+            msg = self._format_dirty_repo_msg(dirty_repos)
         else:
+            time_str = f"{hours}h {mins}m" if hours > 0 else f"{mins}m"
             msg = f"Regular {time_str} interval reminder. Make sure your progress is saved and committed to git!"
 
-        log.info("Dispatching interval reminder toast (dirty repos: %d).", repo_cnt)
+        log.info("Dispatching interval reminder toast (dirty repos: %d).", len(dirty_repos))
         show_toast(
             title="⏰ Time to Commit Your Work!",
             message=msg,
             badge_text="INTERVAL REMINDER",
             dirty_repos=dirty_repos,
-            on_commit=self.on_commit_action,
+            toast_mode="did_you_commit",
+            on_yes=lambda: log.info("Interval reminder: user confirmed work committed."),
+            on_no=lambda: self._launch_commit_flow(dirty_repos[0] if dirty_repos else "", dirty_repos),
             on_snooze=self.snooze,
             master=self.master,
         )
 
-    def _handle_ide_closed_trigger(self, only_dirty: bool, ide_name: str) -> None:
+    def _handle_ide_closed_trigger(
+        self,
+        only_dirty: bool,
+        ide_name: str,
+        project_path: Optional[str] = None,
+        project_name: Optional[str] = None,
+    ) -> None:
         """
         Trigger 'Did you commit?' notification when monitored IDE closes.
-        • If user selects 'Yes, I did' -> do nothing.
-        • If user selects 'No, help me commit' -> open app, navigate to Git Desktop,
-          prompt/select repo, and generate AI commit comments.
         """
-        dirty_repos = self._scan_user_dirty_repos()
+        dirty_repos = self._scan_user_dirty_repos(project_path)
         if only_dirty and not dirty_repos:
             log.info("IDE %s closed, but all repositories are clean. Skipping toast.", ide_name)
             return
 
         display_name = ide_name.replace(".exe", "").title()
-        proj_name = self.detected_project_name
-        if not proj_name and dirty_repos:
-            proj_name = commit_engine.repo_name(dirty_repos[0])
-
-        proj_desc = f" while working on '{proj_name}'" if proj_name else ""
-        repo_cnt = len(dirty_repos)
-        if repo_cnt > 0:
-            msg = f"You just closed {display_name}{proj_desc}. You have uncommitted changes in {repo_cnt} repository{'ies' if repo_cnt > 1 else 'y'}. Did you commit your work?"
+        if dirty_repos:
+            msg = self._format_dirty_repo_msg(dirty_repos)
         else:
-            msg = f"You just closed {display_name}{proj_desc}. Did you commit your latest work and changes?"
+            msg = f"You just closed {display_name}. Did you commit your latest work and changes?"
 
         log.info(
-            "Dispatching 'Did you commit?' notification for %s (project: %s, dirty repos: %d).",
-            ide_name, proj_name, repo_cnt
+            "Dispatching 'Did you commit?' notification for %s (dirty repos: %s).",
+            ide_name, dirty_repos
         )
-
-        def _on_no_action():
-            log.info("User selected 'No, not yet'. Launching Git Desktop commit flow...")
-            target_proj = self.detected_project_path or (dirty_repos[0] if dirty_repos else "")
-            if self.on_need_commit_action:
-                try:
-                    self.on_need_commit_action(target_proj, dirty_repos)
-                except Exception as exc:
-                    log.error("on_need_commit_action failed: %s", exc)
-            elif self.on_commit_action:
-                try:
-                    self.on_commit_action()
-                except Exception as exc:
-                    log.error("on_commit_action failed: %s", exc)
 
         show_toast(
             title="Did you commit your changes?",
@@ -340,10 +356,24 @@ class ReminderService(threading.Thread):
             dirty_repos=dirty_repos,
             toast_mode="did_you_commit",
             on_yes=lambda: log.info("User confirmed work already committed. Dismissed."),
-            on_no=_on_no_action,
+            on_no=lambda: self._launch_commit_flow(project_path or (dirty_repos[0] if dirty_repos else ""), dirty_repos),
             on_snooze=self.snooze,
             master=self.master,
         )
+
+    def _launch_commit_flow(self, target_proj: str, dirty_repos: List[str]) -> None:
+        """Launch Git Desktop commit flow for target repo."""
+        log.info("Launching Git Desktop commit flow for repo: %s", target_proj)
+        if self.on_need_commit_action:
+            try:
+                self.on_need_commit_action(target_proj, dirty_repos)
+            except Exception as exc:
+                log.error("on_need_commit_action failed: %s", exc)
+        elif self.on_commit_action:
+            try:
+                self.on_commit_action()
+            except Exception as exc:
+                log.error("on_commit_action failed: %s", exc)
 
     def trigger_test_notification(self) -> None:
         """Instantly show a test notification so the user can verify its appearance."""
@@ -351,42 +381,36 @@ class ReminderService(threading.Thread):
         if not dirty_repos:
             dirty_repos = [r"c:\Data\Saumya\Projects\CommitMaster"]
 
-        def _on_test_no():
-            if self.on_need_commit_action:
-                self.on_need_commit_action(dirty_repos[0], dirty_repos)
-            elif self.on_commit_action:
-                self.on_commit_action()
-
+        msg = self._format_dirty_repo_msg(dirty_repos)
         show_toast(
             title="Did you commit your changes?",
-            message="You just closed your coding IDE. Did you commit your latest work and changes?",
+            message=msg,
             badge_text="TEST PREVIEW",
             dirty_repos=dirty_repos,
             toast_mode="did_you_commit",
             on_yes=lambda: log.info("Test preview: user clicked 'Yes'."),
-            on_no=_on_test_no,
+            on_no=lambda: self._launch_commit_flow(dirty_repos[0], dirty_repos),
             on_snooze=self.snooze,
             master=self.master,
         )
 
     # ── Helpers & Project Discovery ───────────────────────────────────────────
 
-    def _detect_running_ide_and_project(self, watched_lower: List[str]) -> Tuple[Optional[str], Optional[str], Optional[str]]:
+    def _get_running_ide_map(self, watched_lower: List[str]) -> Dict[str, Dict[str, Any]]:
         """
-        Check if any watched IDE is running and discover what project is being worked on.
-        Returns (ide_name, project_path, project_name).
+        Scan all running desktop processes and build map of currently active IDEs.
+        Returns dict keyed by canonical lower-case executable (e.g. 'code.exe').
         """
-        running_ide = None
-        detected_path = None
-        detected_name = None
-
-        # Build alias set for watched IDEs
+        running: Dict[str, Dict[str, Any]] = {}
         all_watched = set(watched_lower)
+        preset_map = {}
         for preset in IDE_PRESETS:
-            preset_exe = preset["exe"].lower()
-            if preset_exe in all_watched:
+            p_exe = preset["exe"].lower()
+            preset_map[p_exe] = preset["name"]
+            if p_exe in all_watched:
                 for alias in preset.get("aliases", []):
                     all_watched.add(alias.lower())
+                    preset_map[alias.lower()] = preset["name"]
 
         try:
             for p in psutil.process_iter(["pid", "name"]):
@@ -396,70 +420,64 @@ class ReminderService(threading.Thread):
                         continue
                     name_lower = name.lower()
                     if name_lower in all_watched:
-                        if not running_ide:
-                            running_ide = name
-
-                        # Inspect process to detect active project
-                        if not detected_path:
-                            proc = psutil.Process(p.info["pid"])
-
-                            # Strategy 1: Check process CWD
+                        disp_name = preset_map.get(name_lower, name)
+                        if name_lower not in running:
+                            proj_path, proj_name = None, None
                             try:
-                                cwd = proc.cwd()
-                                if cwd and os.path.isdir(cwd) and commit_engine.is_git_repo(cwd):
-                                    detected_path = os.path.normpath(cwd)
-                                    detected_name = commit_engine.repo_name(cwd)
+                                proc = psutil.Process(p.info["pid"])
+                                # Strategy 1: Check process CWD
+                                try:
+                                    cwd = proc.cwd()
+                                    if cwd and os.path.isdir(cwd) and commit_engine.is_git_repo(cwd):
+                                        proj_path = os.path.normpath(cwd)
+                                        proj_name = commit_engine.repo_name(cwd)
+                                except Exception:
+                                    pass
+
+                                # Strategy 2: Check command line arguments for folder paths
+                                if not proj_path:
+                                    try:
+                                        cmd = proc.cmdline()
+                                        for arg in cmd:
+                                            clean_arg = arg.strip(' "\'')
+                                            if clean_arg and os.path.isdir(clean_arg) and commit_engine.is_git_repo(clean_arg):
+                                                proj_path = os.path.normpath(clean_arg)
+                                                proj_name = commit_engine.repo_name(clean_arg)
+                                                break
+                                    except Exception:
+                                        pass
                             except Exception:
                                 pass
 
-                            # Strategy 2: Check command line arguments for folder paths
-                            if not detected_path:
-                                try:
-                                    cmd = proc.cmdline()
-                                    for arg in cmd:
-                                        clean_arg = arg.strip(' "\'')
-                                        if clean_arg and os.path.isdir(clean_arg) and commit_engine.is_git_repo(clean_arg):
-                                            detected_path = os.path.normpath(clean_arg)
-                                            detected_name = commit_engine.repo_name(clean_arg)
-                                            break
-                                except Exception:
-                                    pass
-
-                            # Strategy 3: Check against user's watched repos in database
-                            if not detected_path:
-                                try:
-                                    watched_repos = db.get_watched_repos(user_id=self.user_id, active_only=True)
-                                    cmd_str = " ".join(proc.cmdline() if hasattr(proc, "cmdline") else []).lower()
-                                    for wr in watched_repos:
-                                        lp = (wr.get("local_path") or "").strip()
-                                        if lp and os.path.isdir(lp):
-                                            lp_norm = os.path.normpath(lp)
-                                            if lp_norm.lower() in cmd_str:
-                                                detected_path = lp_norm
-                                                detected_name = wr.get("repo_name") or commit_engine.repo_name(lp_norm)
-                                                break
-                                except Exception:
-                                    pass
-
+                            running[name_lower] = {
+                                "exe": name,
+                                "name": disp_name,
+                                "project_path": proj_path,
+                                "project_name": proj_name,
+                            }
                 except (psutil.NoSuchProcess, psutil.AccessDenied):
                     continue
         except Exception as exc:
-            log.debug("Process inspection exception: %s", exc)
+            log.debug("Process iteration exception: %s", exc)
 
-        return running_ide, detected_path, detected_name
+        return running
 
-    def _scan_user_dirty_repos(self) -> List[str]:
-        """Scan all watched repos for this user and return list of paths with uncommitted changes."""
+    def _scan_user_dirty_repos(self, specific_project: Optional[str] = None) -> List[str]:
+        """
+        Scan all repositories linked to this user and return paths with uncommitted changes.
+        """
         dirty: List[str] = []
         candidate_paths: Set[str] = set()
 
-        # 1. Detected project if already known
-        if self.detected_project_path and os.path.isdir(self.detected_project_path):
-            candidate_paths.add(self.detected_project_path)
+        # 1. Specific project or recently detected project
+        if specific_project and os.path.isdir(specific_project) and commit_engine.is_git_repo(specific_project):
+            candidate_paths.add(os.path.normpath(specific_project))
+        if self.detected_project_path and os.path.isdir(self.detected_project_path) and commit_engine.is_git_repo(self.detected_project_path):
+            candidate_paths.add(os.path.normpath(self.detected_project_path))
 
-        # 2. Repos from watched_repositories table
+        # 2. ALL repos from watched_repositories table (active_only=False to include all linked repos)
         try:
-            watched = db.get_watched_repos(user_id=self.user_id, active_only=True)
+            watched = db.get_watched_repos(user_id=self.user_id, active_only=False)
             for w in watched:
                 lp = (w.get("local_path") or "").strip()
                 if lp and os.path.isdir(lp) and commit_engine.is_git_repo(lp):
@@ -467,7 +485,19 @@ class ReminderService(threading.Thread):
         except Exception as exc:
             log.debug("Error querying watched repos: %s", exc)
 
-        # 3. Check projects_dirs from preferences
+        # 3. Check repo_github_accounts table
+        try:
+            conn = db.get_conn()
+            cur = conn.cursor()
+            rows = cur.execute("SELECT repo_path FROM repo_github_accounts WHERE user_id = ?", (self.user_id,)).fetchall()
+            for r in rows:
+                rp = (r["repo_path"] if hasattr(r, "__getitem__") else r[0]) or ""
+                if rp and os.path.isdir(rp) and commit_engine.is_git_repo(rp):
+                    candidate_paths.add(os.path.normpath(rp))
+        except Exception as exc:
+            log.debug("Error querying repo_github_accounts: %s", exc)
+
+        # 4. Check user preferences projects_dirs
         try:
             import json
             prefs = db.get_preferences(self.user_id) or {}
@@ -481,7 +511,7 @@ class ReminderService(threading.Thread):
         except Exception as exc:
             log.debug("Error checking projects_dirs: %s", exc)
 
-        # 4. Current workspace if it's a git repo
+        # 5. Current workspace
         try:
             cwd = os.getcwd()
             if commit_engine.is_git_repo(cwd):
