@@ -49,6 +49,7 @@ class SessionMonitor(threading.Thread):
     def run(self) -> None:
         log.info("SessionMonitor started.")
         ended_at: float = 0.0
+        last_interval_reminder: float = time.time()
 
         while not self._stop_evt.is_set():
             cfg = self._cm.get()          # always use fresh config
@@ -59,6 +60,28 @@ class SessionMonitor(threading.Thread):
             if not self.paused:
                 active = self._coding_app_running(cfg)
                 now = time.time()
+
+                # Interval-based reminder check
+                rem_cfg = cfg.get("reminder", {})
+                if rem_cfg.get("interval_enabled", True):
+                    hrs = rem_cfg.get("interval_hours", 1)
+                    mins = rem_cfg.get("interval_minutes", 0)
+                    interval_secs = max((hrs * 3600) + (mins * 60), 60)
+                    if now - last_interval_reminder >= interval_secs:
+                        last_interval_reminder = now
+                        dirty = sorted(self._dirty_repos | set(self._scan_dirty_repos(cfg)))
+                        if not rem_cfg.get("only_if_dirty", True) or dirty:
+                            try:
+                                from commitmaster.notification_toast import show_toast
+                                show_toast(
+                                    title="⏰ Time to Commit Your Work!",
+                                    message=f"Interval reminder ({hrs}h {mins}m): Review and commit your work.",
+                                    badge_text="INTERVAL REMINDER",
+                                    dirty_repos=dirty,
+                                    on_commit=lambda d=dirty: self.events.put(("session_end", d)),
+                                )
+                            except Exception as exc:
+                                log.debug("Toast dispatch failed: %s", exc)
 
                 if self.state == IDLE and active:
                     log.info("Coding session started.")
@@ -83,6 +106,18 @@ class SessionMonitor(threading.Thread):
                     elif now - ended_at >= grace:
                         repos = sorted(self._dirty_repos | set(self._scan_dirty_repos(cfg)))
                         log.info("Session ended — %d dirty repo(s) detected.", len(repos))
+                        if rem_cfg.get("app_monitor_enabled", True):
+                            try:
+                                from commitmaster.notification_toast import show_toast
+                                show_toast(
+                                    title="💻 IDE Closed — Commit Changes",
+                                    message=f"Coding session closed with {len(repos)} repo(s) modified. Remember to commit!",
+                                    badge_text="IDE CLOSED",
+                                    dirty_repos=repos,
+                                    on_commit=lambda r=repos: self.events.put(("session_end", r)),
+                                )
+                            except Exception as exc:
+                                log.debug("Toast dispatch failed: %s", exc)
                         self.events.put(("session_end", repos))
                         self.state = IDLE
                         ended_at = 0.0
