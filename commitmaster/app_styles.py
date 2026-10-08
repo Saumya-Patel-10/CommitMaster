@@ -277,6 +277,7 @@ _ACTIVE_CUSTOMIZATION = {
     "font_family": "Segoe UI",
     "font_scale": "standard",
     "ui_density": "comfortable",
+    "pattern": "dot_matrix",
 }
 
 
@@ -291,10 +292,15 @@ def apply_customization(
     font_family: Optional[str] = None,
     font_scale: Optional[str] = None,
     ui_density: Optional[str] = None,
+    pattern: Optional[str] = None,
 ) -> None:
     """
     Apply customization settings in-place to COLORS, FONTS, and SIZES.
     """
+    # 0. Pattern texture
+    if pattern:
+        _ACTIVE_CUSTOMIZATION["pattern"] = pattern
+
     # 1. Theme colors
     if theme and theme in THEMES:
         _ACTIVE_CUSTOMIZATION["theme"] = theme
