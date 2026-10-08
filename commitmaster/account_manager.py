@@ -227,15 +227,16 @@ class AccountSwitcherDialog:
         self,
         parent: tk.Tk,
         current_user: Dict[str, Any],
-        on_switch: Callable[[Dict[str, Any]], None],
-        on_add_account: Callable[[], None],
-        on_logout: Callable[[], None]
+        on_switch: Optional[Callable[[Dict[str, Any]], None]] = None,
+        on_add_account: Optional[Callable[[], None]] = None,
+        on_logout: Optional[Callable[[], None]] = None,
+        **kwargs
     ):
         self.parent = parent
         self.current_user = current_user
-        self.on_switch = on_switch
-        self.on_add_account = on_add_account
-        self.on_logout = on_logout
+        self.on_switch = on_switch or kwargs.get("on_account_switched") or (lambda u: None)
+        self.on_add_account = on_add_account or kwargs.get("on_add") or (lambda: None)
+        self.on_logout = on_logout or (lambda: None)
 
         self.dialog = tk.Toplevel(parent)
         self.dialog.title("CommitMaster — Switch Accounts")
@@ -338,14 +339,20 @@ class AccountSwitcherDialog:
         )
         card.pack(fill="x", pady=4)
 
-        # Avatar circle
-        av_color = acc.get("avatar_color", "#3fb950")
-        initial = (acc.get("full_name") or acc.get("username") or "?")[0].upper()
-
-        av_canvas = tk.Canvas(card, width=38, height=38, bg=card["bg"], highlightthickness=0)
-        av_canvas.pack(side="left", padx=(0, 10))
-        av_canvas.create_oval(2, 2, 36, 36, fill=av_color, outline="")
-        av_canvas.create_text(19, 19, text=initial, fill="white", font=("Segoe UI", 12, "bold"))
+        # Avatar photo or badge
+        from commitmaster import avatar_utils
+        av_photo = avatar_utils.get_avatar_photo(acc, size=38, rounded=True, master=self.dialog)
+        if av_photo:
+            av_lbl = tk.Label(card, image=av_photo, bg=card["bg"])
+            av_lbl.image = av_photo
+            av_lbl.pack(side="left", padx=(0, 10))
+        else:
+            av_color = acc.get("avatar_color", "#3fb950")
+            initial = (acc.get("full_name") or acc.get("username") or "?")[0].upper()
+            av_canvas = tk.Canvas(card, width=38, height=38, bg=card["bg"], highlightthickness=0)
+            av_canvas.pack(side="left", padx=(0, 10))
+            av_canvas.create_oval(2, 2, 36, 36, fill=av_color, outline="")
+            av_canvas.create_text(19, 19, text=initial, fill="white", font=("Segoe UI", 12, "bold"))
 
         # Details
         info_box = tk.Frame(card, bg=card["bg"])
