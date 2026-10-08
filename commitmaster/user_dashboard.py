@@ -20,6 +20,7 @@ from commitmaster import commit_composer, charts, navigation, issue_view
 from commitmaster.config import load_config
 from commitmaster.github_service import mask_token, verify_github_token
 from commitmaster.github_account_dialog import GitHubAccountDialog, SelectGitHubReposDialog
+from commitmaster.reminder_service import ReminderService, IDE_PRESETS, get_running_ide_processes
 
 
 class UserDashboard:
@@ -30,10 +31,11 @@ class UserDashboard:
     on_admin() is called when an admin wants to open the admin portal.
     """
 
-    def __init__(self, user: Dict, on_logout: Callable, on_admin: Optional[Callable] = None):
+    def __init__(self, user: Dict, on_logout: Callable, on_admin: Optional[Callable] = None, on_switch_account: Optional[Callable[[Dict], None]] = None):
         self.user = user
         self.on_logout = on_logout
         self.on_admin = on_admin
+        self.on_switch_account = on_switch_account
         self._active_nav = None
 
         # Load user saved customization
@@ -70,6 +72,29 @@ class UserDashboard:
 
         self._setup_window()
         self._build_layout()
+
+        # Auto-commit and countdown state
+        self._countdown_timer = None
+        self._countdown_remaining = 0
+        self._countdown_cancelled = False
+        self._pending_autocommit = False
+        self._autocommit_banner_frame = None
+        self._autocommit_banner_lbl = None
+        self._autocommit_stop_btn = None
+        self._custom_apps: list = []
+        self._rem_ide_check_vars: dict = {}
+        self._custom_app_vars: dict = {}
+
+        # Commit Reminder Service (Intervals & IDE Monitoring)
+        self._reminder_service = ReminderService(
+            user_id=self.user["id"],
+            on_commit_action=self._on_reminder_commit,
+            on_need_commit_action=self._handle_ide_close_uncommitted,
+            master=self.root,
+            grace_period_seconds=int(prefs.get("session_end_grace", 15)),
+        )
+        self._reminder_service.start()
+
         self._nav_to("overview")
 
     # ── Window setup ──────────────────────────────────────────────────────────
@@ -85,7 +110,225 @@ class UserDashboard:
         sh = self.root.winfo_screenheight()
         self.root.geometry(f"{w}x{h}+{(sw - w)//2}+{(sh - h)//2}")
         from commitmaster import windows_integration
-        windows_integration.apply_windows_theme(self.root, f"CommitMaster — {name}")
+        windows_integration.apply_windows_theme(self.root, f"CommitMaster — {name}", app_type="user")
+        self.root.protocol("WM_DELETE_WINDOW", self._on_close_window)
+
+    def _on_reminder_commit(self):
+        """Action handler when user clicks 'Review & Commit' in the bottom-right toast."""
+        try:
+            self.root.deiconify()
+            self.root.lift()
+            self.root.focus_force()
+            self._go("git_desktop")
+        except Exception:
+            pass
+
+    def _handle_ide_close_uncommitted(self, project_path: str, dirty_repos: List[str]):
+        """
+        Triggered when user closes their coding IDE and clicks 'No, help me commit'.
+        Brings CommitMaster to front, navigates to Git Desktop, selects the detected repository,
+        and starts AI commit message generation and confirmation/autocommit.
+        """
+        try:
+            self.root.deiconify()
+            self.root.lift()
+            self.root.focus_force()
+        except Exception:
+            pass
+
+        target_repo = project_path or (dirty_repos[0] if dirty_repos else "")
+        if target_repo and commit_engine.is_git_repo(target_repo):
+            try:
+                db.add_or_update_watched_repo(
+                    user_id=self.user["id"],
+                    repo_full_name=commit_engine.repo_name(target_repo),
+                    local_path=os.path.normpath(target_repo),
+                    is_active_watch=1,
+                )
+            except Exception:
+                pass
+            self._gd_selected_repo = os.path.normpath(target_repo)
+            self._gd_active_file = None
+            commit_composer.reset_state(self)
+
+        self._go("git_desktop")
+        self.root.after(400, lambda: self._start_ide_close_commit_flow(target_repo, dirty_repos))
+
+    def _start_ide_close_commit_flow(self, target_repo: Optional[str], dirty_repos: List[str]):
+        """
+        Ensures repository is chosen, checks uncommitted files, and triggers AI commit generation.
+        """
+        if not self._gd_selected_repo and dirty_repos:
+            self._gd_selected_repo = os.path.normpath(dirty_repos[0])
+            self._go("git_desktop")
+            self.root.after(350, lambda: self._start_ide_close_commit_flow(self._gd_selected_repo, dirty_repos))
+            return
+
+        if not self._gd_selected_repo:
+            messagebox.showinfo(
+                "Select Repository",
+                "Please choose your repository from the dropdown above to review and commit your changes.",
+                parent=self.root,
+            )
+            return
+
+        changes = commit_engine.uncommitted_changes(self._gd_selected_repo)
+        if not changes:
+            messagebox.showinfo(
+                "Working Tree Clean",
+                f"No uncommitted changes found in '{commit_engine.repo_name(self._gd_selected_repo)}'. All work is committed!",
+                parent=self.root,
+            )
+            return
+
+        # Ensure all changed files are staged/checked
+        for _, path in changes:
+            if path in self._gd_staged_vars:
+                self._gd_staged_vars[path].set(True)
+
+        prefs = db.get_preferences(self.user["id"]) or {}
+        auto_commit_opt = bool(prefs.get("auto_commit", 0))
+        self._pending_autocommit = auto_commit_opt
+
+        comp = getattr(self, "_gd_composer", None)
+        if comp and hasattr(comp, "generate"):
+            comp.generate()
+
+    def _on_composer_generated(self, comp, res, err, files):
+        """Called when AI commit generation finishes in CommitComposer."""
+        if err or not res:
+            self._pending_autocommit = False
+            return
+
+        if getattr(self, "_pending_autocommit", False):
+            self._pending_autocommit = False
+            self._start_autocommit_countdown(comp)
+        else:
+            # Preview opt-in mode: user confirmation required
+            if comp and hasattr(comp, "ai_status") and comp.ai_status.winfo_exists():
+                comp.ai_status.config(
+                    text="✔ AI commit messages generated! Review changes and click 'Commit & Push' when ready.",
+                    fg=COLORS["success"],
+                )
+
+    def _start_autocommit_countdown(self, comp):
+        """10-second countdown for automatic commit giving user time to review and cancel."""
+        self._cancel_autocommit()
+        self._countdown_cancelled = False
+        self._countdown_remaining = 10
+
+        try:
+            banner = tk.Frame(comp, bg=COLORS["warning"], padx=14, pady=10)
+            banner.pack(fill="x", pady=(0, 10), before=comp.footer)
+            self._autocommit_banner_frame = banner
+
+            b_left = tk.Frame(banner, bg=COLORS["warning"])
+            b_left.pack(side="left", fill="x", expand=True)
+
+            lbl = tk.Label(
+                b_left,
+                text=f"⏱ Auto-committing and pushing in {self._countdown_remaining}s... Review comments below.",
+                font=FONTS["label_bold"],
+                fg="#0d1117",
+                bg=COLORS["warning"],
+            )
+            lbl.pack(side="left")
+            self._autocommit_banner_lbl = lbl
+
+            stop_btn = tk.Button(
+                banner,
+                text="⛔ Stop Auto-Commit",
+                font=FONTS["label_bold"],
+                fg="#ffffff",
+                bg="#cf222e",
+                activebackground="#a40e26",
+                activeforeground="#ffffff",
+                relief="flat",
+                bd=0,
+                cursor="hand2",
+                padx=14,
+                pady=5,
+                command=self._cancel_autocommit,
+            )
+            stop_btn.pack(side="right")
+            self._autocommit_stop_btn = stop_btn
+
+            self._countdown_timer = self.root.after(1000, lambda: self._autocommit_tick(comp))
+        except Exception:
+            pass
+
+    def _autocommit_tick(self, comp):
+        """Handle 1-second ticks of the 10-second auto-commit countdown."""
+        if getattr(self, "_countdown_cancelled", False):
+            return
+
+        self._countdown_remaining -= 1
+        if self._countdown_remaining > 0:
+            if hasattr(self, "_autocommit_banner_lbl") and self._autocommit_banner_lbl and self._autocommit_banner_lbl.winfo_exists():
+                self._autocommit_banner_lbl.config(
+                    text=f"⏱ Auto-committing and pushing in {self._countdown_remaining}s... Review comments below."
+                )
+            self._countdown_timer = self.root.after(1000, lambda: self._autocommit_tick(comp))
+        else:
+            # Countdown reached 0: proceed to commit and push
+            if hasattr(self, "_autocommit_banner_lbl") and self._autocommit_banner_lbl and self._autocommit_banner_lbl.winfo_exists():
+                self._autocommit_banner_lbl.config(
+                    text="🚀 10s elapsed. Committing and pushing to GitHub now..."
+                )
+            if hasattr(self, "_autocommit_stop_btn") and self._autocommit_stop_btn and self._autocommit_stop_btn.winfo_exists():
+                self._autocommit_stop_btn.destroy()
+
+            try:
+                comp.commit(push=True)
+            except Exception as exc:
+                if hasattr(self, "_autocommit_banner_lbl") and self._autocommit_banner_lbl and self._autocommit_banner_lbl.winfo_exists():
+                    self._autocommit_banner_lbl.config(
+                        text=f"❌ Auto-commit failed: {exc}",
+                        fg="#ffffff",
+                        bg="#cf222e",
+                    )
+            self.root.after(4000, self._cleanup_autocommit_banner)
+
+    def _cancel_autocommit(self):
+        """Cancel the 10-second auto-commit countdown."""
+        self._countdown_cancelled = True
+        if getattr(self, "_countdown_timer", None):
+            try:
+                self.root.after_cancel(self._countdown_timer)
+            except Exception:
+                pass
+            self._countdown_timer = None
+
+        if hasattr(self, "_autocommit_banner_lbl") and self._autocommit_banner_lbl and self._autocommit_banner_lbl.winfo_exists():
+            self._autocommit_banner_lbl.config(
+                text="⏹ Auto-commit stopped. You can review, edit, or commit manually.",
+                fg="#ffffff",
+                bg="#21262d",
+            )
+        if hasattr(self, "_autocommit_banner_frame") and self._autocommit_banner_frame and self._autocommit_banner_frame.winfo_exists():
+            self._autocommit_banner_frame.config(bg="#21262d")
+        if hasattr(self, "_autocommit_stop_btn") and self._autocommit_stop_btn and self._autocommit_stop_btn.winfo_exists():
+            self._autocommit_stop_btn.destroy()
+
+        self.root.after(4000, self._cleanup_autocommit_banner)
+
+    def _cleanup_autocommit_banner(self):
+        """Remove the countdown banner from the view."""
+        if hasattr(self, "_autocommit_banner_frame") and self._autocommit_banner_frame:
+            try:
+                self._autocommit_banner_frame.destroy()
+            except Exception:
+                pass
+            self._autocommit_banner_frame = None
+
+    def _on_close_window(self):
+        """Clean shutdown when user closes the main dashboard window."""
+        if hasattr(self, "_reminder_service") and self._reminder_service:
+            try:
+                self._reminder_service.stop()
+            except Exception:
+                pass
+        self.root.destroy()
 
     # ── Layout skeleton ───────────────────────────────────────────────────────
 
@@ -140,16 +383,22 @@ class UserDashboard:
         except Exception:
             pass
 
-    def _on_frame_configure(self, event):
+    def _on_frame_configure(self, event=None):
         bbox = self._content_canvas.bbox("all")
-        if getattr(self, "_last_scrollregion", None) != bbox:
-            self._last_scrollregion = bbox
-            self._content_canvas.configure(scrollregion=bbox)
+        if bbox and (bbox[2] > 1 or bbox[3] > 1):
+            if getattr(self, "_last_scrollregion", None) != bbox:
+                self._last_scrollregion = bbox
+                self._content_canvas.configure(scrollregion=bbox)
+        elif event and getattr(event, "height", 0) > 1:
+            self._content_canvas.configure(scrollregion=(0, 0, max(event.width, self._content_canvas.winfo_width()), event.height))
 
     def _on_canvas_configure(self, event):
         if getattr(self, "_last_canvas_width", None) != event.width:
             self._last_canvas_width = event.width
             self._content_canvas.itemconfig(self._content_window, width=event.width)
+        bbox = self._content_canvas.bbox("all")
+        if bbox and (bbox[2] > 1 or bbox[3] > 1):
+            self._content_canvas.configure(scrollregion=bbox)
 
     # ── Sidebar ───────────────────────────────────────────────────────────────
 
@@ -174,15 +423,24 @@ class UserDashboard:
 
         tk.Frame(sb, height=1, bg=COLORS["border"]).pack(side="top", fill="x")
 
-        # 2. Pinned Bottom Footer (Sign Out)
+        # 2. Pinned Bottom Footer (Switch Account & Sign Out)
         footer_f = tk.Frame(sb, bg=COLORS["bg_sidebar"])
         footer_f.pack(side="bottom", fill="x")
         tk.Frame(footer_f, height=1, bg=COLORS["border"]).pack(side="top", fill="x")
+
+        switch_btn = tk.Button(footer_f, text="  👥  Switch Account",
+                               font=FONTS["label"], fg=COLORS["text_secondary"],
+                               bg=COLORS["bg_sidebar"], relief="flat", bd=0,
+                               cursor="hand2", anchor="w",
+                               command=self._open_account_switcher, padx=16, pady=10)
+        switch_btn.pack(side="top", fill="x")
+        self._add_hover(switch_btn, COLORS["bg_medium"], COLORS["bg_sidebar"])
+
         logout_btn = tk.Button(footer_f, text="  ⏻  Sign Out",
                                font=FONTS["label"], fg=COLORS["text_secondary"],
                                bg=COLORS["bg_sidebar"], relief="flat", bd=0,
                                cursor="hand2", anchor="w",
-                               command=self._do_logout, padx=16, pady=12)
+                               command=self._do_logout, padx=16, pady=10)
         logout_btn.pack(side="bottom", fill="x")
         self._add_hover(logout_btn, COLORS["bg_medium"], COLORS["bg_sidebar"])
 
@@ -225,8 +483,9 @@ class UserDashboard:
         tk.Label(av_f, text=self.user.get("full_name") or self.user["username"],
                  font=FONTS["label_bold"], fg=COLORS["text_primary"],
                  bg=COLORS["bg_sidebar"], wraplength=160).pack(anchor="w", pady=(4, 0))
-        role_tag = "● Admin" if self.user["role"] == "admin" else "● User"
-        role_color = COLORS["admin"] if self.user["role"] == "admin" else COLORS["success"]
+        is_admin = db.is_admin_username(self.user.get("username", "")) and self.user.get("role") == "admin"
+        role_tag = "● Admin" if is_admin else "● User"
+        role_color = COLORS["admin"] if is_admin else COLORS["success"]
         tk.Label(av_f, text=role_tag, font=FONTS["caption"],
                  fg=role_color, bg=COLORS["bg_sidebar"]).pack(anchor="w")
 
@@ -243,7 +502,7 @@ class UserDashboard:
             ("⚙️",  "Settings",       "settings"),
             ("👤", "My Profile",      "profile"),
         ]
-        if self.user["role"] == "admin":
+        if is_admin:
             nav_items.append(("🛡", "Admin Portal", "admin"))
 
         self._nav_buttons = {}
@@ -338,10 +597,20 @@ class UserDashboard:
                                       font=FONTS["heading_md"],
                                       fg=COLORS["text_primary"], bg=COLORS["bg_dark"])
         self._header_title.pack(side="left", padx=24, pady=12)
-        # Right side: version badge
+        # Right side: switch account & version badge
         tk.Label(header, text="v3.0", font=FONTS["caption"],
                  fg=COLORS["text_muted"], bg=COLORS["bg_dark"]).pack(
-            side="right", padx=16)
+            side="right", padx=(4, 16))
+
+        hdr_switch_btn = tk.Button(
+            header, text="👥 Switch Account", font=FONTS["caption"],
+            bg=COLORS["bg_card"], fg=COLORS["text_primary"],
+            activebackground=COLORS["bg_card_hover"], activeforeground=COLORS["accent"],
+            relief="flat", bd=0, cursor="hand2", padx=10, pady=4,
+            command=self._open_account_switcher
+        )
+        hdr_switch_btn.pack(side="right", padx=6)
+        self._add_hover(hdr_switch_btn, COLORS["bg_card_hover"], COLORS["bg_card"])
 
     def _set_header(self, title: str):
         self._header_title.config(text=title)
@@ -839,6 +1108,370 @@ class UserDashboard:
                  font=FONTS["body_sm"], fg=COLORS["text_secondary"],
                  bg=COLORS["bg_dark"]).pack(anchor="w", pady=(2, 16))
 
+        # ── Commit Reminder Notifications Card ────────────────────────────────
+        rem_card = self._card(pad, padx=20, pady=16)
+        rem_card.pack(fill="x", pady=(0, 12))
+
+        rem_hdr = tk.Frame(rem_card, bg=COLORS["bg_card"])
+        rem_hdr.pack(fill="x", pady=(0, 4))
+        tk.Label(rem_hdr, text="🔔  Commit Reminder Notifications", font=FONTS["heading_sm"],
+                 fg=COLORS["text_primary"], bg=COLORS["bg_card"]).pack(side="left")
+
+        test_btn = tk.Button(
+            rem_hdr, text="🔔 Test Bottom-Right Alert",
+            font=("Segoe UI", 9, "bold"),
+            bg=COLORS["bg_medium"], fg=COLORS["accent"],
+            activebackground=COLORS["bg_card_hover"],
+            activeforeground=COLORS["accent_hover"],
+            relief="flat", bd=0, cursor="hand2", padx=10, pady=3,
+            command=self._test_reminder_toast
+        )
+        test_btn.pack(side="right")
+        self._add_hover(test_btn, COLORS["bg_card_hover"], COLORS["bg_medium"])
+
+        tk.Label(rem_card,
+                 text="Configure how CommitMaster alerts you on the bottom right corner of your screen.",
+                 font=FONTS["caption"], fg=COLORS["text_secondary"],
+                 bg=COLORS["bg_card"]).pack(anchor="w", pady=(0, 10))
+
+        # ── Option 1: Interval-Based Reminders
+        int_frame = tk.Frame(rem_card, bg=COLORS["bg_medium"], padx=14, pady=10)
+        int_frame.pack(fill="x", pady=(0, 10))
+
+        self._rem_interval_var = tk.BooleanVar(value=bool(prefs.get("reminder_interval_enabled", 1)))
+        int_cb = tk.Checkbutton(
+            int_frame, text="1. Interval-Based Reminders (Timer)",
+            variable=self._rem_interval_var,
+            font=FONTS["label_bold"], fg=COLORS["text_primary"],
+            bg=COLORS["bg_medium"], selectcolor=COLORS["bg_dark"],
+            activebackground=COLORS["bg_medium"], activeforeground=COLORS["text_primary"]
+        )
+        int_cb.pack(anchor="w")
+
+        tk.Label(
+            int_frame,
+            text="Set regular intervals in hours and minutes to receive a bottom-right corner reminder.",
+            font=FONTS["caption"], fg=COLORS["text_secondary"], bg=COLORS["bg_medium"]
+        ).pack(anchor="w", pady=(2, 8))
+
+        time_row = tk.Frame(int_frame, bg=COLORS["bg_medium"])
+        time_row.pack(anchor="w", fill="x")
+
+        tk.Label(time_row, text="Remind every: ", font=FONTS["body_sm"],
+                 fg=COLORS["text_primary"], bg=COLORS["bg_medium"]).pack(side="left")
+
+        self._rem_hours_var = tk.StringVar(value=str(prefs.get("reminder_interval_hours", 1)))
+        self._rem_mins_var = tk.StringVar(value=str(prefs.get("reminder_interval_minutes", 0)))
+
+        tk.Entry(time_row, textvariable=self._rem_hours_var, width=3, font=FONTS["mono"],
+                 bg=COLORS["bg_input"], fg=COLORS["text_primary"], relief="flat",
+                 highlightthickness=1, highlightbackground=COLORS["border"], justify="center").pack(side="left", padx=(0, 4))
+        tk.Label(time_row, text="hrs", font=FONTS["body_sm"],
+                 fg=COLORS["text_secondary"], bg=COLORS["bg_medium"]).pack(side="left", padx=(0, 10))
+
+        tk.Entry(time_row, textvariable=self._rem_mins_var, width=3, font=FONTS["mono"],
+                 bg=COLORS["bg_input"], fg=COLORS["text_primary"], relief="flat",
+                 highlightthickness=1, highlightbackground=COLORS["border"], justify="center").pack(side="left", padx=(0, 4))
+        tk.Label(time_row, text="mins", font=FONTS["body_sm"],
+                 fg=COLORS["text_secondary"], bg=COLORS["bg_medium"]).pack(side="left", padx=(0, 16))
+
+        # Quick preset buttons (30m, 1h, 2h, 4h)
+        tk.Label(time_row, text="Quick Presets: ", font=FONTS["caption"],
+                 fg=COLORS["text_muted"], bg=COLORS["bg_medium"]).pack(side="left", padx=(4, 4))
+
+        def _set_preset(h, m):
+            self._rem_hours_var.set(str(h))
+            self._rem_mins_var.set(str(m))
+
+        for lbl, h, m in [("30m", 0, 30), ("1h", 1, 0), ("2h", 2, 0), ("4h", 4, 0)]:
+            p_btn = tk.Button(
+                time_row, text=lbl, font=("Segoe UI", 8),
+                bg=COLORS["bg_card"], fg=COLORS["text_primary"],
+                activebackground=COLORS["accent"], activeforeground="#0d1117",
+                relief="flat", bd=0, cursor="hand2", padx=6, pady=1,
+                command=lambda h=h, m=m: _set_preset(h, m)
+            )
+            p_btn.pack(side="left", padx=2)
+            self._add_hover(p_btn, COLORS["bg_card_hover"], COLORS["bg_card"])
+
+        # ── Option 2: App / IDE Monitoring
+        app_frame = tk.Frame(rem_card, bg=COLORS["bg_medium"], padx=14, pady=10)
+        app_frame.pack(fill="x", pady=(0, 10))
+
+        self._rem_app_monitor_var = tk.BooleanVar(value=bool(prefs.get("reminder_app_monitor_enabled", 1)))
+        app_cb = tk.Checkbutton(
+            app_frame, text="2. App & IDE Monitoring (Session Lifecycle)",
+            variable=self._rem_app_monitor_var,
+            font=FONTS["label_bold"], fg=COLORS["text_primary"],
+            bg=COLORS["bg_medium"], selectcolor=COLORS["bg_dark"],
+            activebackground=COLORS["bg_medium"], activeforeground=COLORS["text_primary"]
+        )
+        app_cb.pack(anchor="w")
+
+        tk.Label(
+            app_frame,
+            text="Monitors your desktop for IDEs. When you start coding, the system wakes up and keeps an eye\n"
+                 "on your work. When you close the IDE, a bottom-right notification reminds you to commit your changes.",
+            font=FONTS["caption"], fg=COLORS["text_secondary"], bg=COLORS["bg_medium"], justify="left"
+        ).pack(anchor="w", pady=(2, 8))
+
+        # IDE selection & live scanner toolbar
+        ide_sel_hdr = tk.Frame(app_frame, bg=COLORS["bg_medium"])
+        ide_sel_hdr.pack(fill="x", pady=(4, 6))
+
+        tk.Label(
+            ide_sel_hdr,
+            text="Select Coding Apps & IDEs to Monitor:",
+            font=FONTS["label_bold"],
+            fg=COLORS["text_primary"],
+            bg=COLORS["bg_medium"]
+        ).pack(side="left")
+
+        # Preset watched detection
+        preset_exes_lower = {p["exe"].lower(): p["exe"] for p in IDE_PRESETS}
+        for p in IDE_PRESETS:
+            for alias in p.get("aliases", []):
+                preset_exes_lower[alias.lower()] = p["exe"]
+
+        watched_lower = [w.lower() for w in watched] if watched else []
+        default_check_all = len(watched) == 0
+
+        self._rem_ide_check_vars = {}
+        self._rem_ide_badge_labels = {}
+
+        def _select_all_ides():
+            for v in self._rem_ide_check_vars.values():
+                v.set(True)
+            for v in self._custom_app_vars.values():
+                v.set(True)
+
+        def _deselect_all_ides():
+            for v in self._rem_ide_check_vars.values():
+                v.set(False)
+            for v in self._custom_app_vars.values():
+                v.set(False)
+
+        def _refresh_active_badges():
+            running = get_running_ide_processes()
+            for p in IDE_PRESETS:
+                p_exe = p["exe"]
+                is_run = (p_exe.lower() in running) or any(a.lower() in running for a in p.get("aliases", []))
+                lbl = self._rem_ide_badge_labels.get(p_exe)
+                if lbl and lbl.winfo_exists():
+                    if is_run:
+                        lbl.config(text="● Running now", fg="#3fb950")
+                    else:
+                        lbl.config(text="", fg=COLORS["bg_card"])
+
+        btn_tools = tk.Frame(ide_sel_hdr, bg=COLORS["bg_medium"])
+        btn_tools.pack(side="right")
+
+        sel_all_btn = tk.Button(
+            btn_tools, text="Select All", font=("Segoe UI", 8),
+            bg=COLORS["bg_card"], fg=COLORS["text_primary"],
+            relief="flat", bd=0, cursor="hand2", padx=6, pady=1,
+            command=_select_all_ides
+        )
+        sel_all_btn.pack(side="left", padx=2)
+        self._add_hover(sel_all_btn, COLORS["bg_card_hover"], COLORS["bg_card"])
+
+        desel_btn = tk.Button(
+            btn_tools, text="Clear All", font=("Segoe UI", 8),
+            bg=COLORS["bg_card"], fg=COLORS["text_secondary"],
+            relief="flat", bd=0, cursor="hand2", padx=6, pady=1,
+            command=_deselect_all_ides
+        )
+        desel_btn.pack(side="left", padx=2)
+        self._add_hover(desel_btn, COLORS["bg_card_hover"], COLORS["bg_card"])
+
+        ref_btn = tk.Button(
+            btn_tools, text="🔄 Refresh Active", font=("Segoe UI", 8),
+            bg=COLORS["bg_card"], fg=COLORS["accent"],
+            relief="flat", bd=0, cursor="hand2", padx=6, pady=1,
+            command=_refresh_active_badges
+        )
+        ref_btn.pack(side="left", padx=(4, 0))
+        self._add_hover(ref_btn, COLORS["bg_card_hover"], COLORS["bg_card"])
+
+        # Grid of IDE Presets (3 columns)
+        grid_frame = tk.Frame(app_frame, bg=COLORS["bg_medium"])
+        grid_frame.pack(fill="x", pady=(2, 8))
+        for col_i in range(3):
+            grid_frame.columnconfigure(col_i, weight=1)
+
+        running_now = get_running_ide_processes()
+
+        for idx, preset in enumerate(IDE_PRESETS):
+            p_exe = preset["exe"]
+            p_name = preset["name"]
+            p_icon = preset.get("icon", "💻")
+            row_idx = idx // 3
+            col_idx = idx % 3
+
+            is_checked = default_check_all or (p_exe.lower() in watched_lower) or any(a.lower() in watched_lower for a in preset.get("aliases", []))
+            var = tk.BooleanVar(value=is_checked)
+            self._rem_ide_check_vars[p_exe] = var
+
+            is_run = (p_exe.lower() in running_now) or any(a.lower() in running_now for a in preset.get("aliases", []))
+
+            cell = tk.Frame(grid_frame, bg=COLORS["bg_card"], padx=8, pady=6,
+                            highlightthickness=1, highlightbackground=COLORS["border"])
+            cell.grid(row=row_idx, column=col_idx, padx=4, pady=3, sticky="nsew")
+
+            left_box = tk.Frame(cell, bg=COLORS["bg_card"])
+            left_box.pack(side="left", fill="x", expand=True)
+
+            cb = tk.Checkbutton(
+                left_box, text=f"{p_icon} {p_name}", variable=var,
+                font=FONTS["body_sm"], fg=COLORS["text_primary"],
+                bg=COLORS["bg_card"], selectcolor=COLORS["bg_dark"],
+                activebackground=COLORS["bg_card"], activeforeground=COLORS["text_primary"]
+            )
+            cb.pack(side="left")
+
+            tk.Label(
+                left_box, text=f"({p_exe})", font=FONTS["caption"],
+                fg=COLORS["text_muted"], bg=COLORS["bg_card"]
+            ).pack(side="left", padx=(2, 0))
+
+            badge_text = "● Running now" if is_run else ""
+            badge_lbl = tk.Label(
+                cell, text=badge_text, font=("Segoe UI", 8, "bold"),
+                fg="#3fb950" if is_run else COLORS["bg_card"], bg=COLORS["bg_card"]
+            )
+            badge_lbl.pack(side="right", padx=(4, 2))
+            self._rem_ide_badge_labels[p_exe] = badge_lbl
+
+        # Custom IDEs / Coding Apps Section
+        preset_names_lower = set(preset_exes_lower.keys())
+        custom_from_watched = [w for w in watched if w.lower() not in preset_names_lower]
+        self._custom_apps = list(dict.fromkeys(custom_from_watched))
+        self._custom_app_vars = {}
+
+        custom_section = tk.Frame(app_frame, bg=COLORS["bg_medium"])
+        custom_section.pack(fill="x", pady=(4, 0))
+
+        tk.Label(
+            custom_section, text="＋ Custom Apps or IDEs (.exe):",
+            font=FONTS["body_sm"], fg=COLORS["text_secondary"], bg=COLORS["bg_medium"]
+        ).pack(anchor="w", pady=(0, 4))
+
+        self._custom_apps_container = tk.Frame(custom_section, bg=COLORS["bg_medium"])
+        self._custom_apps_container.pack(fill="x")
+
+        def _rebuild_custom_apps_ui():
+            for w in self._custom_apps_container.winfo_children():
+                w.destroy()
+            for c_exe in self._custom_apps:
+                if c_exe not in self._custom_app_vars:
+                    self._custom_app_vars[c_exe] = tk.BooleanVar(value=True)
+                c_var = self._custom_app_vars[c_exe]
+
+                c_row = tk.Frame(self._custom_apps_container, bg=COLORS["bg_card"], padx=8, pady=4,
+                                 highlightthickness=1, highlightbackground=COLORS["border"])
+                c_row.pack(fill="x", pady=2)
+
+                tk.Checkbutton(
+                    c_row, text=f"⚙️ {c_exe}", variable=c_var,
+                    font=FONTS["body_sm"], fg=COLORS["text_primary"],
+                    bg=COLORS["bg_card"], selectcolor=COLORS["bg_dark"],
+                    activebackground=COLORS["bg_card"], activeforeground=COLORS["text_primary"]
+                ).pack(side="left")
+
+                is_c_run = c_exe.lower() in running_now
+                if is_c_run:
+                    tk.Label(
+                        c_row, text="● Running now", font=("Segoe UI", 8, "bold"),
+                        fg="#3fb950", bg=COLORS["bg_card"]
+                    ).pack(side="left", padx=8)
+
+                def _remove_c_app(target=c_exe):
+                    if target in self._custom_apps:
+                        self._custom_apps.remove(target)
+                    if target in self._custom_app_vars:
+                        del self._custom_app_vars[target]
+                    _rebuild_custom_apps_ui()
+
+                rm_btn = tk.Button(
+                    c_row, text="✕ Remove", font=("Segoe UI", 8),
+                    bg=COLORS["bg_medium"], fg=COLORS["danger"],
+                    relief="flat", bd=0, cursor="hand2", padx=6, pady=1,
+                    command=_remove_c_app
+                )
+                rm_btn.pack(side="right")
+                self._add_hover(rm_btn, COLORS["bg_card_hover"], COLORS["bg_medium"])
+
+        _rebuild_custom_apps_ui()
+
+        add_row = tk.Frame(custom_section, bg=COLORS["bg_medium"])
+        add_row.pack(fill="x", pady=(6, 0))
+
+        custom_entry_var = tk.StringVar()
+        custom_entry = tk.Entry(
+            add_row, textvariable=custom_entry_var, font=FONTS["mono"],
+            bg=COLORS["bg_input"], fg=COLORS["text_primary"], relief="flat",
+            highlightthickness=1, highlightbackground=COLORS["border"], width=30
+        )
+        custom_entry.pack(side="left", ipady=3, padx=(0, 6))
+
+        def _add_custom_app_from_entry():
+            val = custom_entry_var.get().strip()
+            if not val:
+                return
+            clean_name = os.path.basename(val)
+            if not clean_name.lower().endswith(".exe"):
+                clean_name += ".exe"
+            if clean_name not in self._custom_apps:
+                self._custom_apps.append(clean_name)
+                self._custom_app_vars[clean_name] = tk.BooleanVar(value=True)
+                _rebuild_custom_apps_ui()
+            custom_entry_var.set("")
+
+        def _browse_exe_dialog():
+            f = filedialog.askopenfilename(
+                title="Select IDE / Coding App Executable",
+                filetypes=[("Executable Files (*.exe)", "*.exe"), ("All Files (*.*)", "*.*")],
+                parent=self.root
+            )
+            if f:
+                base = os.path.basename(f)
+                custom_entry_var.set(base)
+                _add_custom_app_from_entry()
+
+        browse_btn = tk.Button(
+            add_row, text="📁 Browse .exe", font=FONTS["caption"],
+            bg=COLORS["bg_card"], fg=COLORS["text_primary"],
+            relief="flat", bd=0, cursor="hand2", padx=10, pady=3,
+            command=_browse_exe_dialog
+        )
+        browse_btn.pack(side="left", padx=(0, 6))
+        self._add_hover(browse_btn, COLORS["bg_card_hover"], COLORS["bg_card"])
+
+        add_btn = tk.Button(
+            add_row, text="＋ Add App", font=FONTS["caption"],
+            bg=COLORS["accent"], fg="white",
+            relief="flat", bd=0, cursor="hand2", padx=10, pady=3,
+            command=_add_custom_app_from_entry
+        )
+        add_btn.pack(side="left")
+        self._add_hover(add_btn, COLORS["accent_hover"], COLORS["accent"])
+
+        self._rem_watched_apps_var = tk.StringVar(value=", ".join(watched) if watched else "")
+
+        # ── Option 3: Smart Filter
+        filter_row = tk.Frame(rem_card, bg=COLORS["bg_card"])
+        filter_row.pack(fill="x", pady=(2, 0))
+
+        self._rem_only_dirty_var = tk.BooleanVar(value=bool(prefs.get("reminder_only_if_dirty", 1)))
+        dirty_cb = tk.Checkbutton(
+            filter_row, text="Only alert when uncommitted changes exist in watched repositories",
+            variable=self._rem_only_dirty_var,
+            font=FONTS["body_sm"], fg=COLORS["text_primary"],
+            bg=COLORS["bg_card"], selectcolor=COLORS["bg_dark"],
+            activebackground=COLORS["bg_card"], activeforeground=COLORS["text_primary"]
+        )
+        dirty_cb.pack(anchor="w")
+
         # ── Session settings card ─────────────────────────────────────────────
         card = self._card(pad, padx=20, pady=16)
         card.pack(fill="x", pady=(0, 12))
@@ -1074,16 +1707,59 @@ class UserDashboard:
         if sel:
             self._dirs_listbox.delete(sel[0])
 
+    def _test_reminder_toast(self):
+        if hasattr(self, "_reminder_service") and self._reminder_service:
+            self._reminder_service.trigger_test_notification()
+        else:
+            from commitmaster.notification_toast import show_toast
+            show_toast(
+                title="🔔 Notification Reminder Preview",
+                message="This is a preview of the bottom-right corner reminder! Both interval timers and IDE app monitoring use this card.",
+                badge_text="TEST PREVIEW",
+                master=self.root,
+            )
+
     def _save_settings(self):
         dirs = list(self._dirs_listbox.get(0, "end"))
         prov = self._provider_map.get(self._ai_provider_var.get(), "bionic")
         m_val = self._ai_model_var.get().strip()
+
+        # Parse watched apps from checkboxes and custom apps
+        new_watched = []
+        for exe, var in getattr(self, "_rem_ide_check_vars", {}).items():
+            if var.get():
+                new_watched.append(exe)
+        for c_exe, var in getattr(self, "_custom_app_vars", {}).items():
+            if var.get() and c_exe not in new_watched:
+                new_watched.append(c_exe)
+        if not new_watched and hasattr(self, "_rem_watched_apps_var"):
+            raw_watched = self._rem_watched_apps_var.get()
+            new_watched = [a.strip() for a in raw_watched.split(",") if a.strip()]
+
+        # Parse reminder interval
+        try:
+            rem_hrs = max(0, int(self._rem_hours_var.get().strip()))
+        except Exception:
+            rem_hrs = 1
+        try:
+            rem_mins = max(0, int(self._rem_mins_var.get().strip()))
+        except Exception:
+            rem_mins = 0
+        if rem_hrs == 0 and rem_mins == 0:
+            rem_mins = 30
+
         db.update_preferences(
             self.user["id"],
             auto_commit=int(self._auto_commit_var.get()),
             skip_sensitive=int(self._skip_sensitive_var.get()),
             notifications=int(self._notif_var.get()),
             session_end_grace=int(self._grace_var.get() or 120),
+            reminder_interval_enabled=int(self._rem_interval_var.get()),
+            reminder_interval_hours=rem_hrs,
+            reminder_interval_minutes=rem_mins,
+            reminder_app_monitor_enabled=int(self._rem_app_monitor_var.get()),
+            reminder_only_if_dirty=int(self._rem_only_dirty_var.get()),
+            watched_apps=json.dumps(new_watched),
             ai_provider=prov,
             openai_api_key=self._openai_key_var.get().strip(),
             claude_api_key=self._claude_key_var.get().strip(),
@@ -1096,8 +1772,17 @@ class UserDashboard:
             ask_before_push=int(self._ask_push_var.get()),
             projects_dirs=json.dumps(dirs),
         )
+
         # Sync to config.json
         cfg = load_config()
+        cfg["watched_apps"] = new_watched
+        cfg["reminder"] = {
+            "interval_enabled": bool(self._rem_interval_var.get()),
+            "interval_hours": rem_hrs,
+            "interval_minutes": rem_mins,
+            "app_monitor_enabled": bool(self._rem_app_monitor_var.get()),
+            "only_if_dirty": bool(self._rem_only_dirty_var.get()),
+        }
         cfg["ai"]["provider"] = prov
         cfg["ai"]["openai_api_key"] = self._openai_key_var.get().strip()
         cfg["ai"]["claude_api_key"] = self._claude_key_var.get().strip()
@@ -1111,7 +1796,19 @@ class UserDashboard:
         elif prov == "gemini" and m_val:
             cfg["ai"]["gemini_model"] = m_val
         save_config(cfg)
-        messagebox.showinfo("Saved", "Settings saved successfully!", parent=self.root)
+
+        # Dynamically update running reminder service
+        if hasattr(self, "_reminder_service") and self._reminder_service:
+            self._reminder_service.update_preferences(
+                interval_enabled=bool(self._rem_interval_var.get()),
+                interval_hours=rem_hrs,
+                interval_minutes=rem_mins,
+                app_monitor_enabled=bool(self._rem_app_monitor_var.get()),
+                only_if_dirty=bool(self._rem_only_dirty_var.get()),
+                watched_apps=new_watched,
+            )
+
+        messagebox.showinfo("Saved", "Settings saved successfully! Reminder service updated.", parent=self.root)
 
     def _page_profile(self):
         self._set_header("My Profile")
@@ -1161,6 +1858,46 @@ class UserDashboard:
                          relief="flat", highlightthickness=1,
                          highlightbackground=COLORS["border"])
             e.pack(side="left", fill="x", expand=True, ipady=6)
+
+        # ── Verification Status & Google Account OTP
+        ver_row = tk.Frame(card, bg=COLORS["bg_card"])
+        ver_row.pack(fill="x", pady=(0, 10))
+        tk.Label(ver_row, text="Verification:", font=FONTS["label_bold"],
+                 fg=COLORS["text_secondary"], bg=COLORS["bg_card"],
+                 width=12, anchor="w").pack(side="left")
+
+        is_ver = db.is_user_verified(self.user["id"])
+        if is_ver:
+            tk.Label(ver_row, text="✔ Verified Google Account", font=FONTS["label_bold"],
+                     fg=COLORS["success"], bg=COLORS["bg_card"]).pack(side="left")
+        else:
+            tk.Label(ver_row, text="⚠️ Unverified", font=FONTS["label"],
+                     fg=COLORS["warning"], bg=COLORS["bg_card"]).pack(side="left")
+
+            def _trigger_google_otp():
+                u_email = self._profile_vars["email"].get().strip() or self.user.get("email", "")
+                if not u_email:
+                    messagebox.showwarning("No Email", "Please enter an email address first.", parent=self.root)
+                    return
+                from commitmaster import otp_service
+                ok, msg, code = otp_service.send_google_otp(u_email, purpose="verify_account")
+                if not ok:
+                    messagebox.showerror("Error", msg, parent=self.root)
+                    return
+
+                def _on_v():
+                    db.mark_user_verified(self.user["id"])
+                    self.user["is_verified"] = 1
+                    messagebox.showinfo("Verified", "Your Google account has been verified successfully!", parent=self.root)
+                    self._nav_to("profile")
+
+                otp_service.GoogleOtpDialog(self.root, u_email, on_success=_on_v, purpose="verify_account", initial_code=code)
+
+            otp_v_btn = tk.Button(ver_row, text="🔐 Verify with Google OTP", font=FONTS["caption"],
+                                  fg="white", bg=COLORS["accent"], relief="flat", bd=0, cursor="hand2",
+                                  padx=10, pady=2, command=_trigger_google_otp)
+            otp_v_btn.pack(side="left", padx=12)
+            self._add_hover(otp_v_btn, COLORS["accent_hover"], COLORS["accent"])
 
         # Bio
         bio_f = tk.Frame(card, bg=COLORS["bg_card"])
@@ -2421,9 +3158,47 @@ class UserDashboard:
         return name[:2].upper()
 
     def _do_logout(self):
+        if hasattr(self, "_reminder_service") and self._reminder_service:
+            try:
+                self._reminder_service.stop()
+            except Exception:
+                pass
         db.revoke_session_token(self.user["id"])
         self.root.destroy()
         self.on_logout()
+
+    def _open_account_switcher(self):
+        """Open interactive Account Switcher dialog to switch or add accounts."""
+        from commitmaster.account_manager import AccountSwitcherDialog
+
+        def _on_switch_done(new_user):
+            if hasattr(self, "_reminder_service") and self._reminder_service:
+                try:
+                    self._reminder_service.stop()
+                except Exception:
+                    pass
+            self.root.destroy()
+            if self.on_switch_account:
+                self.on_switch_account(new_user)
+            else:
+                from app import launch_app
+                launch_app()
+
+        def _on_add():
+            if hasattr(self, "_reminder_service") and self._reminder_service:
+                try:
+                    self._reminder_service.stop()
+                except Exception:
+                    pass
+            self.root.destroy()
+            self.on_logout()
+
+        AccountSwitcherDialog(
+            self.root, self.user,
+            on_switch=_on_switch_done,
+            on_add_account=_on_add,
+            on_logout=self._do_logout
+        )
 
     def run(self):
         self.root.mainloop()
