@@ -493,9 +493,22 @@ class UserDashboard:
 
         target = self._sb_frame
 
-        # Avatar + name
-        av_f = tk.Frame(target, bg=COLORS["bg_sidebar"], pady=16)
-        av_f.pack(fill="x", padx=16)
+        # Avatar & Profile Card (Pattern Covered)
+        pat = get_active_customization().get("pattern", "dot_matrix")
+        av_card = tk.Frame(target, bg=COLORS["bg_sidebar"], highlightthickness=1, highlightbackground=COLORS["border"])
+        av_card.pack(fill="x", padx=10, pady=(10, 6))
+        av_bg_lbl = tk.Label(av_card, bg=COLORS["bg_sidebar"], bd=0)
+        av_bg_lbl.place(x=0, y=0, relwidth=1, relheight=1)
+        try:
+            av_p_img = pattern_utils.generate_panel_banner(SIZES["sidebar_width"], 84, COLORS["bg_sidebar"], COLORS["accent"], pat)
+            av_bg_lbl.config(image=av_p_img)
+            av_bg_lbl._photo = av_p_img
+        except Exception:
+            pass
+
+        av_f = tk.Frame(av_card, bg=COLORS["bg_sidebar"], padx=10, pady=10)
+        av_f.pack(fill="both")
+
         self._sidebar_av_lbl = tk.Label(av_f, bg=COLORS["bg_sidebar"])
         self._sidebar_av_lbl.pack(anchor="w")
         self._sidebar_name_lbl = tk.Label(av_f, text=self.user.get("full_name") or self.user["username"],
@@ -604,6 +617,44 @@ class UserDashboard:
     def _add_hover(self, widget, hover_bg, normal_bg):
         widget.bind("<Enter>", lambda e: widget.config(bg=hover_bg))
         widget.bind("<Leave>", lambda e: widget.config(bg=normal_bg))
+
+    def _create_page_header_panel(self, parent, title: str, subtitle: str, icon: str = "", actions_fn: Optional[Callable] = None) -> tk.Frame:
+        """Build a rich textured pattern panel banner for page headers (Requirement 1)."""
+        hdr_panel = tk.Frame(parent, bg=COLORS["bg_card"], highlightthickness=1, highlightbackground=COLORS["border"])
+        hdr_panel.pack(fill="x", pady=(0, 16))
+
+        bg_lbl = tk.Label(hdr_panel, bg=COLORS["bg_card"], bd=0)
+        bg_lbl.place(x=0, y=0, relwidth=1, relheight=1)
+
+        def _update_bg(e=None):
+            w = hdr_panel.winfo_width()
+            if w > 20:
+                pat = get_active_customization().get("pattern", "dot_matrix")
+                banner = pattern_utils.generate_panel_banner(w, 80, COLORS["bg_card"], COLORS["accent"], pat)
+                bg_lbl.config(image=banner)
+                bg_lbl._photo = banner
+
+        hdr_panel.bind("<Configure>", _update_bg)
+        tk.Frame(hdr_panel, height=2, bg=COLORS["accent"]).pack(fill="x")
+
+        inner = tk.Frame(hdr_panel, bg=COLORS["bg_card"], padx=20, pady=14)
+        inner.pack(fill="both")
+
+        top_row = tk.Frame(inner, bg=COLORS["bg_card"])
+        top_row.pack(fill="x")
+
+        t_lbl = tk.Label(top_row, text=f"{icon} {title}".strip(), font=FONTS["heading_lg"],
+                         fg=COLORS["text_primary"], bg=COLORS["bg_card"])
+        t_lbl.pack(side="left")
+
+        if actions_fn:
+            actions_fn(top_row)
+
+        if subtitle:
+            tk.Label(inner, text=subtitle, font=FONTS["body_sm"],
+                     fg=COLORS["text_secondary"], bg=COLORS["bg_card"]).pack(anchor="w", pady=(2, 0))
+
+        return hdr_panel
 
     # ── Header ─────────────────────────────────────────────────────────────────
 
@@ -3188,11 +3239,11 @@ class UserDashboard:
         pad = tk.Frame(p, bg=COLORS["bg_dark"], padx=24, pady=20)
         pad.pack(fill="both", expand=True)
 
-        tk.Label(pad, text="Customize Interface", font=FONTS["heading_lg"],
-                 fg=COLORS["text_primary"], bg=COLORS["bg_dark"]).pack(anchor="w")
-        tk.Label(pad, text="Personalize themes, accent colors, typography, and density. Changes can be applied live.",
-                 font=FONTS["body_sm"], fg=COLORS["text_secondary"],
-                 bg=COLORS["bg_dark"]).pack(anchor="w", pady=(2, 16))
+        self._create_page_header_panel(
+            pad, "Customize Interface",
+            "Personalize themes, accent colors, typography, and density for your workspace.",
+            icon="🎨"
+        )
 
         prefs = db.get_preferences(self.user["id"]) or {}
         curr = get_active_customization()
