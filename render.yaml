@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: commitmaster-server
+    env: python
+    buildCommand: pip install -r requirements-server.txt
+    startCommand: gunicorn server:app
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      - key: ADMIN_USERNAME
+        value: saumya.patel
+      - key: ADMIN_PASSWORD
+        generateValue: true
+      - key: ADMIN_EMAIL
+        value: saumya.a.patel@gmail.com
+      - key: ADMIN_MIGRATION_SECRET
+        value: commitmaster-secret-seed-2026
