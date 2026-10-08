@@ -26,6 +26,13 @@ DEFAULTS: Dict[str, Any] = {
         "Code.exe",         # VS Code
         "Cursor.exe",       # Cursor
         "Antigravity.exe",  # Antigravity IDE
+        "pycharm64.exe",    # PyCharm
+        "idea64.exe",       # IntelliJ IDEA
+        "sublime_text.exe", # Sublime Text
+        "devenv.exe",       # Visual Studio
+        "webstorm64.exe",   # WebStorm
+        "clion64.exe",      # CLion
+        "zed.exe",          # Zed
         "Bionic.exe",       # Bionic
         "LM Studio.exe",    # LM Studio
     ],
@@ -34,11 +41,20 @@ DEFAULTS: Dict[str, Any] = {
     "poll_interval_seconds": 2,        # how often we check which apps are open
     "repo_scan_interval_seconds": 60,  # how often we scan repos while coding
     "session_end_grace_seconds": 120,  # apps must be closed this long before prompt fires
+    # Commit reminder notification configuration
+    "reminder": {
+        "interval_enabled": True,
+        "interval_hours": 1,
+        "interval_minutes": 0,
+        "app_monitor_enabled": True,
+        "only_if_dirty": True,
+    },
     # Commit behaviour
     "auto_commit": False,              # True = skip preview, commit automatically
     "skip_sensitive_files": True,      # never auto-stage .env / keys / pem
     "sensitive_patterns": [".env", ".pem", ".key", "secret", "credential", ".p12", "id_rsa"],
     "github_desktop_path": "",         # auto-detected if empty
+    "server_url": "",                  # Central Cloud Server URL (e.g. https://your-server.onrender.com or empty for local)
     # AI Provider configuration: Bionic/LM Studio, OpenAI, Claude, Gemini, Ollama
     "ai": {
         "provider": "bionic",         # "bionic" | "openai" | "claude" | "gemini" | "ollama"
