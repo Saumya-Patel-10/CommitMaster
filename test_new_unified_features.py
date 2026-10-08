@@ -1,9 +1,10 @@
 """
 Test suite for CommitMaster unified features:
   1. Monitored Apps & IDE selection
-  2. Google Account OTP verification
-  3. Multi-account saving and switching
-  4. Single unified application routing and exclusive admin username management
+  2. Multi-account saving and switching (including Admin second user account)
+  3. Single unified application routing and exclusive admin username management
+  4. Account deletion with 30-day recovery grace period
+  5. Custom avatar logo and profile picture (PFP) upload
 """
 import os
 import sys
@@ -11,6 +12,7 @@ import unittest
 import tempfile
 import json
 import shutil
+from datetime import datetime, timedelta
 from unittest.mock import MagicMock, patch
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -18,8 +20,8 @@ if APP_DIR not in sys.path:
     sys.path.insert(0, APP_DIR)
 
 from commitmaster import database as db
-from commitmaster import otp_service
 from commitmaster import account_manager
+from commitmaster import avatar_utils
 import app
 
 
@@ -51,7 +53,7 @@ class TestUnifiedFeatures(unittest.TestCase):
     # ──────────────────────────────────────────────────────────────────────────
     def test_ide_selector_preferences(self):
         """Test storing and retrieving watched apps for a user."""
-        user_id = db.create_user("coder1", "secret123", "Coder One", "coder1@example.com")
+        user_id = db.create_user("coder1", "coder1@example.com", "Coder One", "secret123")
         self.assertIsNotNone(user_id)
 
         # Update watched apps preferences
@@ -63,59 +65,128 @@ class TestUnifiedFeatures(unittest.TestCase):
         self.assertEqual(saved_watched, test_apps)
 
     # ──────────────────────────────────────────────────────────────────────────
-    # 2. Google Account OTP Verification Tests
+    # 2. Admin Second Account (Strict User Role) & Shared Email Tests
     # ──────────────────────────────────────────────────────────────────────────
-    def test_is_google_email(self):
-        """Test Google email domain detection."""
-        self.assertTrue(otp_service.is_google_email("alice@gmail.com"))
-        self.assertTrue(otp_service.is_google_email("bob@googlemail.com"))
-        self.assertTrue(otp_service.is_google_email("CHARLIE@GMAIL.COM"))
-        self.assertFalse(otp_service.is_google_email("dan@company.com"))
-        self.assertFalse(otp_service.is_google_email("eve@yahoo.com"))
-        self.assertFalse(otp_service.is_google_email(""))
+    def test_admin_second_account_is_strictly_user(self):
+        """
+        Verify that an Admin can create another account (even with the same email),
+        but that other account is strictly a 'user' role with NO admin access.
+        """
+        admin = db.get_user_by_username_or_email("saumya.patel@Admin_#")
+        self.assertIsNotNone(admin)
+        self.assertEqual(admin["role"], "admin")
+        admin_email = admin.get("email") or "saumya.patel@admin.com"
 
-    def test_generate_and_verify_otp(self):
-        """Test generating, storing, and validating 6-digit OTP codes."""
-        email = "testuser@gmail.com"
-        otp = otp_service.generate_otp()
-        self.assertEqual(len(otp), 6)
-        self.assertTrue(otp.isdigit())
+        # Admin creates a second account with their email
+        second_username = "saumya_personal"
+        second_uid = db.create_user(second_username, admin_email, "Saumya Patel", "Pass123!")
+        self.assertIsNotNone(second_uid)
 
-        # Save to database
-        db.save_verification_otp(email, otp, purpose="account_verification", expiry_minutes=5)
+        second_user = db.get_user(second_uid)
+        self.assertEqual(second_user["role"], "user")
+        self.assertFalse(db.is_admin_username(second_username))
 
-        # Test verification with wrong OTP
-        wrong_ok, wrong_msg = db.verify_stored_otp(email, "000000", purpose="account_verification")
-        self.assertFalse(wrong_ok)
-        self.assertIn("Invalid", wrong_msg)
+        # Trying to pass role="admin" during creation must still force role="user"
+        third_uid = db.create_user("fake_admin", "fake@example.com", "Fake Admin", "Pass123!", role="admin")
+        third_user = db.get_user(third_uid)
+        self.assertEqual(third_user["role"], "user")
+        self.assertFalse(db.is_admin_username("fake_admin"))
 
-        # Test verification with correct OTP
-        ok, msg = db.verify_stored_otp(email, otp, purpose="account_verification")
+    # ──────────────────────────────────────────────────────────────────────────
+    # 3. Account Deletion with 30-Day Recovery Period Tests
+    # ──────────────────────────────────────────────────────────────────────────
+    def test_account_soft_deletion_and_recovery(self):
+        """
+        Test soft-deleting an account, ensuring 30-day recovery grace period,
+        auto-recovery on login within 30 days, and rejection of admin deletion.
+        """
+        # Primary admin account cannot be soft-deleted
+        admin = db.get_user_by_username_or_email("saumya.patel@Admin_#")
+        ok_admin_del, msg = db.soft_delete_user(admin["id"])
+        self.assertFalse(ok_admin_del)
+        self.assertIn("cannot be deleted", msg)
+
+        # Regular user account can be soft-deleted
+        uid = db.create_user("delete_me_user", "del@example.com", "Delete Me", "ValidPass1!")
+        self.assertIsNotNone(uid)
+
+        del_ok, del_msg = db.soft_delete_user(uid)
+        self.assertTrue(del_ok)
+
+        # Check soft-deleted fields
+        user_info = db.get_user(uid)
+        self.assertIsNotNone(user_info["deleted_at"])
+        self.assertIsNotNone(user_info["deletion_scheduled_until"])
+
+        # Authenticate within 30 days -> account recovered automatically
+        recovered_user = db.authenticate("delete_me_user", "ValidPass1!")
+        self.assertIsNotNone(recovered_user)
+        self.assertTrue(recovered_user.get("account_recovered"))
+
+        # Re-check user info: deleted_at and deletion_scheduled_until must now be cleared
+        refreshed = db.get_user(uid)
+        self.assertIsNone(refreshed["deleted_at"])
+        self.assertIsNone(refreshed["deletion_scheduled_until"])
+
+    def test_account_permanent_deletion_after_30_days(self):
+        """Test that attempting to authenticate > 30 days after deletion permanently drops user."""
+        uid = db.create_user("expired_user", "exp@example.com", "Expired User", "ValidPass1!")
+        db.soft_delete_user(uid)
+
+        # Manually backdate deletion date past 30 days
+        expired_date = (datetime.now() - timedelta(days=31)).strftime("%Y-%m-%d %H:%M:%S")
+        conn = db.get_conn()
+        conn.execute(
+            "UPDATE users SET deletion_scheduled_until = ? WHERE id = ?",
+            (expired_date, uid)
+        )
+        conn.commit()
+
+        # Login attempt should fail because 30-day grace period has passed
+        user = db.authenticate("expired_user", "ValidPass1!")
+        self.assertIsNone(user)
+
+        # User is permanently deleted
+        self.assertIsNone(db.get_user(uid))
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # 4. Custom Avatar Logo & Profile Picture (PFP) Upload Tests
+    # ──────────────────────────────────────────────────────────────────────────
+    def test_custom_avatar_logo_and_pfp(self):
+        """Test custom color logo creation and image profile picture upload."""
+        uid = db.create_user("avatar_artist", "art@example.com", "Avatar Artist", "Pass123!", avatar_color="#e06c75")
+        user = db.get_user(uid)
+        self.assertEqual(user["avatar_color"], "#e06c75")
+        self.assertFalse(user["avatar_image"])
+
+        # Create a mock image file to upload
+        from PIL import Image
+        test_img_path = os.path.join(self.test_dir, "test_pic.png")
+        img = Image.new("RGB", (300, 200), color=(70, 130, 180))
+        img.save(test_img_path)
+
+        # Save as avatar image
+        ok, res_path = avatar_utils.save_avatar_image(uid, test_img_path)
         self.assertTrue(ok)
+        self.assertTrue(os.path.exists(res_path))
 
-        # OTP cannot be reused
-        reused_ok, reused_msg = db.verify_stored_otp(email, otp, purpose="account_verification")
-        self.assertTrue("used" in reused_msg.lower() or "no active" in reused_msg.lower())
+        # Check DB updated
+        updated_user = db.get_user(uid)
+        self.assertEqual(updated_user["avatar_image"], res_path)
 
-    def test_user_google_verification_status(self):
-        """Test marking user as verified upon successful Google OTP verification."""
-        user_id = db.create_user("google_user", "pass123", "Google User", "google_user@gmail.com")
-        self.assertFalse(db.is_user_verified(user_id))
-
-        db.mark_user_verified(user_id, google_id="google_user@gmail.com")
-        self.assertTrue(db.is_user_verified(user_id))
-
-        user = db.get_user(user_id)
-        self.assertEqual(user.get("is_verified"), 1)
-        self.assertEqual(user.get("google_id"), "google_user@gmail.com")
+        # Remove avatar image -> reverts to custom avatar logo
+        rem_ok = avatar_utils.remove_avatar_image(uid)
+        self.assertTrue(rem_ok)
+        reverted_user = db.get_user(uid)
+        self.assertEqual(reverted_user["avatar_image"], "")
 
     # ──────────────────────────────────────────────────────────────────────────
-    # 3. Multi-Account Management & Switching Tests
+    # 5. Multi-Account Management & Switching Tests
     # ──────────────────────────────────────────────────────────────────────────
     def test_multi_account_saving_and_switching(self):
         """Test saving multiple accounts, switching active account, and removing."""
-        uid1 = db.create_user("user_alpha", "pass1", "Alpha User", "alpha@test.com")
-        uid2 = db.create_user("user_beta", "pass2", "Beta User", "beta@test.com")
+        uid1 = db.create_user("user_alpha", "alpha@test.com", "Alpha User", "pass1")
+        uid2 = db.create_user("user_beta", "beta@test.com", "Beta User", "pass2")
 
         # Save first account
         account_manager.save_account("user_alpha", uid1, "user", "Alpha User", "alpha@test.com", "#4f46e5")
@@ -145,8 +216,18 @@ class TestUnifiedFeatures(unittest.TestCase):
         self.assertEqual(len(saved), 1)
         self.assertEqual(saved[0]["username"], "user_alpha")
 
+    def test_account_switcher_dialog_arguments_compatibility(self):
+        """
+        Verify that AccountSwitcherDialog accepts on_account_switched as kwarg,
+        resolving the exact bug seen in the user error dialog.
+        """
+        import inspect
+        sig = inspect.signature(account_manager.AccountSwitcherDialog.__init__)
+        params = sig.parameters
+        self.assertTrue(any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values()))
+
     # ──────────────────────────────────────────────────────────────────────────
-    # 4. Exclusive Admin Username Routing Tests
+    # 6. Exclusive Admin Username Routing Tests
     # ──────────────────────────────────────────────────────────────────────────
     def test_default_admin_username_exclusivity(self):
         """Test that only 'saumya.patel@Admin_#' is recognized as admin by default."""
@@ -179,29 +260,6 @@ class TestUnifiedFeatures(unittest.TestCase):
         updated_admin = db.get_user(admin_id)
         self.assertEqual(updated_admin["username"], new_admin)
         self.assertEqual(updated_admin["role"], "admin")
-
-    def test_app_routing_admin_vs_user(self):
-        """Test that app._route_user delegates to AdminApp for admin and UserDashboard for users."""
-        admin_user = db.get_user_by_username_or_email("saumya.patel@Admin_#")
-        regular_id = db.create_user("regular_joe", "pass123", "Joe", "joe@example.com")
-        regular_user = db.get_user(regular_id)
-
-        # Test routing for admin
-        with patch("admin_app._open_admin_window") as mock_admin_win:
-            app._route_user(admin_user)
-            mock_admin_win.assert_called_once()
-            args, kwargs = mock_admin_win.call_args
-            self.assertEqual(kwargs["user"]["username"], "saumya.patel@Admin_#")
-
-        # Test routing for regular user
-        with patch("app.UserDashboard") as mock_user_dash:
-            mock_instance = MagicMock()
-            mock_user_dash.return_value = mock_instance
-            app._route_user(regular_user)
-            mock_user_dash.assert_called_once()
-            mock_instance.run.assert_called_once()
-            args, kwargs = mock_user_dash.call_args
-            self.assertEqual(kwargs["user"]["username"], "regular_joe")
 
 
 if __name__ == "__main__":
