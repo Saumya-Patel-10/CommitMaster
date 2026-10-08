@@ -47,8 +47,9 @@ class LoginWindow:
     def _setup_window(self):
         title = "CommitMaster Admin — Sign In" if self.app_type == "admin" else "CommitMaster — Sign In"
         self.root.title(title)
-        self.root.geometry("460x540")
-        self.root.minsize(440, 500)
+        self.root.geometry("450x600")
+        self.root.minsize(420, 520)
+        self.root.maxsize(500, 850)
         self.root.resizable(True, True)
         self.root.configure(bg=COLORS["bg_darkest"])
 
@@ -56,9 +57,9 @@ class LoginWindow:
         self.root.update_idletasks()
         sw = self.root.winfo_screenwidth()
         sh = self.root.winfo_screenheight()
-        x = max(0, (sw - 460) // 2)
-        y = max(0, (sh - 540) // 2)
-        self.root.geometry(f"460x540+{x}+{y}")
+        x = max(0, (sw - 450) // 2)
+        y = max(0, (sh - 600) // 2)
+        self.root.geometry(f"450x600+{x}+{y}")
         self.root.protocol("WM_DELETE_WINDOW", self.root.destroy)
         from commitmaster import windows_integration
         windows_integration.apply_windows_theme(self.root, title, app_type=self.app_type)
@@ -79,8 +80,12 @@ class LoginWindow:
         # Mousewheel scroll support
         self.root.bind("<MouseWheel>", self._on_mousewheel)
 
-        outer = tk.Frame(self._content, bg=COLORS["bg_darkest"])
-        outer.pack(fill="both", expand=True, padx=36, pady=16)
+        # Center container so form stays compact and never stretched out on wide displays
+        center_wrapper = tk.Frame(self._content, bg=COLORS["bg_darkest"])
+        center_wrapper.pack(fill="both", expand=True)
+
+        outer = tk.Frame(center_wrapper, bg=COLORS["bg_darkest"])
+        outer.pack(anchor="n", padx=20, pady=16)
 
         # ── Tech Suite Badge ──────────────────────────────────────────────────
         badge_frame = tk.Frame(outer, bg=COLORS["bg_card"], padx=10, pady=3,
@@ -240,9 +245,9 @@ class LoginWindow:
 
     def _on_canvas_configure(self, event):
         self._canvas.itemconfig(self._canvas_window, width=event.width)
-        self._render_card_banner(width=max(360, event.width - 72))
+        self._render_card_banner(width=390)
 
-    def _render_card_banner(self, width: int = 388):
+    def _render_card_banner(self, width: int = 390):
         try:
             from commitmaster import pattern_utils
             banner_img = pattern_utils.generate_hero_card_banner(
@@ -427,11 +432,7 @@ class LoginWindow:
         self._canvas.configure(scrollregion=self._canvas.bbox("all"))
 
     def _resize_window(self, target_h: int):
-        cur_w = self.root.winfo_width()
-        cur_h = self.root.winfo_height()
-        w = max(460, cur_w if cur_w > 100 else 460)
-
-        # Check screen height
+        w = 450
         sh = self.root.winfo_screenheight()
         h = min(target_h, sh - 80)
 
@@ -568,7 +569,13 @@ class LoginWindow:
                         self._pass_entry.focus()
                     return
 
-                user = db.authenticate(username_or_email, password)
+                try:
+                    user = db.authenticate(username_or_email, password)
+                except ValueError as exc:
+                    self._err_label.config(text=str(exc))
+                    self._pass_entry.delete(0, "end")
+                    return
+
                 if user:
                     token = db.create_session_token(user["id"])
                     account_manager.save_account(user, token)
