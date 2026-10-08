@@ -14,7 +14,7 @@ import sys
 import json
 import threading
 import tkinter as tk
-from tkinter import filedialog, messagebox, ttk
+from tkinter import colorchooser, filedialog, messagebox, ttk
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -22,6 +22,8 @@ if APP_DIR not in sys.path:
     sys.path.insert(0, APP_DIR)
 
 from commitmaster import database as db
+from commitmaster import avatar_utils
+from commitmaster import pattern_utils
 from commitmaster import commit_engine, ai_messages, ui, github_service, file_inspector
 from commitmaster import commit_composer, charts, navigation, issue_view
 from commitmaster.config import load_config, save_config
@@ -122,6 +124,7 @@ class AdminApp:
             font_family=prefs.get("font_family"),
             font_scale=prefs.get("font_scale"),
             ui_density=prefs.get("ui_density"),
+            pattern=prefs.get("bg_pattern"),
         )
 
         self.root = tk.Tk()
@@ -238,10 +241,22 @@ class AdminApp:
     def _build_sidebar(self):
         sb = self._sidebar
 
-        # 1. Pinned Top Header (Logo)
-        logo_f = tk.Frame(sb, bg=COLORS["bg_sidebar"], height=64)
+        # 1. Pinned Top Header (Logo with Pattern Texture)
+        logo_f = tk.Frame(sb, bg=COLORS["bg_sidebar"], height=72)
         logo_f.pack(side="top", fill="x")
         logo_f.pack_propagate(False)
+
+        pat = get_active_customization().get("pattern", "dot_matrix")
+        try:
+            sb_banner = pattern_utils.generate_sidebar_header_banner(
+                SIZES["sidebar_width"], 72, COLORS["bg_sidebar"], COLORS["accent"], pat
+            )
+            self._sb_banner_img = sb_banner
+            sb_bg_lbl = tk.Label(logo_f, image=sb_banner, bg=COLORS["bg_sidebar"], bd=0)
+            sb_bg_lbl.place(x=0, y=0, relwidth=1, relheight=1)
+        except Exception:
+            pass
+
         from commitmaster import windows_integration
         logo_img = windows_integration.get_logo_photo(26, app_type="admin")
         if logo_img:
@@ -258,7 +273,7 @@ class AdminApp:
                  fg=COLORS["bg_darkest"], bg=COLORS["admin"]).pack(
             side="right", padx=10, pady=20)
 
-        tk.Frame(sb, height=1, bg=COLORS["border"]).pack(side="top", fill="x")
+        tk.Frame(sb, height=2, bg=COLORS["accent"]).pack(side="top", fill="x")
 
         # 2. Pinned Bottom Footer (Switch Account & Sign Out)
         footer_f = tk.Frame(sb, bg=COLORS["bg_sidebar"])
@@ -314,13 +329,13 @@ class AdminApp:
         # Avatar
         av_f = tk.Frame(target, bg=COLORS["bg_sidebar"], pady=12)
         av_f.pack(fill="x", padx=14)
-        color = self.user.get("avatar_color", AVATAR_COLORS[0])
-        av = tk.Label(av_f, text=self._initials(), font=FONTS["heading_sm"],
-                      bg=color, fg="white", width=4, height=2)
-        av.pack(anchor="w")
-        tk.Label(av_f, text=self.user.get("full_name") or self.user["username"],
+        self._sidebar_av_lbl = tk.Label(av_f, bg=COLORS["bg_sidebar"])
+        self._sidebar_av_lbl.pack(anchor="w")
+        self._sidebar_name_lbl = tk.Label(av_f, text=self.user.get("full_name") or self.user["username"],
                  font=FONTS["label_bold"], fg=COLORS["text_primary"],
-                 bg=COLORS["bg_sidebar"], wraplength=180).pack(anchor="w", pady=(4, 0))
+                 bg=COLORS["bg_sidebar"], wraplength=180)
+        self._sidebar_name_lbl.pack(anchor="w", pady=(4, 0))
+        self._refresh_sidebar_avatar()
         tk.Label(av_f, text="● Administrator", font=FONTS["caption"],
                  fg=COLORS["admin"], bg=COLORS["bg_sidebar"]).pack(anchor="w")
 
@@ -398,9 +413,26 @@ class AdminApp:
     # ── Header ────────────────────────────────────────────────────────────────
 
     def _build_header(self):
-        self._header_bar = tk.Frame(self._main, bg=COLORS["bg_dark"], height=56)
+        self._header_bar = tk.Frame(self._main, bg=COLORS["bg_dark"], height=58)
         self._header_bar.pack(fill="x")
         self._header_bar.pack_propagate(False)
+
+        # Background pattern banner label
+        self._hdr_bg_lbl = tk.Label(self._header_bar, bg=COLORS["bg_dark"], bd=0)
+        self._hdr_bg_lbl.place(x=0, y=0, relwidth=1, relheight=1)
+
+        def _update_hdr_bg(e=None):
+            w = self._header_bar.winfo_width()
+            if w > 10:
+                pat = get_active_customization().get("pattern", "dot_matrix")
+                banner = pattern_utils.generate_header_banner(
+                    w, 58, COLORS["bg_dark"], COLORS["accent"], pat
+                )
+                self._hdr_bg_lbl.config(image=banner)
+                self._hdr_bg_lbl._photo = banner
+
+        self._header_bar.bind("<Configure>", _update_hdr_bg)
+
         # Dual accent: green left, orange right
         accent_bar = tk.Frame(self._main, height=2, bg=COLORS["bg_medium"])
         accent_bar.pack(fill="x")
@@ -413,14 +445,14 @@ class AdminApp:
             self._header_bar, text="Overview",
             font=FONTS["heading_md"], fg=COLORS["text_primary"],
             bg=COLORS["bg_dark"])
-        self._header_title.pack(side="left", padx=24, pady=12)
+        self._header_title.pack(side="left", padx=(12, 16), pady=12)
 
         # Right side: section badge & switch account
         self._section_badge = tk.Label(
             self._header_bar, text="  MY WORKSPACE  ",
             font=("Segoe UI", 9, "bold"),
             fg=COLORS["bg_darkest"], bg=COLORS["accent"])
-        self._section_badge.pack(side="right", padx=(4, 16), pady=18)
+        self._section_badge.pack(side="right", padx=(4, 16), pady=14)
 
         switch_hdr_btn = tk.Button(
             self._header_bar, text="👥 Switch Account", font=FONTS["caption"],
@@ -429,7 +461,7 @@ class AdminApp:
             relief="flat", bd=0, cursor="hand2", padx=10, pady=4,
             command=self._open_account_switcher
         )
-        switch_hdr_btn.pack(side="right", padx=6)
+        switch_hdr_btn.pack(side="right", padx=6, pady=12)
         self._add_hover(switch_hdr_btn, COLORS["bg_card_hover"], COLORS["bg_card"])
 
     # ── Navigation ────────────────────────────────────────────────────────────
@@ -524,15 +556,33 @@ class AdminApp:
                    color: str, icon: str, subtitle: str = ""):
         card = self._card(parent)
         card.pack(side="left", fill="both", expand=True, padx=6, pady=6)
-        inner = tk.Frame(card, bg=COLORS["bg_card"], padx=18, pady=16)
+
+        # Top 3px accent color stripe
+        tk.Frame(card, height=3, bg=color).pack(fill="x")
+
+        inner = tk.Frame(card, bg=COLORS["bg_card"], padx=16, pady=14)
         inner.pack(fill="both", expand=True)
-        tk.Frame(card, height=3, bg=color).place(relx=0, rely=0, relwidth=1)
-        tk.Label(inner, text=icon, font=("Segoe UI Emoji", 20),
-                 fg=color, bg=COLORS["bg_card"]).pack(anchor="w")
+
+        top_row = tk.Frame(inner, bg=COLORS["bg_card"])
+        top_row.pack(fill="x", pady=(0, 6))
+
+        # Icon medallion / badge
+        icon_box = tk.Frame(top_row, bg=COLORS["bg_medium"], highlightthickness=1,
+                            highlightbackground=color, padx=6, pady=3)
+        icon_box.pack(side="left")
+        tk.Label(icon_box, text=icon, font=("Segoe UI Emoji", 12),
+                 fg=color, bg=COLORS["bg_medium"]).pack()
+
+        # Mini live pill
+        pill = tk.Frame(top_row, bg=COLORS["bg_card"])
+        pill.pack(side="right")
+        tk.Label(pill, text="● LIVE", font=("Segoe UI", 8, "bold"),
+                 fg=color, bg=COLORS["bg_card"]).pack()
+
         tk.Label(inner, text=value, font=FONTS["heading_lg"],
-                 fg=color, bg=COLORS["bg_card"]).pack(anchor="w", pady=(4, 0))
-        tk.Label(inner, text=title, font=FONTS["label_bold"],
-                 fg=COLORS["text_primary"], bg=COLORS["bg_card"]).pack(anchor="w")
+                 fg=COLORS["text_primary"], bg=COLORS["bg_card"]).pack(anchor="w", pady=(0, 2))
+        tk.Label(inner, text=title.upper(), font=FONTS["caption"],
+                 fg=COLORS["text_secondary"], bg=COLORS["bg_card"]).pack(anchor="w")
         if subtitle:
             tk.Label(inner, text=subtitle, font=FONTS["caption"],
                      fg=COLORS["text_muted"], bg=COLORS["bg_card"]).pack(anchor="w")
@@ -583,12 +633,70 @@ class AdminApp:
     def _page_overview(self):
         p = self._pad()
         name = self.user.get("full_name") or self.user["username"]
-        tk.Label(p, text=f"Welcome back, {name}! 👋",
+
+        # ── Hero Pattern Banner Card ──────────────────────────────────────────
+        hero_card = tk.Frame(p, bg=COLORS["bg_card"], highlightthickness=1,
+                             highlightbackground=COLORS["border"])
+        hero_card.pack(fill="x", pady=(0, 20))
+
+        hero_bg_lbl = tk.Label(hero_card, bg=COLORS["bg_card"], bd=0)
+        hero_bg_lbl.place(x=0, y=0, relwidth=1, relheight=1)
+
+        def _update_hero_bg(e=None):
+            w = hero_card.winfo_width()
+            if w > 20:
+                pat = get_active_customization().get("pattern", "dot_matrix")
+                banner = pattern_utils.generate_hero_card_banner(
+                    w, 105, COLORS["bg_card"], COLORS["accent"], pat
+                )
+                hero_bg_lbl.config(image=banner)
+                hero_bg_lbl._photo = banner
+
+        hero_card.bind("<Configure>", _update_hero_bg)
+        tk.Frame(hero_card, height=2, bg=COLORS["accent"]).pack(fill="x")
+
+        hero_inner = tk.Frame(hero_card, bg=COLORS["bg_card"], padx=22, pady=16)
+        hero_inner.pack(fill="both")
+
+        top_info = tk.Frame(hero_inner, bg=COLORS["bg_card"])
+        top_info.pack(fill="x", pady=(0, 6))
+
+        tk.Label(top_info, text=f"Welcome back, {name}! 👋",
                  font=FONTS["heading_lg"], fg=COLORS["text_primary"],
-                 bg=COLORS["bg_dark"]).pack(anchor="w")
-        tk.Label(p, text="Your personal coding activity and admin overview.",
-                 font=FONTS["body_md"], fg=COLORS["text_secondary"],
-                 bg=COLORS["bg_dark"]).pack(anchor="w", pady=(2, 20))
+                 bg=COLORS["bg_card"]).pack(side="left")
+
+        hero_badge = tk.Frame(top_info, bg=COLORS["bg_medium"], highlightthickness=1,
+                              highlightbackground=COLORS["admin"], padx=8, pady=3)
+        hero_badge.pack(side="right")
+        tk.Label(hero_badge, text="🛡️ ROOT ADMIN", font=("Segoe UI", 8, "bold"),
+                 fg=COLORS["admin"], bg=COLORS["bg_medium"]).pack()
+
+        tk.Label(hero_inner, text="Executive master control, database governance, session analytics, and Git engine monitor.",
+                 font=FONTS["body_sm"], fg=COLORS["text_secondary"],
+                 bg=COLORS["bg_card"]).pack(anchor="w", pady=(0, 10))
+
+        actions_bar = tk.Frame(hero_inner, bg=COLORS["bg_card"])
+        actions_bar.pack(anchor="w")
+
+        btn1 = tk.Button(actions_bar, text="🚀 Review & Commit", font=FONTS["caption"],
+                         bg=COLORS["accent"], fg="#ffffff", activebackground=COLORS["accent_hover"],
+                         relief="flat", bd=0, cursor="hand2", padx=12, pady=5,
+                         command=lambda: self._go("git_desktop"))
+        btn1.pack(side="left", padx=(0, 8))
+
+        btn2 = tk.Button(actions_bar, text="👥 Admin Users", font=FONTS["caption"],
+                         bg=COLORS["bg_medium"], fg=COLORS["text_primary"],
+                         activebackground=COLORS["bg_card_hover"],
+                         relief="flat", bd=0, cursor="hand2", padx=12, pady=5,
+                         command=lambda: self._go("users"))
+        btn2.pack(side="left", padx=(0, 8))
+
+        btn3 = tk.Button(actions_bar, text="🎨 Surface Patterns", font=FONTS["caption"],
+                         bg=COLORS["bg_medium"], fg=COLORS["text_secondary"],
+                         activebackground=COLORS["bg_card_hover"],
+                         relief="flat", bd=0, cursor="hand2", padx=12, pady=5,
+                         command=lambda: self._go("customize"))
+        btn3.pack(side="left")
 
         # My personal stats
         self._section_hdr(p, "MY ACTIVITY", (0, 8))
@@ -1931,6 +2039,53 @@ class AdminApp:
             swatch_f.bind("<Button-1>", make_handler())
             self._theme_cards[t_key] = t_card
 
+        # ── Surface Patterns & Procedural Textures Section ────────────────────
+        self._section_hdr(p, "Surface Patterns & Procedural Textures", pady=(8, 4))
+        tk.Label(p, text="Procedural geometric patterns and tactile textures rendered across headers, cards, and desktop backgrounds (avoids plain flat colors).",
+                 font=FONTS["caption"], fg=COLORS["text_secondary"], bg=COLORS["bg_dark"]).pack(anchor="w", pady=(0, 8))
+
+        pat_grid = tk.Frame(p, bg=COLORS["bg_dark"])
+        pat_grid.pack(fill="x", pady=(0, 16))
+
+        self._custom_pattern = curr.get("pattern", "dot_matrix")
+        self._pattern_cards = {}
+        for col_idx, (p_key, p_info) in enumerate(pattern_utils.PATTERNS.items()):
+            col = col_idx % 4
+            row = col_idx // 4
+            p_card = tk.Frame(pat_grid, bg=COLORS["bg_card"],
+                              highlightthickness=2,
+                              highlightbackground=COLORS["accent"] if p_key == self._custom_pattern else COLORS["border"],
+                              padx=10, pady=8, cursor="hand2")
+            p_card.grid(row=row, column=col, padx=6, pady=6, sticky="nsew")
+            pat_grid.grid_columnconfigure(col, weight=1)
+
+            # Preview thumbnail
+            try:
+                thumb = pattern_utils.generate_pattern_preview_card(p_key, COLORS["bg_card"], COLORS["accent"], width=130, height=45)
+                thumb_lbl = tk.Label(p_card, image=thumb, bg=COLORS["bg_card"], cursor="hand2", bd=0)
+                thumb_lbl._thumb = thumb
+                thumb_lbl.pack(fill="x", pady=(0, 6))
+            except Exception:
+                thumb_lbl = tk.Label(p_card, text=p_info["icon"], font=("Segoe UI", 16), bg=COLORS["bg_card"])
+                thumb_lbl.pack(pady=(0, 4))
+
+            # Pattern title & description
+            p_title = tk.Label(p_card, text=f"{p_info['icon']}  {p_info['name']}",
+                               font=FONTS["label_bold"], fg=COLORS["text_primary"],
+                               bg=COLORS["bg_card"], cursor="hand2")
+            p_title.pack(anchor="w")
+            p_desc = tk.Label(p_card, text=p_info["desc"],
+                              font=FONTS["caption"], fg=COLORS["text_secondary"],
+                              bg=COLORS["bg_card"], wraplength=140, justify="left", cursor="hand2")
+            p_desc.pack(anchor="w", pady=(2, 0))
+
+            def make_pat_handler(pk=p_key):
+                return lambda e: self._select_pattern_card(pk)
+
+            for w in (p_card, thumb_lbl, p_title, p_desc):
+                w.bind("<Button-1>", make_pat_handler())
+            self._pattern_cards[p_key] = p_card
+
         # ── Accent Colors Section ─────────────────────────────────────────────
         self._section_hdr(p, "Primary Accent Color", pady=(8, 10))
         accent_card = self._card(p, padx=20, pady=16)
@@ -2043,6 +2198,18 @@ class AdminApp:
                               padx=14, pady=10, command=self._reset_customization)
         reset_btn.pack(side="left")
 
+    def _select_pattern_card(self, pattern_key: str):
+        self._custom_pattern = pattern_key
+        for k, card in getattr(self, "_pattern_cards", {}).items():
+            border_c = COLORS["accent"] if k == pattern_key else COLORS["border"]
+            card.config(highlightbackground=border_c)
+        apply_customization(pattern=pattern_key)
+        try:
+            db.update_preferences(self.user["id"], bg_pattern=pattern_key)
+        except Exception:
+            pass
+        self._rebuild_ui("customize")
+
     def _select_theme_card(self, theme_key: str):
         self._custom_theme = theme_key
         for k, card in self._theme_cards.items():
@@ -2070,6 +2237,7 @@ class AdminApp:
         family = self._custom_font_family.get()
         scale = self._custom_font_scale.get()
         density = self._custom_density.get()
+        pattern = getattr(self, "_custom_pattern", "dot_matrix")
         auto_push = 1 if self._custom_auto_push.get() else 0
 
         db.update_preferences(
@@ -2079,6 +2247,7 @@ class AdminApp:
             font_family=family,
             font_scale=scale,
             ui_density=density,
+            bg_pattern=pattern,
             auto_push=auto_push,
         )
 
@@ -2088,6 +2257,7 @@ class AdminApp:
             font_family=family,
             font_scale=scale,
             ui_density=density,
+            pattern=pattern,
         )
 
         messagebox.showinfo("Applied", "Interface customization applied successfully!", parent=self.root)
@@ -2101,8 +2271,9 @@ class AdminApp:
             font_family="Segoe UI",
             font_scale="standard",
             ui_density="comfortable",
+            bg_pattern="dot_matrix",
         )
-        apply_customization("github_dark", "green", "Segoe UI", "standard", "comfortable")
+        apply_customization("github_dark", "green", "Segoe UI", "standard", "comfortable", "dot_matrix")
         self._rebuild_ui("customize")
 
     def _page_settings(self):
@@ -2441,41 +2612,136 @@ class AdminApp:
         p = self._pad()
         tk.Label(p, text="My Profile", font=FONTS["heading_lg"],
                  fg=COLORS["text_primary"], bg=COLORS["bg_dark"]).pack(anchor="w")
-        tk.Label(p, text="Your public profile information.",
+        tk.Label(p, text="Your personal profile, custom avatar logo, and profile picture.",
                  font=FONTS["body_sm"], fg=COLORS["text_secondary"],
                  bg=COLORS["bg_dark"]).pack(anchor="w", pady=(2, 16))
 
-        # Avatar colour picker
+        # Avatar & Profile Picture Studio
         av_card = self._card(p, padx=20, pady=16)
-        av_card.pack(fill="x", pady=(0, 12))
+        av_card.pack(fill="x", pady=(0, 14))
+
+        tk.Label(av_card, text="Avatar & Profile Picture", font=FONTS["heading_sm"],
+                 fg=COLORS["text_primary"], bg=COLORS["bg_card"]).pack(anchor="w", pady=(0, 10))
+
+        av_main_row = tk.Frame(av_card, bg=COLORS["bg_card"])
+        av_main_row.pack(fill="x")
+
         self._prof_color_var = tk.StringVar(
             value=self.user.get("avatar_color", AVATAR_COLORS[0]))
-        av_row = tk.Frame(av_card, bg=COLORS["bg_card"])
-        av_row.pack(fill="x")
-        self._prof_av = tk.Label(av_row, text=self._initials(),
-                                 font=FONTS["heading_lg"],
-                                 bg=self._prof_color_var.get(),
-                                 fg="white", width=4, height=2)
-        self._prof_av.pack(side="left", padx=(0, 16))
-        swatch_col = tk.Frame(av_row, bg=COLORS["bg_card"])
-        swatch_col.pack(side="left")
-        tk.Label(swatch_col, text="Avatar Color", font=FONTS["label_bold"],
-                 fg=COLORS["text_secondary"], bg=COLORS["bg_card"]).pack(anchor="w")
-        sw_row = tk.Frame(swatch_col, bg=COLORS["bg_card"])
-        sw_row.pack(anchor="w", pady=(6, 0))
+
+        self._prof_av_lbl = tk.Label(av_main_row, bg=COLORS["bg_card"])
+        self._prof_av_lbl.pack(side="left", padx=(0, 20), anchor="n")
+
+        av_ctrl_f = tk.Frame(av_main_row, bg=COLORS["bg_card"])
+        av_ctrl_f.pack(side="left", fill="both", expand=True)
+
+        def _refresh_prof_preview():
+            try:
+                self.user["avatar_color"] = self._prof_color_var.get()
+                photo = avatar_utils.get_avatar_photo(self.user, size=72, rounded=True, master=self.root)
+                if photo:
+                    self._prof_av_lbl.config(image=photo, text="", width=72, height=72)
+                    self._prof_av_lbl.image = photo
+                else:
+                    self._prof_av_lbl.config(
+                        image="", text=self._initials(),
+                        font=FONTS["heading_lg"], fg="white",
+                        bg=self._prof_color_var.get(), width=4, height=2
+                    )
+            except Exception:
+                pass
+
+        _refresh_prof_preview()
+
+        # Image PFP actions
+        pfp_actions_f = tk.Frame(av_ctrl_f, bg=COLORS["bg_card"])
+        pfp_actions_f.pack(anchor="w", pady=(0, 12))
+
+        def _upload_pfp():
+            path = filedialog.askopenfilename(
+                title="Select Profile Picture",
+                filetypes=[("Image files", "*.png *.jpg *.jpeg *.webp *.bmp *.gif"), ("All files", "*.*")],
+                parent=self.root
+            )
+            if not path:
+                return
+            ok, res = avatar_utils.save_avatar_image(self.user["id"], path)
+            if ok:
+                self.user["avatar_image"] = res
+                _refresh_prof_preview()
+                self._refresh_sidebar_avatar()
+                messagebox.showinfo("Profile Picture Updated", "Profile picture updated successfully!", parent=self.root)
+            else:
+                messagebox.showerror("Error", res, parent=self.root)
+
+        def _remove_pfp():
+            if not self.user.get("avatar_image"):
+                messagebox.showinfo("No Picture", "You are already using a custom avatar logo.", parent=self.root)
+                return
+            if avatar_utils.remove_avatar_image(self.user["id"]):
+                self.user["avatar_image"] = ""
+                _refresh_prof_preview()
+                self._refresh_sidebar_avatar()
+                messagebox.showinfo("Picture Removed", "Profile picture removed. Reverted to custom avatar logo.", parent=self.root)
+            else:
+                messagebox.showerror("Error", "Could not remove profile picture.", parent=self.root)
+
+        btn_upload = tk.Button(
+            pfp_actions_f, text="  📁  Upload Image PFP", font=FONTS["caption"],
+            bg=COLORS["accent"], fg="white", activebackground=COLORS["accent_hover"],
+            activeforeground="white", relief="flat", bd=0, cursor="hand2", padx=14, pady=6,
+            command=_upload_pfp
+        )
+        btn_upload.pack(side="left", padx=(0, 8))
+        self._add_hover(btn_upload, COLORS["accent_hover"], COLORS["accent"])
+
+        btn_remove = tk.Button(
+            pfp_actions_f, text="  ✕  Remove Picture", font=FONTS["caption"],
+            bg=COLORS["bg_medium"], fg=COLORS["text_secondary"],
+            activebackground=COLORS["bg_darkest"], activeforeground="white",
+            relief="flat", bd=0, cursor="hand2", padx=12, pady=6,
+            command=_remove_pfp
+        )
+        btn_remove.pack(side="left")
+        self._add_hover(btn_remove, COLORS["bg_card_hover"], COLORS["bg_medium"])
+
+        # Custom Avatar Logo / Color Picker
+        tk.Label(av_ctrl_f, text="Or customize your avatar logo color:",
+                 font=FONTS["label_bold"], fg=COLORS["text_secondary"],
+                 bg=COLORS["bg_card"]).pack(anchor="w", pady=(0, 6))
+
+        color_row = tk.Frame(av_ctrl_f, bg=COLORS["bg_card"])
+        color_row.pack(anchor="w")
+
         for color in AVATAR_COLORS:
-            sw = tk.Label(sw_row, text="  ", bg=color, width=3,
-                          cursor="hand2", highlightthickness=2,
-                          highlightbackground=COLORS["border"])
-            sw.pack(side="left", padx=3)
-            sw.bind("<Button-1>",
-                    lambda e, c=color: (
-                        self._prof_color_var.set(c),
-                        self._prof_av.config(bg=c)))
+            dot = tk.Label(color_row, text="  ", bg=color, width=3,
+                           cursor="hand2", highlightthickness=2,
+                           highlightbackground=COLORS["border"])
+            dot.pack(side="left", padx=3)
+            def _make_c_cb(c):
+                return lambda e: (self._prof_color_var.set(c), _refresh_prof_preview(), self._refresh_sidebar_avatar())
+            dot.bind("<Button-1>", _make_c_cb(color))
+
+        def _pick_custom_color():
+            current = self._prof_color_var.get() or "#3fb950"
+            chosen = colorchooser.askcolor(color=current, title="Pick Custom Avatar Color", parent=self.root)
+            if chosen and chosen[1]:
+                self._prof_color_var.set(chosen[1])
+                _refresh_prof_preview()
+                self._refresh_sidebar_avatar()
+
+        custom_col_btn = tk.Button(
+            color_row, text="🎨 Custom Color...", font=FONTS["caption"],
+            bg=COLORS["bg_input"], fg=COLORS["text_primary"],
+            activebackground=COLORS["bg_card_hover"], relief="flat", bd=0,
+            cursor="hand2", padx=10, pady=3, highlightthickness=1,
+            highlightbackground=COLORS["border"], command=_pick_custom_color
+        )
+        custom_col_btn.pack(side="left", padx=(8, 0))
 
         # Info card
         info_card = self._card(p, padx=20, pady=16)
-        info_card.pack(fill="x", pady=(0, 12))
+        info_card.pack(fill="x", pady=(0, 14))
         self._prof_vars = {}
         for label, key, default in [
             ("Full Name", "full_name", self.user.get("full_name", "")),
@@ -2512,6 +2778,7 @@ class AdminApp:
         updated = db.get_user(self.user["id"])
         if updated:
             self.user.update(updated)
+        self._refresh_sidebar_avatar()
         messagebox.showinfo("Saved", "Profile updated!", parent=self.root)
 
     # ═══════════════════════════════════════════════════════════════════════════
@@ -2976,6 +3243,22 @@ class AdminApp:
         parts = name.strip().split()
         return ((parts[0][0] + parts[-1][0]) if len(parts) >= 2 else name[:2]).upper()
 
+    def _refresh_sidebar_avatar(self):
+        try:
+            photo = avatar_utils.get_avatar_photo(self.user, size=46, rounded=True, master=self.root)
+            if photo and hasattr(self, "_sidebar_av_lbl"):
+                self._sidebar_av_lbl.config(image=photo, text="", bg=COLORS["bg_sidebar"], width=46, height=46)
+                self._sidebar_av_lbl.image = photo
+            elif hasattr(self, "_sidebar_av_lbl"):
+                color = self.user.get("avatar_color", AVATAR_COLORS[0])
+                initials = self._initials()
+                self._sidebar_av_lbl.config(image="", text=initials, font=FONTS["heading_sm"],
+                                            bg=color, fg="white", width=4, height=2)
+            if hasattr(self, "_sidebar_name_lbl"):
+                self._sidebar_name_lbl.config(text=self.user.get("full_name") or self.user["username"])
+        except Exception:
+            pass
+
     def _open_account_switcher(self):
         try:
             from commitmaster.account_manager import AccountSwitcherDialog
@@ -2997,6 +3280,7 @@ class AdminApp:
             AccountSwitcherDialog(
                 parent=self.root,
                 current_user=self.user,
+                on_switch=on_switched,
                 on_account_switched=on_switched,
                 on_add_account=on_add
             )
