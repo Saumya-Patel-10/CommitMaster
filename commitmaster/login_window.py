@@ -48,9 +48,8 @@ class LoginWindow:
     def _setup_window(self):
         title = "CommitMaster Admin — Sign In" if self.app_type == "admin" else "CommitMaster — Sign In"
         self.root.title(title)
-        self.root.geometry("450x600")
-        self.root.minsize(420, 520)
-        self.root.maxsize(500, 850)
+        self.root.geometry("460x600")
+        self.root.minsize(380, 420)
         self.root.resizable(True, True)
         self.root.configure(bg=COLORS["bg_darkest"])
 
@@ -58,19 +57,33 @@ class LoginWindow:
         self.root.update_idletasks()
         sw = self.root.winfo_screenwidth()
         sh = self.root.winfo_screenheight()
-        x = max(0, (sw - 450) // 2)
+        x = max(0, (sw - 460) // 2)
         y = max(0, (sh - 600) // 2)
-        self.root.geometry(f"450x600+{x}+{y}")
-        self.root.protocol("WM_DELETE_WINDOW", self.root.destroy)
+        self.root.geometry(f"460x600+{x}+{y}")
+        self.root.protocol("WM_DELETE_WINDOW", self._on_close)
         from commitmaster import windows_integration
         windows_integration.apply_windows_theme(self.root, title, app_type=self.app_type)
+
+    def _on_close(self):
+        try:
+            self.root.unbind_all("<MouseWheel>")
+            self.root.unbind_all("<Button-4>")
+            self.root.unbind_all("<Button-5>")
+        except Exception:
+            pass
+        self.root.destroy()
 
     # ── UI construction ───────────────────────────────────────────────────────
 
     def _build_ui(self):
-        # Scrollable container so content is NEVER cut off on any display/scaling
-        self._canvas = tk.Canvas(self.root, bg=COLORS["bg_darkest"], highlightthickness=0)
-        self._canvas.pack(fill="both", expand=True)
+        # Dedicated scrollbar + canvas container so content scrolls flawlessly on any display/scaling
+        self._scrollbar = tk.Scrollbar(self.root, orient="vertical")
+        self._canvas = tk.Canvas(self.root, bg=COLORS["bg_darkest"], highlightthickness=0,
+                                 yscrollcommand=self._scrollbar.set)
+        self._scrollbar.config(command=self._canvas.yview)
+
+        self._scrollbar.pack(side="right", fill="y")
+        self._canvas.pack(side="left", fill="both", expand=True)
 
         self._content = tk.Frame(self._canvas, bg=COLORS["bg_darkest"])
         self._canvas_window = self._canvas.create_window((0, 0), window=self._content, anchor="nw")
@@ -78,8 +91,10 @@ class LoginWindow:
         self._content.bind("<Configure>", self._on_frame_configure)
         self._canvas.bind("<Configure>", self._on_canvas_configure)
 
-        # Mousewheel scroll support
-        self.root.bind("<MouseWheel>", self._on_mousewheel)
+        # Cross-device mousewheel, trackpad, and touchpad bindings
+        self.root.bind_all("<MouseWheel>", self._on_mousewheel, add="+")
+        self.root.bind_all("<Button-4>", self._on_wheel_up, add="+")
+        self.root.bind_all("<Button-5>", self._on_wheel_down, add="+")
 
         # Center container so form stays compact and never stretched out on wide displays
         center_wrapper = tk.Frame(self._content, bg=COLORS["bg_darkest"])
@@ -241,12 +256,28 @@ class LoginWindow:
         # Set initial mode
         self._set_mode("login")
 
+    def _update_scrollregion(self):
+        try:
+            self.root.update_idletasks()
+            bbox = self._canvas.bbox("all")
+            if bbox:
+                self._canvas.configure(scrollregion=bbox)
+                content_h = bbox[3] - bbox[1]
+                canvas_h = self._canvas.winfo_height()
+                if content_h > canvas_h and canvas_h > 50:
+                    self._scrollbar.pack(side="right", fill="y")
+                else:
+                    self._scrollbar.pack_forget()
+        except Exception:
+            pass
+
     def _on_frame_configure(self, event=None):
-        self._canvas.configure(scrollregion=self._canvas.bbox("all"))
+        self._update_scrollregion()
 
     def _on_canvas_configure(self, event):
         self._canvas.itemconfig(self._canvas_window, width=event.width)
-        self._render_card_banner(width=390)
+        self._render_card_banner(width=max(320, event.width - 40))
+        self._update_scrollregion()
 
     def _render_card_banner(self, width: int = 390):
         try:
@@ -264,8 +295,40 @@ class LoginWindow:
             pass
 
     def _on_mousewheel(self, event):
-        if self._canvas.winfo_height() < self._content.winfo_reqheight():
-            self._canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+        widget = getattr(event, "widget", None)
+        if widget is not None:
+            try:
+                if widget.winfo_toplevel() is not self.root:
+                    return
+            except Exception:
+                pass
+        delta = getattr(event, "delta", 0)
+        if not delta:
+            return "break"
+        if abs(delta) >= 120:
+            pixels = int(-(delta / 120.0) * 45)
+        else:
+            pixels = -1 if delta > 0 else 1
+            pixels *= 30
+        try:
+            self._canvas.yview_scroll(pixels, "units")
+        except Exception:
+            pass
+        return "break"
+
+    def _on_wheel_up(self, event=None):
+        try:
+            self._canvas.yview_scroll(-35, "units")
+        except Exception:
+            pass
+        return "break"
+
+    def _on_wheel_down(self, event=None):
+        try:
+            self._canvas.yview_scroll(35, "units")
+        except Exception:
+            pass
+        return "break"
 
     def _make_entry(self, parent, show="") -> tk.Entry:
         e = tk.Entry(parent, font=FONTS["body_md"],
@@ -420,23 +483,24 @@ class LoginWindow:
             self._resize_window(720)
             self._name_entry.focus()
 
-        # Update scrollregion
-        self.root.update_idletasks()
-        self._canvas.configure(scrollregion=self._canvas.bbox("all"))
+        # Update scrollregion and reset view to top
+        self._update_scrollregion()
+        self._canvas.yview_moveto(0)
 
     def _resize_window(self, target_h: int):
-        w = 450
+        w = 460
         sh = self.root.winfo_screenheight()
-        h = min(target_h, sh - 80)
+        h = min(target_h, max(460, sh - 80))
 
         cur_x = self.root.winfo_x()
         cur_y = self.root.winfo_y()
 
         # If window is near the bottom, shift y so it stays on screen
         if cur_y + h > sh - 40:
-            cur_y = max(20, sh - h - 60)
+            cur_y = max(10, sh - h - 50)
 
         self.root.geometry(f"{w}x{h}+{cur_x}+{cur_y}")
+        self._update_scrollregion()
 
     def _toggle_mode(self):
         new_mode = "register" if self._mode == "login" else "login"
