@@ -355,6 +355,8 @@ def init_db() -> None:
             "reminder_only_if_dirty": "ALTER TABLE user_preferences ADD COLUMN reminder_only_if_dirty INTEGER DEFAULT 1",
             "bg_pattern": "ALTER TABLE user_preferences ADD COLUMN bg_pattern TEXT DEFAULT 'dot_matrix'",
             "track_log_files": "ALTER TABLE user_preferences ADD COLUMN track_log_files INTEGER DEFAULT 0",
+            "auto_startup": "ALTER TABLE user_preferences ADD COLUMN auto_startup INTEGER DEFAULT 0",
+            "minimize_to_tray": "ALTER TABLE user_preferences ADD COLUMN minimize_to_tray INTEGER DEFAULT 1",
         }
         for col_name, ddl in migration_ddls.items():
             if col_name not in existing_cols:
@@ -1137,7 +1139,8 @@ def update_preferences(user_id: int, **kwargs) -> bool:
         "ask_before_push", "ai_provider", "openai_api_key", "claude_api_key",
         "gemini_api_key", "openai_model", "claude_model", "gemini_model",
         "reminder_interval_enabled", "reminder_interval_hours", "reminder_interval_minutes",
-        "reminder_app_monitor_enabled", "reminder_only_if_dirty", "bg_pattern", "track_log_files"
+        "reminder_app_monitor_enabled", "reminder_only_if_dirty", "bg_pattern", "track_log_files",
+        "auto_startup", "minimize_to_tray"
     }
     updates = {k: v for k, v in kwargs.items() if k in allowed}
     if not updates:
