@@ -6,6 +6,7 @@ end so the user can review and push visually.
 """
 import glob
 import os
+import re
 import subprocess
 import time
 from collections import OrderedDict
@@ -113,22 +114,45 @@ def invalidate_changes_cache(repo_path: Optional[str] = None) -> None:
         _DIFF_CACHE.clear()
 
 
-def uncommitted_changes(repo_path: str, force: bool = False) -> List[Tuple[str, str]]:
+def is_log_file(path: str) -> bool:
+    """Return True if path is a log file (e.g. *.log or within a logs/ directory)."""
+    norm = path.replace("\\", "/").lower()
+    base = os.path.basename(norm)
+    return norm.endswith(".log") or base.endswith(".log") or "/logs/" in norm or norm.startswith("logs/")
+
+
+def uncommitted_changes(
+    repo_path: str,
+    force: bool = False,
+    track_logs: Optional[bool] = None,
+) -> List[Tuple[str, str]]:
     """
     Return list of (status, path) for pending changes, [] if clean.
     Uses GitHub Desktop's proven inspection architecture:
     1. Fast short-lived TTL cache (2.5s) prevents repetitive subprocess freezes during UI renders.
     2. Passes -c core.quotepath=false and --untracked-files=all with porcelain=v2.
     3. Seamlessly expands any untracked folder into individual file entries.
+    4. Automatically filters out .log files unless track_logs is enabled.
     Guarantees 100% parity with official GitHub Desktop with zero lag.
     """
     repo_path = os.path.normpath(repo_path)
     now = time.monotonic()
 
+    if track_logs is None:
+        try:
+            from commitmaster.config import load_config
+            cfg = load_config()
+            track_logs = bool(cfg.get("track_log_files", False))
+        except Exception:
+            track_logs = False
+
     if not force:
         cached = _CHANGES_CACHE.get(repo_path)
         if cached is not None and (now - cached[0]) < 2.5:
-            return list(cached[1])
+            res = list(cached[1])
+            if not track_logs:
+                res = [(st, p) for st, p in res if not is_log_file(p)]
+            return res
 
     # 1. First try porcelain=v2 with raw unquoted paths (matching GitHub Desktop)
     try:
@@ -143,6 +167,8 @@ def uncommitted_changes(repo_path: str, force: bool = False) -> List[Tuple[str, 
         changes = _parse_porcelain_v2(out, repo_path=repo_path)
         log.debug("uncommitted_changes (v2) found %d files in %s", len(changes), repo_path)
         _CHANGES_CACHE[repo_path] = (now, changes)
+        if not track_logs:
+            changes = [(st, p) for st, p in changes if not is_log_file(p)]
         return changes
     except GitError:
         # Resilient fallback to porcelain v1 for older Git installations
@@ -156,6 +182,8 @@ def uncommitted_changes(repo_path: str, force: bool = False) -> List[Tuple[str, 
         changes = _parse_porcelain_v1(out, repo_path=repo_path)
         log.debug("uncommitted_changes (v1 fallback) found %d files in %s", len(changes), repo_path)
         _CHANGES_CACHE[repo_path] = (now, changes)
+        if not track_logs:
+            changes = [(st, p) for st, p in changes if not is_log_file(p)]
         return changes
 
 
@@ -594,25 +622,64 @@ def build_groups(
     return {g: files for g, files in groups.items() if files}
 
 
-def file_diff(repo_path: str, file_path: str, max_chars: int = 5000) -> str:
-    """Get the diff for a single file (staged, unstaged, or untracked) with TTL caching."""
+def get_remote_upstream_ref(repo_path: str, branch: Optional[str] = None) -> Optional[str]:
+    """Find the upstream remote branch (e.g. origin/main, @{upstream}) that was committed on GitHub."""
+    b = branch or current_branch(repo_path)
+    try:
+        up = git(repo_path, "rev-parse", "--abbrev-ref", "@{upstream}").strip()
+        if up and not up.startswith("@"):
+            return up
+    except GitError:
+        pass
+    if b:
+        try:
+            git(repo_path, "rev-parse", "--verify", f"origin/{b}")
+            return f"origin/{b}"
+        except GitError:
+            pass
+    for candidate in ("origin/main", "origin/master"):
+        try:
+            git(repo_path, "rev-parse", "--verify", candidate)
+            return candidate
+        except GitError:
+            pass
+    return None
+
+
+def file_diff(
+    repo_path: str,
+    file_path: str,
+    max_chars: int = 5000,
+    against_remote: bool = False,
+) -> str:
+    """Get the diff for a single file (staged, unstaged, untracked, or against remote GitHub) with TTL caching."""
     norm_repo = os.path.normpath(repo_path)
     norm_file = file_path.replace("\\", "/")
-    cache_key = (norm_repo, norm_file, max_chars)
+    cache_key = (norm_repo, norm_file, max_chars, against_remote)
     now = time.monotonic()
     cached = _DIFF_CACHE.get(cache_key)
     if cached is not None and (now - cached[0]) < 3.0:
         return cached[1]
 
     try:
-        # Everything that changed in this one file relative to the last commit
-        # (staged + unstaged combined), scoped strictly to this path.
-        try:
-            head_diff = git(repo_path, "diff", "HEAD", "--unified=3", "--", norm_file)
-        except GitError:
-            # Repository without any commit yet: fall back to index / working tree
-            head_diff = git(repo_path, "diff", "--cached", "--unified=3", "--", norm_file)
-            head_diff += git(repo_path, "diff", "--unified=3", "--", norm_file)
+        head_diff = ""
+        # If against_remote requested, compare against remote ref committed on GitHub
+        if against_remote:
+            up_ref = get_remote_upstream_ref(repo_path)
+            if up_ref:
+                try:
+                    head_diff = git(repo_path, "diff", up_ref, "--unified=3", "--", norm_file)
+                except GitError:
+                    pass
+
+        if not head_diff:
+            try:
+                head_diff = git(repo_path, "diff", "HEAD", "--unified=3", "--", norm_file)
+            except GitError:
+                # Repository without any commit yet: fall back to index / working tree
+                head_diff = git(repo_path, "diff", "--cached", "--unified=3", "--", norm_file)
+                head_diff += git(repo_path, "diff", "--unified=3", "--", norm_file)
+
         if head_diff.strip():
             res = head_diff[:max_chars]
             _DIFF_CACHE[cache_key] = (now, res)
@@ -636,6 +703,258 @@ def file_diff(repo_path: str, file_path: str, max_chars: int = 5000) -> str:
         return res
     except GitError as exc:
         return f"(diff unavailable: {exc})"
+
+
+def get_repo_commit_count(repo_path: str) -> int:
+    """Return total number of commits made in this specific repository."""
+    if not repo_path or not is_git_repo(repo_path):
+        return 0
+    try:
+        out = git(repo_path, "rev-list", "--count", "HEAD").strip()
+        return int(out) if out.isdigit() else 0
+    except Exception:
+        return 0
+
+
+def get_repo_commit_history(repo_path: str, limit: int = 60) -> List[Dict[str, Any]]:
+    """Return list of historical commits for this repository."""
+    if not repo_path or not is_git_repo(repo_path):
+        return []
+    commits = []
+    try:
+        delimiter = "---COMMIT_DELIM---"
+        field_sep = "---F_SEP---"
+        fmt = f"{delimiter}%H{field_sep}%h{field_sep}%an{field_sep}%ae{field_sep}%ar{field_sep}%ad{field_sep}%s{field_sep}%b"
+        out = git(repo_path, "log", f"-n{limit}", f"--pretty=format:{fmt}", "--date=short")
+        parts = out.split(delimiter)
+        for part in parts:
+            part = part.strip()
+            if not part:
+                continue
+            fields = part.split(field_sep)
+            if len(fields) >= 7:
+                full_h = fields[0].strip()
+                short_h = fields[1].strip()
+                author = fields[2].strip()
+                email = fields[3].strip()
+                rel_date = fields[4].strip()
+                iso_date = fields[5].strip()
+                subject = fields[6].strip()
+                body = fields[7].strip() if len(fields) > 7 else ""
+
+                files_stat = []
+                try:
+                    numstat = git(repo_path, "show", "--numstat", "--format=", full_h)
+                    for nline in numstat.splitlines():
+                        nline = nline.strip()
+                        if not nline:
+                            continue
+                        ntoks = nline.split("\t", 2)
+                        if len(ntoks) == 3:
+                            add_s, del_s, fpath = ntoks
+                            files_stat.append({
+                                "path": fpath,
+                                "added": int(add_s) if add_s.isdigit() else 0,
+                                "removed": int(del_s) if del_s.isdigit() else 0,
+                            })
+                except Exception:
+                    pass
+
+                commits.append({
+                    "hash": full_h,
+                    "short_hash": short_h,
+                    "author": author,
+                    "author_email": email,
+                    "date_relative": rel_date,
+                    "date": iso_date,
+                    "subject": subject,
+                    "body": body,
+                    "full_message": f"{subject}\n\n{body}".strip() if body else subject,
+                    "files": files_stat,
+                    "files_count": len(files_stat),
+                    "total_added": sum(f["added"] for f in files_stat),
+                    "total_removed": sum(f["removed"] for f in files_stat),
+                })
+    except Exception as exc:
+        log.debug("Error reading commit history for %s: %s", repo_path, exc)
+    return commits
+
+
+def get_commit_details(repo_path: str, commit_hash: str) -> Dict[str, Any]:
+    """Return detailed metadata and changed files list for a single historical commit."""
+    details: Dict[str, Any] = {
+        "hash": commit_hash,
+        "short_hash": commit_hash[:7],
+        "author": "",
+        "author_email": "",
+        "date_relative": "",
+        "date": "",
+        "subject": "",
+        "body": "",
+        "parent_hash": "",
+        "short_parent": "",
+        "files": [],
+        "files_count": 0,
+        "total_added": 0,
+        "total_removed": 0,
+    }
+    if not repo_path or not is_git_repo(repo_path):
+        return details
+
+    try:
+        fmt = "%H%x09%h%x09%an%x09%ae%x09%ar%x09%ad%x09%P%x09%s%x09%b"
+        out = git(repo_path, "show", "-s", f"--pretty=format:{fmt}", "--date=short", commit_hash)
+        parts = out.split("\t")
+        if len(parts) >= 8:
+            details["hash"] = parts[0].strip()
+            details["short_hash"] = parts[1].strip()
+            details["author"] = parts[2].strip()
+            details["author_email"] = parts[3].strip()
+            details["date_relative"] = parts[4].strip()
+            details["date"] = parts[5].strip()
+            parents = parts[6].strip().split()
+            details["parent_hash"] = parents[0] if parents else ""
+            details["short_parent"] = parents[0][:7] if parents else ""
+            details["subject"] = parts[7].strip()
+            details["body"] = parts[8].strip() if len(parts) > 8 else ""
+
+        numstat = git(repo_path, "show", "--numstat", "--format=", commit_hash)
+        files_stat = []
+        for nline in numstat.splitlines():
+            nline = nline.strip()
+            if not nline:
+                continue
+            ntoks = nline.split("\t", 2)
+            if len(ntoks) == 3:
+                add_s, del_s, fpath = ntoks
+                files_stat.append({
+                    "file": fpath,
+                    "path": fpath,
+                    "added": int(add_s) if add_s.isdigit() else 0,
+                    "removed": int(del_s) if del_s.isdigit() else 0,
+                })
+        details["files"] = files_stat
+        details["files_count"] = len(files_stat)
+        details["total_added"] = sum(f["added"] for f in files_stat)
+        details["total_removed"] = sum(f["removed"] for f in files_stat)
+    except Exception as exc:
+        log.debug("Error getting commit details: %s", exc)
+    return details
+
+
+def get_commit_file_diff(repo_path: str, commit_hash: str, file_path: str) -> str:
+    """Return unified diff for a single file in a specific historical commit."""
+    norm_file = file_path.replace("\\", "/")
+    try:
+        has_parent = False
+        try:
+            git(repo_path, "rev-parse", "--verify", f"{commit_hash}^")
+            has_parent = True
+        except GitError:
+            pass
+
+        if has_parent:
+            diff_text = git(repo_path, "diff", f"{commit_hash}^", commit_hash, "--unified=3", "--", norm_file)
+        else:
+            diff_text = git(repo_path, "show", commit_hash, "--unified=3", "--format=", "--", norm_file)
+        return diff_text or "(No changes detected in this file)"
+    except Exception as exc:
+        return f"(Diff unavailable: {exc})"
+
+
+def parse_diff_to_split_lines(diff_text: str) -> List[Dict[str, Any]]:
+    """
+    Parse a unified git diff into side-by-side rows matching GitHub's split diff viewer.
+    Each returned hunk contains:
+      - 'header': e.g. '@@ -47,18 +47,19 @@ def _setup_window(self):'
+      - 'rows': list of dicts with left_no, left_type, left_text, right_no, right_type, right_text
+    """
+    hunks: List[Dict[str, Any]] = []
+    current_hunk: Optional[Dict[str, Any]] = None
+    old_line_no = 0
+    new_line_no = 0
+
+    hunk_regex = re.compile(r"^@@\s+-(\d+)(?:,\d+)?\s+\+(\d+)(?:,\d+)?\s+@@(.*)$")
+    lines = diff_text.splitlines()
+    i = 0
+    n = len(lines)
+
+    while i < n:
+        raw_line = lines[i]
+        m = hunk_regex.match(raw_line)
+        if m:
+            if current_hunk:
+                hunks.append(current_hunk)
+            old_line_no = int(m.group(1))
+            new_line_no = int(m.group(2))
+            current_hunk = {
+                "header": raw_line,
+                "rows": []
+            }
+            i += 1
+            continue
+
+        if current_hunk is None:
+            i += 1
+            continue
+
+        if raw_line.startswith("+"):
+            add_lines = []
+            while i < n and lines[i].startswith("+"):
+                add_lines.append(lines[i][1:])
+                i += 1
+            for text in add_lines:
+                current_hunk["rows"].append({
+                    "left_no": "", "left_type": "empty", "left_text": "",
+                    "right_no": str(new_line_no), "right_type": "add", "right_text": text
+                })
+                new_line_no += 1
+            continue
+        elif raw_line.startswith("-"):
+            del_lines = []
+            while i < n and lines[i].startswith("-"):
+                del_lines.append(lines[i][1:])
+                i += 1
+            add_lines = []
+            while i < n and lines[i].startswith("+"):
+                add_lines.append(lines[i][1:])
+                i += 1
+            max_len = max(len(del_lines), len(add_lines))
+            for k in range(max_len):
+                if k < len(del_lines) and k < len(add_lines):
+                    current_hunk["rows"].append({
+                        "left_no": str(old_line_no), "left_type": "delete", "left_text": del_lines[k],
+                        "right_no": str(new_line_no), "right_type": "add", "right_text": add_lines[k]
+                    })
+                    old_line_no += 1
+                    new_line_no += 1
+                elif k < len(del_lines):
+                    current_hunk["rows"].append({
+                        "left_no": str(old_line_no), "left_type": "delete", "left_text": del_lines[k],
+                        "right_no": "", "right_type": "empty", "right_text": ""
+                    })
+                    old_line_no += 1
+                else:
+                    current_hunk["rows"].append({
+                        "left_no": "", "left_type": "empty", "left_text": "",
+                        "right_no": str(new_line_no), "right_type": "add", "right_text": add_lines[k]
+                    })
+                    new_line_no += 1
+            continue
+        else:
+            text = raw_line[1:] if raw_line.startswith(" ") else raw_line
+            current_hunk["rows"].append({
+                "left_no": str(old_line_no), "left_type": "context", "left_text": text,
+                "right_no": str(new_line_no), "right_type": "context", "right_text": text
+            })
+            old_line_no += 1
+            new_line_no += 1
+            i += 1
+
+    if current_hunk:
+        hunks.append(current_hunk)
+
+    return hunks
 
 
 def get_unpushed_commits(
