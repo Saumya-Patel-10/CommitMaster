@@ -103,6 +103,13 @@ class UserDashboard:
         self._rem_ide_check_vars: dict = {}
         self._custom_app_vars: dict = {}
 
+        # Auto-startup and System Tray settings
+        from commitmaster import startup_manager
+        from commitmaster.tray_manager import TrayManager
+
+        self._auto_startup_var: tk.BooleanVar = tk.BooleanVar(value=startup_manager.is_auto_startup_enabled())
+        self._minimize_to_tray_var: tk.BooleanVar = tk.BooleanVar(value=bool(prefs.get("minimize_to_tray", 1)))
+
         # Commit Reminder Service (Intervals & IDE Monitoring)
         self._reminder_service = ReminderService(
             user_id=self.user["id"],
@@ -112,6 +119,17 @@ class UserDashboard:
             grace_period_seconds=int(prefs.get("session_end_grace", 15)),
         )
         self._reminder_service.start()
+
+        # System Tray Icon Manager
+        self._tray_manager: Optional[TrayManager] = TrayManager(
+            on_open=self._restore_from_tray,
+            on_git_desktop=lambda: self.root.after(0, lambda: (self._restore_from_tray(), self._go("git_desktop"))),
+            on_commits=lambda: self.root.after(0, lambda: (self._restore_from_tray(), self._go("commits"))),
+            on_profile=lambda: self.root.after(0, lambda: (self._restore_from_tray(), self._go("profile"))),
+            on_switch_account=lambda: self.root.after(0, lambda: (self._restore_from_tray(), self._open_account_switcher())),
+            on_quit=self._do_full_quit
+        )
+        self._tray_manager.start()
 
         self._nav_to("overview")
 
@@ -130,6 +148,14 @@ class UserDashboard:
         from commitmaster import windows_integration
         windows_integration.apply_windows_theme(self.root, f"CommitMaster — {name}", app_type="user")
         self.root.protocol("WM_DELETE_WINDOW", self._on_close_window)
+
+        # Handle window minimize to taskbar notification panel
+        def _on_window_unmap(event=None):
+            if event and event.widget == self.root:
+                if str(self.root.state()) == "iconic" and getattr(self, "_minimize_to_tray_var", None) and self._minimize_to_tray_var.get():
+                    self.root.withdraw()
+
+        self.root.bind("<Unmap>", _on_window_unmap)
 
     def _on_reminder_commit(self):
         """Action handler when user clicks 'Review & Commit' in the bottom-right toast."""
@@ -340,13 +366,47 @@ class UserDashboard:
             self._autocommit_banner_frame = None
 
     def _on_close_window(self):
-        """Clean shutdown when user closes the main dashboard window."""
+        """Handle window close button (X). Minimized to system tray if enabled, or full quit."""
+        if getattr(self, "_minimize_to_tray_var", None) and self._minimize_to_tray_var.get():
+            self.root.withdraw()
+            if hasattr(self, "_tray_manager") and self._tray_manager:
+                self._tray_manager.notify(
+                    "CommitMaster Minimized",
+                    "CommitMaster is running in your taskbar system tray. Right-click the icon to reopen or quit."
+                )
+            return
+        self._do_full_quit()
+
+    def _restore_from_tray(self):
+        """Restore and bring the dashboard window to the foreground from system tray."""
+        def _bring():
+            try:
+                self.root.deiconify()
+                self.root.state("normal")
+                self.root.lift()
+                self.root.focus_force()
+            except Exception:
+                pass
+        self.root.after(0, _bring)
+
+    def _do_full_quit(self):
+        """Clean shutdown of all background services, tray icon, and the entire process."""
         if hasattr(self, "_reminder_service") and self._reminder_service:
             try:
                 self._reminder_service.stop()
             except Exception:
                 pass
-        self.root.destroy()
+        if hasattr(self, "_tray_manager") and self._tray_manager:
+            try:
+                self._tray_manager.stop()
+            except Exception:
+                pass
+        try:
+            self.root.destroy()
+        except Exception:
+            pass
+        import os
+        os._exit(0)
 
     # ── Layout skeleton ───────────────────────────────────────────────────────
 
@@ -2082,26 +2142,33 @@ class UserDashboard:
             p_btn.pack(side="left", padx=2)
             self._add_hover(p_btn, COLORS["bg_card_hover"], COLORS["bg_card"])
 
-        # ── Option 2: App / IDE Monitoring
+        # ── Option 2: App / IDE Monitoring (Always Active)
         app_frame = tk.Frame(rem_card, bg=COLORS["bg_medium"], padx=14, pady=10)
         app_frame.pack(fill="x", pady=(0, 10))
 
-        self._rem_app_monitor_var = tk.BooleanVar(value=bool(prefs.get("reminder_app_monitor_enabled", 1)))
-        app_cb = tk.Checkbutton(
-            app_frame, text="2. App & IDE Monitoring (Session Lifecycle)",
-            variable=self._rem_app_monitor_var,
-            font=FONTS["label_bold"], fg=COLORS["text_primary"],
-            bg=COLORS["bg_medium"], selectcolor=COLORS["bg_dark"],
-            activebackground=COLORS["bg_medium"], activeforeground=COLORS["text_primary"]
-        )
-        app_cb.pack(anchor="w")
+        self._rem_app_monitor_var = tk.BooleanVar(value=True)
+        app_hdr_row = tk.Frame(app_frame, bg=COLORS["bg_medium"])
+        app_hdr_row.pack(fill="x")
+
+        tk.Label(
+            app_hdr_row, text="2. App & IDE Monitoring (Session Lifecycle)",
+            font=FONTS["label_bold"], fg=COLORS["text_primary"], bg=COLORS["bg_medium"]
+        ).pack(side="left")
+
+        always_badge = tk.Frame(app_hdr_row, bg=COLORS["bg_card"], highlightthickness=1,
+                                highlightbackground=COLORS["success"], padx=8, pady=2)
+        always_badge.pack(side="right")
+        tk.Label(
+            always_badge, text="● ALWAYS ON & ACTIVE",
+            font=("Segoe UI", 8, "bold"), fg=COLORS["success"], bg=COLORS["bg_card"]
+        ).pack()
 
         tk.Label(
             app_frame,
-            text="Monitors your desktop for IDEs. When you start coding, the system wakes up and keeps an eye\n"
-                 "on your work. When you close the IDE, a bottom-right notification reminds you to commit your changes.",
+            text="Continuously monitors your desktop for Visual Studio and other coding IDEs. When you start coding,\n"
+                 "the system keeps an eye on your work. When you close the IDE, a bottom-right notification prompts you to commit.",
             font=FONTS["caption"], fg=COLORS["text_secondary"], bg=COLORS["bg_medium"], justify="left"
-        ).pack(anchor="w", pady=(2, 8))
+        ).pack(anchor="w", pady=(4, 8))
 
         # IDE selection & live scanner toolbar
         ide_sel_hdr = tk.Frame(app_frame, bg=COLORS["bg_medium"])
@@ -2373,6 +2440,8 @@ class UserDashboard:
         self._track_log_files_var = tk.BooleanVar(value=bool(prefs.get("track_log_files", 0)))
 
         for text, var in [
+            ("Launch CommitMaster automatically when Windows starts", self._auto_startup_var),
+            ("Minimize to taskbar notification area / tray instead of closing", self._minimize_to_tray_var),
             ("Auto-commit without preview", self._auto_commit_var),
             ("Skip sensitive files (.env, keys, certs)", self._skip_sensitive_var),
             ("Track and commit log files (*.log)", self._track_log_files_var),
@@ -2638,9 +2707,15 @@ class UserDashboard:
         if rem_hrs == 0 and rem_mins == 0:
             rem_mins = 30
 
+        # Update Windows auto-startup registry key
+        from commitmaster import startup_manager
+        startup_manager.set_auto_startup(bool(self._auto_startup_var.get()))
+
         db.update_preferences(
             self.user["id"],
             auto_commit=int(self._auto_commit_var.get()),
+            auto_startup=int(self._auto_startup_var.get()),
+            minimize_to_tray=int(self._minimize_to_tray_var.get()),
             skip_sensitive=int(self._skip_sensitive_var.get()),
             track_log_files=int(self._track_log_files_var.get()),
             notifications=int(self._notif_var.get()),
@@ -2648,7 +2723,7 @@ class UserDashboard:
             reminder_interval_enabled=int(self._rem_interval_var.get()),
             reminder_interval_hours=rem_hrs,
             reminder_interval_minutes=rem_mins,
-            reminder_app_monitor_enabled=int(self._rem_app_monitor_var.get()),
+            reminder_app_monitor_enabled=1,
             reminder_only_if_dirty=int(self._rem_only_dirty_var.get()),
             watched_apps=json.dumps(new_watched),
             ai_provider=prov,
@@ -4293,6 +4368,11 @@ class UserDashboard:
                 self._reminder_service.stop()
             except Exception:
                 pass
+        if hasattr(self, "_tray_manager") and self._tray_manager:
+            try:
+                self._tray_manager.stop()
+            except Exception:
+                pass
         db.revoke_session_token(self.user["id"])
         self.next_action = "logout"
         self.next_user = None
@@ -4313,6 +4393,11 @@ class UserDashboard:
                     self._reminder_service.stop()
                 except Exception:
                     pass
+            if hasattr(self, "_tray_manager") and self._tray_manager:
+                try:
+                    self._tray_manager.stop()
+                except Exception:
+                    pass
             self.next_action = "switch"
             self.next_user = new_user
             if self.on_switch_account:
@@ -4326,6 +4411,11 @@ class UserDashboard:
             if hasattr(self, "_reminder_service") and self._reminder_service:
                 try:
                     self._reminder_service.stop()
+                except Exception:
+                    pass
+            if hasattr(self, "_tray_manager") and self._tray_manager:
+                try:
+                    self._tray_manager.stop()
                 except Exception:
                     pass
             self.next_action = "logout"
