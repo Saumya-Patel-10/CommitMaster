@@ -17,11 +17,21 @@ def build_single(target_script: str, exe_name: str, description: str, icon_file:
     print(f"\n[{description}] Compiling {exe_name}...")
     cmd = [
         sys.executable, "-m", "PyInstaller",
+        "--clean",
         "--onefile",
         "--noconsole",
         "--name", exe_name,
         "--add-data", f"{APP_DIR}/commitmaster;commitmaster",
         "--add-data", f"{APP_DIR}/assets;assets",
+        "--hidden-import", "pystray",
+        "--hidden-import", "pystray._win32",
+        "--hidden-import", "PIL",
+        "--hidden-import", "PIL.Image",
+        "--hidden-import", "PIL.ImageTk",
+        "--hidden-import", "PIL.ImageDraw",
+        "--hidden-import", "winreg",
+        "--hidden-import", "commitmaster.tray_manager",
+        "--hidden-import", "commitmaster.startup_manager",
     ]
 
     icon_path = os.path.join(APP_DIR, icon_file)
