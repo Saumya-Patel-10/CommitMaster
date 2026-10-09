@@ -53,6 +53,21 @@ class UserDashboard:
 
         self.root = tk.Tk()
 
+        self.next_action: Optional[str] = None
+        self.next_user: Optional[dict] = None
+
+        # Commit history & Code comparison state
+        self._selected_commit_hash: Optional[str] = None
+        self._selected_commit_repo: Optional[str] = None
+        self._selected_diff_file: Optional[str] = None
+        self._diff_view_mode: str = "split"
+        self._diff_file_filter_var: tk.StringVar = tk.StringVar()
+        self._diff_code_search_var: tk.StringVar = tk.StringVar()
+        self._active_diff_text_widgets: list = []
+
+        # Log file tracking state
+        self._track_log_files_var: tk.BooleanVar = tk.BooleanVar(value=bool(prefs.get("track_log_files", 0)))
+
         # Git Desktop state
         self._gd_selected_repo: Optional[str] = None
         self._gd_changes: list = []
@@ -724,7 +739,33 @@ class UserDashboard:
         lbl.pack(anchor="w", pady=pady)
         return lbl
 
-    def _stat_card(self, parent, title: str, value: str, color: str, icon: str):
+    def _should_track_logs(self) -> bool:
+        if hasattr(self, "_track_log_files_var"):
+            return bool(self._track_log_files_var.get())
+        prefs = db.get_preferences(self.user["id"]) or {}
+        return bool(prefs.get("track_log_files", 0))
+
+    def _toggle_track_log_files(self):
+        val = int(self._track_log_files_var.get())
+        db.update_preferences(self.user["id"], track_log_files=val)
+        try:
+            cfg = load_config()
+            cfg["track_log_files"] = bool(val)
+            from commitmaster.config import save_config
+            save_config(cfg)
+        except Exception:
+            pass
+        if self._gd_selected_repo:
+            commit_engine.invalidate_changes_cache(self._gd_selected_repo)
+
+    def _view_repo_commits(self, repo_path: Optional[str] = None):
+        if repo_path and os.path.isdir(repo_path):
+            self._gd_selected_repo = repo_path
+        self._selected_commit_hash = None
+        self._selected_diff_file = None
+        self._go("commits")
+
+    def _stat_card(self, parent, title: str, value: str, color: str, icon: str, command: Optional[Callable] = None):
         card = self._card(parent)
         card.pack(side="left", fill="both", expand=True, padx=6, pady=6)
 
@@ -744,16 +785,44 @@ class UserDashboard:
         tk.Label(icon_box, text=icon, font=("Segoe UI Emoji", 12),
                  fg=color, bg=COLORS["bg_medium"]).pack()
 
-        # Mini live pill
+        # Mini live / click pill
         pill = tk.Frame(top_row, bg=COLORS["bg_card"])
         pill.pack(side="right")
-        tk.Label(pill, text="● LIVE", font=("Segoe UI", 8, "bold"),
-                 fg=color, bg=COLORS["bg_card"]).pack()
+        pill_txt = "● VIEW" if command else "● LIVE"
+        pill_lbl = tk.Label(pill, text=pill_txt, font=("Segoe UI", 8, "bold"),
+                            fg=color, bg=COLORS["bg_card"])
+        pill_lbl.pack()
 
-        tk.Label(inner, text=value, font=FONTS["heading_lg"],
-                 fg=COLORS["text_primary"], bg=COLORS["bg_card"]).pack(anchor="w", pady=(0, 2))
-        tk.Label(inner, text=title.upper(), font=FONTS["caption"],
-                 fg=COLORS["text_secondary"], bg=COLORS["bg_card"]).pack(anchor="w")
+        val_lbl = tk.Label(inner, text=value, font=FONTS["heading_lg"],
+                 fg=COLORS["text_primary"], bg=COLORS["bg_card"])
+        val_lbl.pack(anchor="w", pady=(0, 2))
+        sub_lbl = tk.Label(inner, text=title.upper(), font=FONTS["caption"],
+                 fg=COLORS["text_secondary"], bg=COLORS["bg_card"])
+        sub_lbl.pack(anchor="w")
+
+        if command:
+            clickable_items = [card, inner, top_row, icon_box, pill, pill_lbl, val_lbl, sub_lbl]
+            for w in clickable_items:
+                w.config(cursor="hand2")
+                w.bind("<Button-1>", lambda e: command())
+            def _enter(e):
+                card.config(highlightbackground=color)
+                for w in (inner, top_row, pill, pill_lbl, val_lbl, sub_lbl):
+                    try:
+                        w.config(bg=COLORS["bg_card_hover"])
+                    except Exception:
+                        pass
+            def _leave(e):
+                card.config(highlightbackground=COLORS["border"])
+                for w in (inner, top_row, pill, pill_lbl, val_lbl, sub_lbl):
+                    try:
+                        w.config(bg=COLORS["bg_card"])
+                    except Exception:
+                        pass
+            card.bind("<Enter>", _enter)
+            card.bind("<Leave>", _leave)
+            inner.bind("<Enter>", _enter)
+            inner.bind("<Leave>", _leave)
 
     # ── Pages ──────────────────────────────────────────────────────────────────
 
@@ -836,16 +905,28 @@ class UserDashboard:
         active_days = len(usage)
         repos = len(set(r["repo_name"] for r in activity))
 
+        # Commits in currently selected repo (Requirement 6)
+        repo_commits_count = 0
+        repo_display = "Current Repo"
+        if self._gd_selected_repo and os.path.isdir(self._gd_selected_repo) and commit_engine.is_git_repo(self._gd_selected_repo):
+            repo_commits_count = commit_engine.get_repo_commit_count(self._gd_selected_repo)
+            repo_display = commit_engine.repo_name(self._gd_selected_repo)
+
         stats_row = tk.Frame(pad, bg=COLORS["bg_dark"])
         stats_row.pack(fill="x", pady=(0, 20))
         self._stat_card(stats_row, "Total Commits", str(total_commits),
-                        COLORS["success"], "📝")
+                        COLORS["success"], "📝",
+                        command=lambda: self._view_repo_commits(None))
+        self._stat_card(stats_row, f"In {repo_display}", str(repo_commits_count),
+                        COLORS["accent"], "📦",
+                        command=lambda: self._view_repo_commits(self._gd_selected_repo))
         self._stat_card(stats_row, "Sessions (30d)", str(total_sessions),
                         COLORS["info"], "🖥")
         self._stat_card(stats_row, "Active Days", str(active_days),
                         COLORS["warning"], "📅")
         self._stat_card(stats_row, "Repositories", str(repos),
-                        COLORS["admin"], "📁")
+                        COLORS["admin"], "📁",
+                        command=lambda: self._go("watched_repos"))
 
         # ── Local Repository Scanner & AI Push Preview ─────────────────────────
         self._build_repo_scanner_card(pad)
@@ -1000,8 +1081,18 @@ class UserDashboard:
             relief="flat", bd=0, cursor="hand2", padx=12, pady=4,
             command=lambda: render_scanner_content()
         )
-        scan_btn.pack(side="left", padx=(0, 12))
+        scan_btn.pack(side="left", padx=(0, 8))
         self._add_hover(scan_btn, COLORS["accent_hover"], COLORS["accent"])
+
+        log_cb = tk.Checkbutton(
+            sel_bar, text="Track *.log",
+            variable=self._track_log_files_var,
+            font=FONTS["caption"], fg=COLORS["text_secondary"],
+            bg=COLORS["bg_card"], selectcolor=COLORS["bg_dark"],
+            activebackground=COLORS["bg_card"], activeforeground=COLORS["text_primary"],
+            command=lambda: (self._toggle_track_log_files(), render_scanner_content())
+        )
+        log_cb.pack(side="left", padx=(0, 10))
 
         branch_lbl = tk.Label(sel_bar, text="", font=FONTS["label_bold"], bg=COLORS["bg_card"])
         branch_lbl.pack(side="left", padx=(0, 8))
@@ -1023,8 +1114,8 @@ class UserDashboard:
                          text="Click '＋ Add Local Repo' above to choose a Git repository folder on your PC.",
                          font=FONTS["body_sm"], fg=COLORS["text_secondary"], bg=COLORS["bg_medium"]).pack(anchor="w", pady=(4, 10))
                 tk.Button(empty_box, text="📁 Choose Local Repository Folder", font=FONTS["label_bold"],
-                          fg="white", bg=COLORS["accent"], relief="flat", bd=0, padx=14, pady=6,
-                          command=add_local_folder).pack(anchor="w")
+                         fg="white", bg=COLORS["accent"], relief="flat", bd=0, padx=14, pady=6,
+                         command=add_local_folder).pack(anchor="w")
                 branch_lbl.config(text="")
                 account_lbl.config(text="")
                 return
@@ -1037,8 +1128,8 @@ class UserDashboard:
             else:
                 account_lbl.config(text="🐙 Default Git Push", fg=COLORS["text_muted"])
 
-            # Scan for uncommitted changes
-            changes = commit_engine.uncommitted_changes(self._gd_selected_repo)
+            # Scan for uncommitted changes (respecting track_log_files option)
+            changes = commit_engine.uncommitted_changes(self._gd_selected_repo, track_logs=self._should_track_logs())
             commit_composer.sync_selection(self, changes, cfg.get("sensitive_patterns", []))
 
             if not changes:
@@ -1207,52 +1298,679 @@ class UserDashboard:
         pad = tk.Frame(p, bg=COLORS["bg_dark"], padx=24, pady=20)
         pad.pack(fill="both", expand=True)
 
-        tk.Label(pad, text="Commit History", font=FONTS["heading_lg"],
-                 fg=COLORS["text_primary"], bg=COLORS["bg_dark"]).pack(anchor="w")
-        tk.Label(pad, text="All commits made through CommitMaster.",
-                 font=FONTS["body_sm"], fg=COLORS["text_secondary"],
-                 bg=COLORS["bg_dark"]).pack(anchor="w", pady=(2, 16))
+        if getattr(self, "_selected_commit_hash", None):
+            self._render_commit_comparison_view(pad)
+        else:
+            self._render_commits_list_view(pad)
 
-        activity = db.get_activity_log(self.user["id"], limit=500)
-        if not activity:
-            tk.Label(pad, text="No commits recorded yet.",
-                     font=FONTS["body_md"], fg=COLORS["text_muted"],
-                     bg=COLORS["bg_dark"]).pack(anchor="w", pady=20)
+    def _render_commits_list_view(self, parent):
+        """Render repository commit history list with commit count and diff navigation."""
+        hdr_box = tk.Frame(parent, bg=COLORS["bg_dark"])
+        hdr_box.pack(fill="x", pady=(0, 16))
+
+        left_hdr = tk.Frame(hdr_box, bg=COLORS["bg_dark"])
+        left_hdr.pack(side="left", fill="x", expand=True)
+
+        tk.Label(left_hdr, text="Commit History & Code Comparison", font=FONTS["heading_lg"],
+                 fg=COLORS["text_primary"], bg=COLORS["bg_dark"]).pack(anchor="w")
+        tk.Label(left_hdr, text="Inspect repository commits and click any commit to compare changes against previous revisions.",
+                 font=FONTS["body_sm"], fg=COLORS["text_secondary"],
+                 bg=COLORS["bg_dark"]).pack(anchor="w", pady=(2, 0))
+
+        # Repositories for selection
+        watched = db.get_watched_repos(self.user["id"])
+        avail_repos = []
+        for w in watched:
+            lp = w.get("local_path", "").strip()
+            if lp and os.path.isdir(lp) and commit_engine.is_git_repo(lp):
+                if lp not in avail_repos:
+                    avail_repos.append(lp)
+
+        if self._gd_selected_repo and os.path.isdir(self._gd_selected_repo) and commit_engine.is_git_repo(self._gd_selected_repo):
+            if self._gd_selected_repo not in avail_repos:
+                avail_repos.insert(0, self._gd_selected_repo)
+
+        active_repo = self._gd_selected_repo or (avail_repos[0] if avail_repos else None)
+        if active_repo and active_repo not in avail_repos:
+            avail_repos.insert(0, active_repo)
+        self._gd_selected_repo = active_repo
+
+        if avail_repos:
+            right_sel = tk.Frame(hdr_box, bg=COLORS["bg_dark"])
+            right_sel.pack(side="right")
+            tk.Label(right_sel, text="Repository: ", font=FONTS["label_bold"],
+                     fg=COLORS["text_secondary"], bg=COLORS["bg_dark"]).pack(side="left", padx=(0, 6))
+
+            repo_map = {f"📁 {commit_engine.repo_name(r)}": r for r in avail_repos}
+            active_label = f"📁 {commit_engine.repo_name(active_repo)}" if active_repo else list(repo_map.keys())[0]
+            repo_var = tk.StringVar(value=active_label)
+
+            def _on_commit_repo_change(val):
+                target = repo_map.get(val)
+                if target:
+                    self._gd_selected_repo = target
+                    self._page_commits()
+
+            rm = tk.OptionMenu(right_sel, repo_var, *repo_map.keys(), command=_on_commit_repo_change)
+            rm.config(font=FONTS["body_sm"], bg=COLORS["bg_card"], fg=COLORS["text_primary"],
+                      relief="flat", bd=0, highlightthickness=1, highlightbackground=COLORS["border"])
+            rm["menu"].config(bg=COLORS["bg_card"], fg=COLORS["text_primary"], font=FONTS["body_sm"])
+            rm.pack(side="left")
+
+        # Repo Stats banner (Wispr Flow style)
+        repo_commits_count = 0
+        branch_name = "unknown"
+        if active_repo and os.path.isdir(active_repo) and commit_engine.is_git_repo(active_repo):
+            repo_commits_count = commit_engine.get_repo_commit_count(active_repo)
+            branch_name = commit_engine.current_branch(active_repo)
+
+        banner = tk.Frame(parent, bg=COLORS["bg_card"], highlightthickness=1,
+                          highlightbackground=COLORS["border"], padx=18, pady=14)
+        banner.pack(fill="x", pady=(0, 16))
+
+        b_left = tk.Frame(banner, bg=COLORS["bg_card"])
+        b_left.pack(side="left", fill="x", expand=True)
+
+        rname = commit_engine.repo_name(active_repo) if active_repo else "No repository selected"
+        tk.Label(b_left, text=f"📁 {rname}", font=FONTS["heading_sm"],
+                 fg=COLORS["text_primary"], bg=COLORS["bg_card"]).pack(anchor="w")
+
+        meta_txt = f"🌿 Branch: {branch_name}  •  Path: {active_repo or 'N/A'}"
+        tk.Label(b_left, text=meta_txt, font=FONTS["caption"],
+                 fg=COLORS["text_muted"], bg=COLORS["bg_card"]).pack(anchor="w", pady=(2, 0))
+
+        b_right = tk.Frame(banner, bg=COLORS["bg_card"])
+        b_right.pack(side="right")
+
+        # Pill showing commit count (Requirement 6)
+        c_pill = tk.Frame(b_right, bg=COLORS["bg_medium"], highlightthickness=1,
+                          highlightbackground=COLORS["accent"], padx=12, pady=6)
+        c_pill.pack(side="right")
+        tk.Label(c_pill, text=f"⚡ {repo_commits_count} COMMITS IN THIS REPO",
+                 font=("Segoe UI", 9, "bold"), fg=COLORS["accent"], bg=COLORS["bg_medium"]).pack()
+
+        # Log file tracking quick toggle (Requirement 7)
+        log_cb = tk.Checkbutton(
+            b_right, text="Track *.log files",
+            variable=self._track_log_files_var,
+            font=FONTS["caption"], fg=COLORS["text_secondary"],
+            bg=COLORS["bg_card"], selectcolor=COLORS["bg_dark"],
+            activebackground=COLORS["bg_card"], activeforeground=COLORS["text_primary"],
+            command=self._toggle_track_log_files
+        )
+        log_cb.pack(side="right", padx=(0, 16))
+
+        # Commits List
+        history: List[Dict[str, Any]] = []
+        if active_repo and os.path.isdir(active_repo) and commit_engine.is_git_repo(active_repo):
+            history = commit_engine.get_repo_commit_history(active_repo, limit=60)
+
+        if not history:
+            activity = db.get_activity_log(self.user["id"], limit=200)
+            if not activity:
+                empty = tk.Frame(parent, bg=COLORS["bg_card"], padx=24, pady=30,
+                                 highlightthickness=1, highlightbackground=COLORS["border"])
+                empty.pack(fill="x", pady=10)
+                tk.Label(empty, text="📂 No commits recorded for this repository yet.",
+                         font=FONTS["heading_sm"], fg=COLORS["text_primary"], bg=COLORS["bg_card"]).pack()
+                tk.Label(empty, text="Make code changes in your project and commit through CommitMaster to see full history and comparisons.",
+                         font=FONTS["body_sm"], fg=COLORS["text_secondary"], bg=COLORS["bg_card"]).pack(pady=(4, 0))
+                return
+
+            for ent in activity:
+                row = tk.Frame(parent, bg=COLORS["bg_card"], highlightthickness=1,
+                               highlightbackground=COLORS["border"], padx=14, pady=10)
+                row.pack(fill="x", pady=3)
+                tk.Label(row, text=ent.get("commit_msg", ""), font=FONTS["label_bold"],
+                         fg=COLORS["text_primary"], bg=COLORS["bg_card"]).pack(side="left")
+                tk.Label(row, text=ent.get("committed_at", "")[:16], font=FONTS["caption"],
+                         fg=COLORS["text_muted"], bg=COLORS["bg_card"]).pack(side="right")
             return
 
-        # Table header
-        hdr = tk.Frame(pad, bg=COLORS["bg_medium"])
-        hdr.pack(fill="x")
-        for col, width in [("Repository", 18), ("Commit Message", 50), ("Files", 8), ("Date", 16)]:
-            tk.Label(hdr, text=col, font=FONTS["label_bold"],
-                     fg=COLORS["text_secondary"], bg=COLORS["bg_medium"],
-                     width=width, anchor="w", padx=8, pady=6).pack(side="left")
+        self._section_title(parent, f"COMMITS ({len(history)}) — CLICK ANY COMMIT TO COMPARE CODE CHANGES", (0, 10))
 
-        for entry in activity:
-            self._commit_table_row(pad, entry)
+        for item in history:
+            c_hash = item["hash"]
+            c_short = item["short_hash"]
+            c_subj = item["subject"]
+            c_author = item["author"]
+            c_date = item.get("relative_date") or item.get("date")
 
-    def _commit_table_row(self, parent, entry: dict):
-        row = tk.Frame(parent, bg=COLORS["bg_card"],
-                       highlightbackground=COLORS["border"],
-                       highlightthickness=0)
-        row.pack(fill="x")
-        tk.Frame(parent, height=1, bg=COLORS["border"]).pack(fill="x")
+            c_row = tk.Frame(parent, bg=COLORS["bg_card"], highlightthickness=1,
+                             highlightbackground=COLORS["border"], padx=14, pady=10, cursor="hand2")
+            c_row.pack(fill="x", pady=3)
 
-        def on_enter(e): row.config(bg=COLORS["bg_card_hover"])
-        def on_leave(e): row.config(bg=COLORS["bg_card"])
-        row.bind("<Enter>", on_enter)
-        row.bind("<Leave>", on_leave)
+            left_box = tk.Frame(c_row, bg=COLORS["bg_card"], cursor="hand2")
+            left_box.pack(side="left", fill="x", expand=True)
 
-        fields = [
-            (entry["repo_name"][:20], 18, COLORS["accent"]),
-            (entry["commit_msg"][:50], 50, COLORS["text_primary"]),
-            (str(entry.get("files_count", 0)), 8, COLORS["text_secondary"]),
-            (entry["committed_at"][:16], 16, COLORS["text_muted"]),
-        ]
-        for text, width, color in fields:
-            tk.Label(row, text=text, font=FONTS["body_sm"],
-                     fg=color, bg=COLORS["bg_card"],
-                     width=width, anchor="w", padx=8, pady=8).pack(side="left")
+            top_info = tk.Frame(left_box, bg=COLORS["bg_card"], cursor="hand2")
+            top_info.pack(fill="x")
+
+            h_pill = tk.Frame(top_info, bg=COLORS["bg_medium"], highlightthickness=1,
+                              highlightbackground=COLORS["accent"], padx=6, pady=2)
+            h_pill.pack(side="left", padx=(0, 8))
+            tk.Label(h_pill, text=c_short, font=FONTS["mono_bold"],
+                     fg=COLORS["accent"], bg=COLORS["bg_medium"]).pack()
+
+            subj_lbl = tk.Label(top_info, text=c_subj, font=FONTS["label_bold"],
+                                fg=COLORS["text_primary"], bg=COLORS["bg_card"], anchor="w")
+            subj_lbl.pack(side="left", fill="x", expand=True)
+
+            sub_info = tk.Frame(left_box, bg=COLORS["bg_card"], cursor="hand2")
+            sub_info.pack(fill="x", pady=(4, 0))
+            tk.Label(sub_info, text=f"👤 {c_author} committed {c_date}",
+                     font=FONTS["caption"], fg=COLORS["text_secondary"], bg=COLORS["bg_card"]).pack(side="left")
+
+            cmp_btn = tk.Button(
+                c_row, text="👁 View Diff / Compare Code →",
+                font=("Segoe UI", 9, "bold"), fg=COLORS["accent"], bg=COLORS["bg_medium"],
+                activebackground=COLORS["accent"], activeforeground="#ffffff",
+                relief="flat", bd=0, cursor="hand2", padx=12, pady=5,
+                command=lambda r=active_repo, h=c_hash: self._open_commit_diff(r, h)
+            )
+            cmp_btn.pack(side="right")
+            self._add_hover(cmp_btn, COLORS["bg_card_hover"], COLORS["bg_medium"])
+
+            def _bind_row_click(w, r=active_repo, h=c_hash):
+                w.bind("<Button-1>", lambda e: self._open_commit_diff(r, h))
+            for widget in (c_row, left_box, top_info, subj_lbl, sub_info):
+                _bind_row_click(widget)
+
+            def _row_enter(e, f=c_row):
+                f.config(bg=COLORS["bg_card_hover"], highlightbackground=COLORS["accent"])
+            def _row_leave(e, f=c_row):
+                f.config(bg=COLORS["bg_card"], highlightbackground=COLORS["border"])
+            c_row.bind("<Enter>", _row_enter)
+            c_row.bind("<Leave>", _row_leave)
+
+    def _open_commit_diff(self, repo_path: str, commit_hash: str):
+        """Navigate to the Code Comparison view for a specific commit."""
+        self._selected_commit_repo = repo_path
+        self._selected_commit_hash = commit_hash
+        self._selected_diff_file = None
+        self._page_commits()
+
+    def _render_commit_comparison_view(self, parent):
+        """Render the rich GitHub-style code comparison section matching user reference image."""
+        repo_path = self._selected_commit_repo or self._gd_selected_repo
+        commit_hash = self._selected_commit_hash
+
+        if not repo_path or not commit_hash:
+            self._selected_commit_hash = None
+            self._page_commits()
+            return
+
+        details = commit_engine.get_commit_details(repo_path, commit_hash)
+
+        # ── Navigation / Back Bar ──────────────────────────────────────────────
+        nav_bar = tk.Frame(parent, bg=COLORS["bg_dark"])
+        nav_bar.pack(fill="x", pady=(0, 12))
+
+        def _back_to_list():
+            self._selected_commit_hash = None
+            self._selected_diff_file = None
+            self._page_commits()
+
+        back_btn = tk.Button(
+            nav_bar, text="← Back to Commits List",
+            font=FONTS["label_bold"], fg=COLORS["text_primary"], bg=COLORS["bg_medium"],
+            activebackground=COLORS["bg_card_hover"], activeforeground=COLORS["accent"],
+            relief="flat", bd=0, cursor="hand2", padx=12, pady=6,
+            command=_back_to_list
+        )
+        back_btn.pack(side="left")
+        self._add_hover(back_btn, COLORS["bg_card_hover"], COLORS["bg_medium"])
+
+        rname = commit_engine.repo_name(repo_path)
+        tk.Label(nav_bar, text=f"📁 {rname}  /  Commit {details['short_hash']}",
+                 font=FONTS["body_sm"], fg=COLORS["text_secondary"], bg=COLORS["bg_dark"]).pack(side="left", padx=12)
+
+        # ── Commit Banner Box (Matching Reference Image) ───────────────────────
+        banner = tk.Frame(parent, bg="#0d1117", highlightthickness=1,
+                          highlightbackground="#30363d", padx=18, pady=14)
+        banner.pack(fill="x", pady=(0, 16))
+
+        top_row = tk.Frame(banner, bg="#0d1117")
+        top_row.pack(fill="x", pady=(0, 8))
+
+        c_title_lbl = tk.Label(top_row, text=f"Commit {details['short_hash']}",
+                               font=("Segoe UI", 16, "bold"), fg="#f0f6fc", bg="#0d1117")
+        c_title_lbl.pack(side="left")
+
+        def _open_folder():
+            try:
+                os.startfile(repo_path)
+            except Exception:
+                pass
+
+        browse_btn = tk.Button(
+            top_row, text="📂 Browse files",
+            font=FONTS["caption"], fg="#c9d1d9", bg="#21262d",
+            activebackground="#30363d", activeforeground="#f0f6fc",
+            relief="flat", bd=0, cursor="hand2", padx=10, pady=4,
+            command=_open_folder
+        )
+        browse_btn.pack(side="right")
+        self._add_hover(browse_btn, "#30363d", "#21262d")
+
+        author_row = tk.Frame(banner, bg="#0d1117")
+        author_row.pack(fill="x", pady=(0, 10))
+
+        author_name = details.get("author") or self.user.get("full_name") or self.user["username"]
+        av_initials = "".join([part[0].upper() for part in author_name.split()[:2]]) or "CM"
+        av_box = tk.Frame(author_row, bg="#238636", width=22, height=22)
+        av_box.pack(side="left", padx=(0, 8))
+        av_box.pack_propagate(False)
+        tk.Label(av_box, text=av_initials, font=("Segoe UI", 8, "bold"),
+                 fg="#ffffff", bg="#238636").pack(expand=True)
+
+        rel_date = details.get("date_relative") or details.get("date") or "recently"
+        tk.Label(author_row, text=f"{author_name} committed {rel_date}",
+                 font=FONTS["body_sm"], fg="#8b949e", bg="#0d1117").pack(side="left")
+
+        # Commit message card (Subject + Clean Body without line counts)
+        msg_box = tk.Frame(banner, bg="#161b22", highlightthickness=1,
+                           highlightbackground="#30363d", padx=14, pady=10)
+        msg_box.pack(fill="x", pady=(0, 10))
+
+        subj_lbl = tk.Label(msg_box, text=details.get("subject", ""),
+                            font=FONTS["label_bold"], fg="#f0f6fc", bg="#161b22",
+                            anchor="w", justify="left")
+        subj_lbl.pack(anchor="w")
+
+        body_text = details.get("body", "").strip()
+        cleaned_body_lines = []
+        for line in body_text.splitlines():
+            low = line.lower()
+            if "### changes summary" in low:
+                continue
+            if any(k in low for k in ["lines added", "lines removed", "line added", "line removed", "across "]):
+                continue
+            cleaned_body_lines.append(line)
+        cleaned_body = "\n".join(cleaned_body_lines).strip()
+
+        if cleaned_body:
+            body_lbl = tk.Label(msg_box, text=cleaned_body,
+                                font=FONTS["body_sm"], fg="#c9d1d9", bg="#161b22",
+                                anchor="w", justify="left")
+            body_lbl.pack(anchor="w", pady=(6, 0))
+
+        meta_row = tk.Frame(banner, bg="#0d1117")
+        meta_row.pack(fill="x", pady=(4, 0))
+
+        branch_name = commit_engine.current_branch(repo_path)
+        br_pill = tk.Frame(meta_row, bg="#21262d", padx=6, pady=2)
+        br_pill.pack(side="left", padx=(0, 8))
+        tk.Label(br_pill, text=f"🌿 {branch_name}", font=("Segoe UI", 8, "bold"),
+                 fg="#58a6ff", bg="#21262d").pack()
+
+        parent_short = details.get("short_parent")
+        if parent_short:
+            tk.Label(meta_row, text=f"1 parent {parent_short}  •  commit {details['short_hash']}",
+                     font=FONTS["caption"], fg="#8b949e", bg="#0d1117").pack(side="left")
+        else:
+            tk.Label(meta_row, text=f"commit {details['short_hash']}",
+                     font=FONTS["caption"], fg="#8b949e", bg="#0d1117").pack(side="left")
+
+        stats_pill = tk.Frame(meta_row, bg="#0d1117")
+        stats_pill.pack(side="right")
+
+        f_count = details.get("files_count", 0)
+        f_plural = "file" if f_count == 1 else "files"
+        tk.Label(stats_pill, text=f"{f_count} {f_plural} changed",
+                 font=FONTS["caption"], fg="#8b949e", bg="#0d1117").pack(side="left", padx=(0, 10))
+
+        tot_add = details.get("total_added", 0)
+        tot_del = details.get("total_removed", 0)
+        diff_badge = tk.Frame(stats_pill, bg="#21262d", padx=6, pady=2)
+        diff_badge.pack(side="left")
+        tk.Label(diff_badge, text=f"+{tot_add}", font=("Segoe UI", 8, "bold"),
+                 fg="#3fb950", bg="#21262d").pack(side="left")
+        tk.Label(diff_badge, text=f" -{tot_del} ", font=("Segoe UI", 8, "bold"),
+                 fg="#f85149", bg="#21262d").pack(side="left")
+
+        tot = tot_add + tot_del
+        blocks_frame = tk.Frame(diff_badge, bg="#21262d")
+        blocks_frame.pack(side="left")
+        if tot > 0:
+            add_blocks = int(round((tot_add / tot) * 5))
+            del_blocks = 5 - add_blocks
+            for _ in range(add_blocks):
+                tk.Label(blocks_frame, text="■", font=("Segoe UI", 7), fg="#2ea043", bg="#21262d").pack(side="left")
+            for _ in range(del_blocks):
+                tk.Label(blocks_frame, text="■", font=("Segoe UI", 7), fg="#da3633", bg="#21262d").pack(side="left")
+
+        # ── Two-Panel Code Comparison Section ──────────────────────────────────
+        comparison_frame = tk.Frame(parent, bg=COLORS["bg_dark"])
+        comparison_frame.pack(fill="both", expand=True)
+
+        files = details.get("files", [])
+        if not files:
+            tk.Label(comparison_frame, text="No file modifications recorded in this commit.",
+                     font=FONTS["body_md"], fg=COLORS["text_muted"], bg=COLORS["bg_dark"]).pack(pady=20)
+            return
+
+        if not self._selected_diff_file or not any(f["path"] == self._selected_diff_file for f in files):
+            self._selected_diff_file = files[0]["path"]
+
+        # Left Panel: File Explorer / Changed Files List (width: 260px)
+        left_pane = tk.Frame(comparison_frame, bg="#0d1117", width=260,
+                             highlightthickness=1, highlightbackground="#30363d")
+        left_pane.pack(side="left", fill="y", padx=(0, 10))
+        left_pane.pack_propagate(False)
+
+        filter_box = tk.Frame(left_pane, bg="#161b22", padx=8, pady=8)
+        filter_box.pack(fill="x")
+
+        filter_entry = tk.Entry(
+            filter_box, textvariable=self._diff_file_filter_var,
+            font=FONTS["body_sm"], bg="#0d1117", fg="#f0f6fc",
+            relief="flat", highlightthickness=1, highlightbackground="#30363d",
+            insertbackground="#f0f6fc"
+        )
+        filter_entry.pack(fill="x", ipady=3)
+        if not self._diff_file_filter_var.get():
+            filter_entry.insert(0, "Filter files...")
+            filter_entry.config(fg="#8b949e")
+
+            def _on_focus_in(e):
+                if filter_entry.get() == "Filter files...":
+                    filter_entry.delete(0, "end")
+                    filter_entry.config(fg="#f0f6fc")
+            def _on_focus_out(e):
+                if not filter_entry.get():
+                    filter_entry.insert(0, "Filter files...")
+                    filter_entry.config(fg="#8b949e")
+            filter_entry.bind("<FocusIn>", _on_focus_in)
+            filter_entry.bind("<FocusOut>", _on_focus_out)
+
+        files_canvas = tk.Canvas(left_pane, bg="#0d1117", highlightthickness=0)
+        files_scrollbar = tk.Scrollbar(left_pane, orient="vertical", command=files_canvas.yview)
+        files_canvas.configure(yscrollcommand=files_scrollbar.set)
+        files_scrollbar.pack(side="right", fill="y")
+        files_canvas.pack(side="left", fill="both", expand=True)
+
+        files_frame = tk.Frame(files_canvas, bg="#0d1117")
+        files_win = files_canvas.create_window((0, 0), window=files_frame, anchor="nw")
+
+        def _on_ff_config(e):
+            files_canvas.configure(scrollregion=files_canvas.bbox("all"))
+        files_frame.bind("<Configure>", _on_ff_config)
+        files_canvas.bind("<Configure>", lambda e: files_canvas.itemconfig(files_win, width=e.width))
+
+        # Right Panel: Code Comparison Viewer
+        right_pane = tk.Frame(comparison_frame, bg="#0d1117", highlightthickness=1,
+                              highlightbackground="#30363d")
+        right_pane.pack(side="left", fill="both", expand=True)
+
+        def _render_active_diff():
+            for w in right_pane.winfo_children():
+                w.destroy()
+
+            cur_file = self._selected_diff_file
+            cur_file_info = next((f for f in files if f["path"] == cur_file), {"added": 0, "removed": 0})
+
+            bar = tk.Frame(right_pane, bg="#161b22", padx=12, pady=8,
+                           highlightthickness=1, highlightbackground="#30363d")
+            bar.pack(fill="x")
+
+            tk.Label(bar, text=f"📄 {cur_file}", font=FONTS["label_bold"],
+                     fg="#f0f6fc", bg="#161b22").pack(side="left")
+
+            f_add = cur_file_info.get("added", 0)
+            f_del = cur_file_info.get("removed", 0)
+            f_badge = tk.Frame(bar, bg="#21262d", padx=6, pady=2)
+            f_badge.pack(side="left", padx=8)
+            tk.Label(f_badge, text=f"+{f_add} -{f_del}", font=("Segoe UI", 8, "bold"),
+                     fg="#3fb950" if f_add >= f_del else "#f85149", bg="#21262d").pack()
+
+            toggle_f = tk.Frame(bar, bg="#161b22")
+            toggle_f.pack(side="right", padx=(10, 0))
+
+            def _set_mode(m):
+                self._diff_view_mode = m
+                _render_active_diff()
+
+            split_bg = "#30363d" if self._diff_view_mode == "split" else "#21262d"
+            split_fg = "#58a6ff" if self._diff_view_mode == "split" else "#8b949e"
+            unif_bg = "#30363d" if self._diff_view_mode == "unified" else "#21262d"
+            unif_fg = "#58a6ff" if self._diff_view_mode == "unified" else "#8b949e"
+
+            s_btn = tk.Button(toggle_f, text="◫ Split", font=FONTS["caption"],
+                              bg=split_bg, fg=split_fg, relief="flat", bd=0, cursor="hand2", padx=8, pady=3,
+                              command=lambda: _set_mode("split"))
+            s_btn.pack(side="left", padx=1)
+
+            u_btn = tk.Button(toggle_f, text="☰ Unified", font=FONTS["caption"],
+                              bg=unif_bg, fg=unif_fg, relief="flat", bd=0, cursor="hand2", padx=8, pady=3,
+                              command=lambda: _set_mode("unified"))
+            u_btn.pack(side="left", padx=1)
+
+            search_box = tk.Frame(bar, bg="#0d1117", highlightthickness=1, highlightbackground="#30363d")
+            search_box.pack(side="right")
+            code_search_entry = tk.Entry(
+                search_box, textvariable=self._diff_code_search_var,
+                font=FONTS["caption"], bg="#0d1117", fg="#f0f6fc",
+                relief="flat", width=18, insertbackground="#f0f6fc"
+            )
+            code_search_entry.pack(side="left", padx=6, ipady=2)
+            tk.Label(search_box, text="🔍", font=("Segoe UI", 9), fg="#8b949e", bg="#0d1117").pack(side="right", padx=4)
+
+            raw_diff = commit_engine.get_commit_file_diff(repo_path, commit_hash, cur_file)
+
+            diff_container = tk.Frame(right_pane, bg="#0d1117")
+            diff_container.pack(fill="both", expand=True)
+
+            if self._diff_view_mode == "split":
+                self._render_split_diff_viewer(diff_container, raw_diff)
+            else:
+                self._render_unified_diff_viewer(diff_container, raw_diff)
+
+            def _on_code_search(*args):
+                q = self._diff_code_search_var.get().strip().lower()
+                for t_widget in getattr(self, "_active_diff_text_widgets", []):
+                    try:
+                        t_widget.tag_remove("search_match", "1.0", "end")
+                        if q and len(q) >= 2:
+                            idx = "1.0"
+                            while True:
+                                idx = t_widget.search(q, idx, nocase=True, stopindex="end")
+                                if not idx:
+                                    break
+                                end_idx = f"{idx}+{len(q)}c"
+                                t_widget.tag_add("search_match", idx, end_idx)
+                                idx = end_idx
+                    except Exception:
+                        pass
+
+            self._diff_code_search_var.trace_add("write", _on_code_search)
+
+        def _rebuild_file_list(*args):
+            for w in files_frame.winfo_children():
+                w.destroy()
+
+            flt = self._diff_file_filter_var.get().strip().lower()
+            if flt == "filter files...":
+                flt = ""
+
+            for f_info in files:
+                f_path = f_info["path"]
+                if flt and flt not in f_path.lower():
+                    continue
+
+                is_active = (f_path == self._selected_diff_file)
+                f_row = tk.Frame(files_frame, bg="#1f242c" if is_active else "#0d1117",
+                                 padx=8, pady=6, cursor="hand2")
+                f_row.pack(fill="x")
+
+                base_name = os.path.basename(f_path)
+                dir_name = os.path.dirname(f_path)
+
+                lbl_txt = f"{base_name}"
+                sub_txt = f"({dir_name})" if dir_name else ""
+
+                t_lbl = tk.Label(f_row, text=f"📄 {lbl_txt}",
+                                 font=("Segoe UI", 9, "bold" if is_active else "normal"),
+                                 fg="#58a6ff" if is_active else "#c9d1d9",
+                                 bg="#1f242c" if is_active else "#0d1117",
+                                 anchor="w")
+                t_lbl.pack(side="left", fill="x", expand=True)
+
+                b_lbl = tk.Label(f_row, text=f"+{f_info['added']} -{f_info['removed']}",
+                                 font=("Segoe UI", 8),
+                                 fg="#3fb950" if f_info['added'] >= f_info['removed'] else "#f85149",
+                                 bg="#1f242c" if is_active else "#0d1117")
+                b_lbl.pack(side="right")
+
+                def _click(p=f_path):
+                    self._selected_diff_file = p
+                    _rebuild_file_list()
+                    _render_active_diff()
+
+                for w in (f_row, t_lbl, b_lbl):
+                    w.bind("<Button-1>", lambda e, p=f_path: _click(p))
+
+        self._diff_file_filter_var.trace_add("write", _rebuild_file_list)
+        _rebuild_file_list()
+        _render_active_diff()
+
+    def _render_split_diff_viewer(self, container, raw_diff: str):
+        """Render side-by-side synchronized diff matching GitHub's split view."""
+        hunks = commit_engine.parse_diff_to_split_lines(raw_diff)
+
+        header_row = tk.Frame(container, bg="#161b22", height=24)
+        header_row.pack(fill="x")
+        header_row.pack_propagate(False)
+
+        left_hdr = tk.Frame(header_row, bg="#161b22")
+        left_hdr.pack(side="left", fill="both", expand=True)
+        tk.Label(left_hdr, text="  Original (Previous Version)", font=("Segoe UI", 8, "bold"),
+                 fg="#8b949e", bg="#161b22", anchor="w").pack(side="left", padx=8)
+
+        tk.Frame(header_row, width=1, bg="#30363d").pack(side="left", fill="y")
+
+        right_hdr = tk.Frame(header_row, bg="#161b22")
+        right_hdr.pack(side="left", fill="both", expand=True)
+        tk.Label(right_hdr, text="  Modified (Updated Version)", font=("Segoe UI", 8, "bold"),
+                 fg="#8b949e", bg="#161b22", anchor="w").pack(side="left", padx=8)
+
+        body_frame = tk.Frame(container, bg="#0d1117")
+        body_frame.pack(fill="both", expand=True)
+
+        scrollbar = tk.Scrollbar(body_frame, orient="vertical")
+        scrollbar.pack(side="right", fill="y")
+
+        left_text = tk.Text(body_frame, bg="#0d1117", fg="#c9d1d9", font=FONTS["mono"],
+                            wrap="none", relief="flat", bd=0, padx=6, pady=4,
+                            selectbackground="#1f6feb", selectforeground="#ffffff")
+        left_text.pack(side="left", fill="both", expand=True)
+
+        sep = tk.Frame(body_frame, width=1, bg="#30363d")
+        sep.pack(side="left", fill="y")
+
+        right_text = tk.Text(body_frame, bg="#0d1117", fg="#c9d1d9", font=FONTS["mono"],
+                             wrap="none", relief="flat", bd=0, padx=6, pady=4,
+                             selectbackground="#1f6feb", selectforeground="#ffffff")
+        right_text.pack(side="left", fill="both", expand=True)
+
+        self._active_diff_text_widgets = [left_text, right_text]
+
+        for t in (left_text, right_text):
+            t.tag_configure("hunk_hdr", background="#161b22", foreground="#58a6ff", font=FONTS["mono_bold"])
+            t.tag_configure("delete", background="#2a1215", foreground="#f87171")
+            t.tag_configure("add", background="#132e22", foreground="#4ade80")
+            t.tag_configure("context", foreground="#8b949e")
+            t.tag_configure("empty", background="#0d1117")
+            t.tag_configure("search_match", background="#d97706", foreground="#ffffff")
+
+        def _on_scroll(*args):
+            left_text.yview(*args)
+            right_text.yview(*args)
+
+        scrollbar.config(command=_on_scroll)
+        left_text.config(yscrollcommand=scrollbar.set)
+        right_text.config(yscrollcommand=scrollbar.set)
+
+        def _sync_wheel(event):
+            delta = int(-1 * (event.delta / 120)) if event.delta else 0
+            left_text.yview_scroll(delta, "units")
+            right_text.yview_scroll(delta, "units")
+            return "break"
+
+        left_text.bind("<MouseWheel>", _sync_wheel)
+        right_text.bind("<MouseWheel>", _sync_wheel)
+
+        if not hunks:
+            left_text.insert("end", "(No text diff changes detected)\n")
+            right_text.insert("end", "(No text diff changes detected)\n")
+        else:
+            for hunk in hunks:
+                hdr = hunk.get("header", "")
+                left_text.insert("end", f"{hdr}\n", "hunk_hdr")
+                right_text.insert("end", f"{hdr}\n", "hunk_hdr")
+
+                for row in hunk.get("rows", []):
+                    l_no = row.get("left_no", "")
+                    l_type = row.get("left_type", "context")
+                    l_text = row.get("left_text", "")
+                    if l_type == "empty":
+                        left_text.insert("end", "\n", "empty")
+                    else:
+                        sign = "-" if l_type == "delete" else " "
+                        tag = "delete" if l_type == "delete" else "context"
+                        prefix = f"{l_no.rjust(4)} {sign} "
+                        left_text.insert("end", f"{prefix}{l_text}\n", tag)
+
+                    r_no = row.get("right_no", "")
+                    r_type = row.get("right_type", "context")
+                    r_text = row.get("right_text", "")
+                    if r_type == "empty":
+                        right_text.insert("end", "\n", "empty")
+                    else:
+                        sign = "+" if r_type == "add" else " "
+                        tag = "add" if r_type == "add" else "context"
+                        prefix = f"{r_no.rjust(4)} {sign} "
+                        right_text.insert("end", f"{prefix}{r_text}\n", tag)
+
+        left_text.config(state="disabled")
+        right_text.config(state="disabled")
+
+    def _render_unified_diff_viewer(self, container, raw_diff: str):
+        """Render unified colored diff view."""
+        body_frame = tk.Frame(container, bg="#0d1117")
+        body_frame.pack(fill="both", expand=True)
+
+        scrollbar = tk.Scrollbar(body_frame, orient="vertical")
+        scrollbar.pack(side="right", fill="y")
+
+        u_text = tk.Text(body_frame, bg="#0d1117", fg="#c9d1d9", font=FONTS["mono"],
+                         wrap="none", relief="flat", bd=0, padx=10, pady=6,
+                         yscrollcommand=scrollbar.set,
+                         selectbackground="#1f6feb", selectforeground="#ffffff")
+        u_text.pack(side="left", fill="both", expand=True)
+        scrollbar.config(command=u_text.yview)
+
+        self._active_diff_text_widgets = [u_text]
+
+        u_text.tag_configure("hunk_hdr", background="#161b22", foreground="#58a6ff", font=FONTS["mono_bold"])
+        u_text.tag_configure("delete", background="#2a1215", foreground="#f87171")
+        u_text.tag_configure("add", background="#132e22", foreground="#4ade80")
+        u_text.tag_configure("meta", foreground="#8b949e")
+        u_text.tag_configure("search_match", background="#d97706", foreground="#ffffff")
+
+        for line in raw_diff.splitlines():
+            if line.startswith("@@"):
+                u_text.insert("end", f"{line}\n", "hunk_hdr")
+            elif line.startswith("-"):
+                u_text.insert("end", f"{line}\n", "delete")
+            elif line.startswith("+"):
+                u_text.insert("end", f"{line}\n", "add")
+            elif line.startswith(("diff ", "index ", "--- ", "+++ ")):
+                u_text.insert("end", f"{line}\n", "meta")
+            else:
+                u_text.insert("end", f"{line}\n")
+
+        u_text.config(state="disabled")
 
     def _page_settings(self):
         self._set_header("Settings")
@@ -1652,10 +2370,12 @@ class UserDashboard:
         self._skip_sensitive_var = tk.BooleanVar(value=bool(prefs.get("skip_sensitive", 1)))
         self._notif_var = tk.BooleanVar(value=bool(prefs.get("notifications", 1)))
         self._ask_push_var = tk.BooleanVar(value=bool(prefs.get("ask_before_push", 1)))
+        self._track_log_files_var = tk.BooleanVar(value=bool(prefs.get("track_log_files", 0)))
 
         for text, var in [
             ("Auto-commit without preview", self._auto_commit_var),
             ("Skip sensitive files (.env, keys, certs)", self._skip_sensitive_var),
+            ("Track and commit log files (*.log)", self._track_log_files_var),
             ("Desktop notifications on commit", self._notif_var),
             ("Ask before git push", self._ask_push_var),
         ]:
@@ -1922,6 +2642,7 @@ class UserDashboard:
             self.user["id"],
             auto_commit=int(self._auto_commit_var.get()),
             skip_sensitive=int(self._skip_sensitive_var.get()),
+            track_log_files=int(self._track_log_files_var.get()),
             notifications=int(self._notif_var.get()),
             session_end_grace=int(self._grace_var.get() or 120),
             reminder_interval_enabled=int(self._rem_interval_var.get()),
@@ -1946,6 +2667,7 @@ class UserDashboard:
         # Sync to config.json
         cfg = load_config()
         cfg["watched_apps"] = new_watched
+        cfg["track_log_files"] = bool(self._track_log_files_var.get())
         cfg["reminder"] = {
             "interval_enabled": bool(self._rem_interval_var.get()),
             "interval_hours": rem_hrs,
@@ -2698,6 +3420,17 @@ class UserDashboard:
                     self.root.after(0, _update)
             threading.Thread(target=_async_detect_gd, daemon=True).start()
 
+        # Quick log file toggle
+        log_cb = tk.Checkbutton(
+            tb_right, text="Track *.log",
+            variable=self._track_log_files_var,
+            font=FONTS["caption"], fg=COLORS["text_secondary"],
+            bg=COLORS["bg_card"], selectcolor=COLORS["bg_dark"],
+            activebackground=COLORS["bg_card"], activeforeground=COLORS["text_primary"],
+            command=lambda: (self._toggle_track_log_files(), self._nav_to("git_desktop"))
+        )
+        log_cb.pack(side="left", padx=(0, 10))
+
         refresh_btn = tk.Button(tb_right, text="🔄 Refresh", font=FONTS["caption"],
                                 fg=COLORS["text_primary"], bg=COLORS["bg_medium"],
                                 relief="flat", bd=0, cursor="hand2", padx=10, pady=4,
@@ -2718,8 +3451,8 @@ class UserDashboard:
                       command=self._gd_add_local_repo).pack(anchor="w")
             return
 
-        # Fetch changes
-        changes = commit_engine.uncommitted_changes(self._gd_selected_repo)
+        # Fetch changes (respecting track_log_files option)
+        changes = commit_engine.uncommitted_changes(self._gd_selected_repo, track_logs=self._should_track_logs())
         self._gd_changes = changes
         sensitive_patterns = cfg.get("sensitive_patterns", [])
 
@@ -3561,8 +4294,14 @@ class UserDashboard:
             except Exception:
                 pass
         db.revoke_session_token(self.user["id"])
+        self.next_action = "logout"
+        self.next_user = None
+        if self.on_logout:
+            try:
+                self.on_logout()
+            except Exception:
+                pass
         self.root.destroy()
-        self.on_logout()
 
     def _open_account_switcher(self):
         """Open interactive Account Switcher dialog to switch or add accounts."""
@@ -3574,12 +4313,14 @@ class UserDashboard:
                     self._reminder_service.stop()
                 except Exception:
                     pass
-            self.root.destroy()
+            self.next_action = "switch"
+            self.next_user = new_user
             if self.on_switch_account:
-                self.on_switch_account(new_user)
-            else:
-                from app import launch_app
-                launch_app()
+                try:
+                    self.on_switch_account(new_user)
+                except Exception:
+                    pass
+            self.root.destroy()
 
         def _on_add():
             if hasattr(self, "_reminder_service") and self._reminder_service:
@@ -3587,8 +4328,14 @@ class UserDashboard:
                     self._reminder_service.stop()
                 except Exception:
                     pass
+            self.next_action = "logout"
+            self.next_user = None
+            if self.on_logout:
+                try:
+                    self.on_logout()
+                except Exception:
+                    pass
             self.root.destroy()
-            self.on_logout()
 
         AccountSwitcherDialog(
             self.root, self.user,
