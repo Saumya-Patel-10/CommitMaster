@@ -5,6 +5,21 @@ from typing import Dict, Any, Optional
 
 # ── Base Theme Presets ─────────────────────────────────────────────────────────
 THEMES: Dict[str, Dict[str, str]] = {
+    "wispr_dark": {
+        "name": "Wispr Flow Obsidian (Editorial)",
+        "bg_darkest":    "#090d16",
+        "bg_dark":       "#0d1322",
+        "bg_medium":     "#131b2e",
+        "bg_card":       "#172138",
+        "bg_card_hover": "#1f2c4a",
+        "bg_input":      "#121a2c",
+        "bg_sidebar":    "#0a0f1b",
+        "text_primary":  "#f3f6fc",
+        "text_secondary":"#9aa5b8",
+        "text_muted":    "#526079",
+        "border":        "#222f48",
+        "border_focus":  "#ff6c4c",
+    },
     "github_dark": {
         "name": "GitHub Dark (Default)",
         "bg_darkest":    "#0d1117",
@@ -114,6 +129,20 @@ THEMES: Dict[str, Dict[str, str]] = {
 
 # ── Accent Presets ─────────────────────────────────────────────────────────────
 ACCENTS: Dict[str, Dict[str, str]] = {
+    "coral": {
+        "name": "Wispr Coral",
+        "accent": "#ff6c4c",
+        "accent_dark": "#e05537",
+        "accent_hover": "#ff866b",
+        "accent_glow": "#ff6c4c40",
+    },
+    "emerald": {
+        "name": "Luminous Emerald",
+        "accent": "#10b981",
+        "accent_dark": "#059669",
+        "accent_hover": "#34d399",
+        "accent_glow": "#10b98140",
+    },
     "green": {
         "name": "Emerald Green",
         "accent": "#3fb950",
