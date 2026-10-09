@@ -361,9 +361,9 @@ FILE_SYSTEM_PROMPT = (
     "Output rules:\n"
     "1. Never use backticks, single quotes, or double quotes in the summary headline.\n"
     "2. Never repeat the summary headline or rephrase it inside description bullet points.\n"
-    "3. Never repeat the scope or filename inside the summary highlight. Write 'refactor: enhance live browser page and its logic' or 'refactor(live-browser): enhance component and its logic', NEVER 'refactor(live-browser-page): enhance live browser page logic'.\n"
-    "4. Never include diff stats or line counts like (+4/-4 lines) in the headline.\n"
-    "5. Avoid junk characters: do not use excessive quotation marks ('' or \"\"), escaped quotes, or backticks around plain words.\n"
+    "3. Never repeat the scope or filename inside the summary highlight.\n"
+    "4. CRITICAL: Never include line counts, number of lines added, or number of lines removed (like '+4/-4 lines' or 'Changes Summary: X lines added'). Focus strictly on technical functionality and architectural updates.\n"
+    "5. CRITICAL: When referring to a function, method, class, variable, or symbol, ALWAYS wrap it in standard double quotes (e.g. Adds function \"fetch_company\", Updates \"_render_card_banner\"). NEVER use backticks (`foo`), single quotes, or backtick-quote combinations.\n"
     "6. In the description, provide concrete technical details describing what actually changed in the diff. Never use generic filler like 'Updates logic in X' or 'Refines implementation details in Y.tsx'. Mention each concept only once.\n"
     "7. Reply ONLY with a valid JSON object - no markdown fences, no extra prose."
 )
@@ -382,8 +382,6 @@ Change type: {status}
   "summary":     a Conventional Commit headline, <= 72 chars, format "<type>(<scope>): <imperative highlight>" or "<type>: <imperative highlight>".
                  State the PURPOSE / OUTCOME of the change clearly and concisely.
                  CRITICAL: Do NOT repeat the scope or filename twice.
-                 BAD:  "refactor(live-browser-page): enhance live browser page logic"
-                 GOOD: "refactor: enhance live browser page and its logic"
                  Never include diff stats or line counts (like +4/-4) in the summary.
                  Do NOT include backticks or quotes in the summary.
                  Types: feat, fix, refactor, perf, docs, test, chore, style.
@@ -395,14 +393,16 @@ Change type: {status}
                    "### Changes & Improvements"
                    followed by concise bullet points ("- ...") explaining the updates.
                    CRITICAL RULES:
+                   • Do NOT include lines added or lines removed counts anywhere.
+                   • When mentioning functions or classes, use standard double quotes (e.g. Adds function "init_db", Updates class "UserManager"). NEVER use backticks.
                    • Do NOT repeat the summary headline in the bullet points.
-                   • Do NOT repeat the filename (never say "Refines implementation details in filename.tsx").
+                   • Do NOT repeat the filename.
                    • State each update once with professional engineering precision.
                  - For bug or security fixes, include:
                    "### Bug Fixes & Security"
                  - For deletions, include:
-                   "### Removals"
-                 Never mention other files. Keep bullets concise, informative, professional, and free of junk quotes or backticks.
+                   "### Removals & Deprecations"
+                 Never mention other files. Keep bullets concise, informative, and professional.
 
 Reply with JSON only:
 {{"summary": "...", "description": "### New Features\\n- ...\\n\\n### Changes & Improvements\\n- ..."}}
@@ -498,7 +498,7 @@ def generate_file_comments(
             }
             continue
 
-        full_diff = commit_engine.file_diff(repo_path, f, max_chars=400_000)
+        full_diff = commit_engine.file_diff(repo_path, f, max_chars=400_000, against_remote=True)
         diff = full_diff[:_PER_FILE_DIFF_CHARS]          # what the model gets to read
         facts = _analyze_diff(full_diff, f, status)      # statistics use the whole diff
 
@@ -881,6 +881,7 @@ def _clean_description(text: str, path: str = "", other_basenames: Optional[List
     if ":" in summary_lower:
         summary_core = summary_lower.split(":", 1)[1].strip()
 
+    skip_section = False
     for raw in text.replace("\\n", "\n").splitlines():
         line = raw.strip()
         if not line:
@@ -889,23 +890,39 @@ def _clean_description(text: str, path: str = "", other_basenames: Optional[List
             continue
         if any(len(b) > 3 and b.lower() in line.lower() for b in other_basenames):
             continue                      # never let another file leak in
+
         if line.startswith("#"):
+            # Requirement 3: Never include line counts or "Changes Summary"
+            if "changes summary" in line.lower() or "summary of changes" in line.lower() or "diff stat" in line.lower():
+                skip_section = True
+                continue
+            else:
+                skip_section = False
             lines.append(line)
         else:
+            if skip_section:
+                continue
+
             line_clean = line.strip().strip('"\'')
             cleaned = re.sub(r"^[\-\*\u2022\d.\)\s]+", "", line_clean).strip()
-            # Clean junk characters: escaped quotes, doubled quotes, excessive quotes
+
+            # Requirement 3: filter out lines that mention added/removed line counts
+            if re.search(r"\b\d+\s+lines?\s+(added|removed)\b", cleaned, re.I) or re.search(r"\b\d+\s+added,\s*\d+\s+removed\b", cleaned, re.I):
+                continue
+
+            # Requirement 5: Convert backticks `symbol` into double quotes "symbol"
+            cleaned = re.sub(r"`+([^`\n]+)`+", r'"\1"', cleaned)
+
+            # Clean junk characters: escaped quotes, doubled quotes
             cleaned = cleaned.replace('\\"', '"').replace("\\'", "'")
-            cleaned = re.sub(r'["\']{2,}', '', cleaned)  # remove "" or ''
-            cleaned = re.sub(r'^["\']|["\']$', '', cleaned).strip()
-            cleaned = re.sub(r'\s*"\s*([^"]+?)\s*"\s*', r' \1 ', cleaned)
+            cleaned = re.sub(r'"{3,}', '"', cleaned)
+            cleaned = re.sub(r"'{3,}", "'", cleaned)
             cleaned = re.sub(r'\s+', ' ', cleaned).strip()
 
             if not cleaned:
                 continue
 
-            c_no_ticks = cleaned.replace("`", "").strip()
-            c_low = c_no_ticks.lower()
+            c_low = cleaned.lower()
 
             # Remove generic filler / boilerplate
             if any(c_low == b or c_low.startswith(b) for b in [
@@ -918,7 +935,7 @@ def _clean_description(text: str, path: str = "", other_basenames: Optional[List
             ]):
                 continue
 
-            # Prevent duplicate bullets (ignoring backticks, quotes, and punctuation)
+            # Prevent duplicate bullets (ignoring quotes and punctuation)
             norm_key = re.sub(r"[^a-z0-9]", "", c_low)
             if norm_key in seen_bullets:
                 continue
@@ -1065,7 +1082,7 @@ def _humanize(path: str) -> str:
 
 def _names(items, limit=2) -> str:
     names = [n for _, n in items] if items and isinstance(items[0], tuple) else list(items)
-    shown = [f"`{n}`" for n in names[:limit]]
+    shown = [f'"{n}"' for n in names[:limit]]
     if len(names) > limit:
         shown.append(f"{len(names) - limit} more")
     if len(shown) > 1:
@@ -1167,37 +1184,37 @@ def _heuristic_message(path: str, status: Any = "M", facts: Optional[dict] = Non
     base = os.path.basename(path)
     kind_word = {"def": "function", "function": "function", "class": "class"}
 
-    # Subsection 1: New Features
+    # Subsection 1: New Features (Requirement 5: double quotes, Requirement 3: no line counts)
     new_feature_bullets = []
     if is_new:
-        new_feature_bullets.append(f"Introduces `{base}` module ({added} line{'s' if added != 1 else ''})")
+        new_feature_bullets.append(f'Introduces "{base}" module')
     for kind, name in major_new[:6]:
         k = kind_word.get(kind, kind)
-        new_feature_bullets.append(f"Adds {k} `{name}`")
+        new_feature_bullets.append(f'Adds {k} "{name}"')
     for kind, name in minor_new[:3]:
         k = kind_word.get(kind, kind)
-        new_feature_bullets.append(f"Adds helper {k} `{name}`")
+        new_feature_bullets.append(f'Adds helper {k} "{name}"')
     for kind, name in dunder_new[:2]:
-        new_feature_bullets.append(f"Implements `{name}` method")
+        new_feature_bullets.append(f'Implements "{name}" method')
 
     if new_feature_bullets:
         sections.append("### New Features\n" + "\n".join(f"- {b}" for b in new_feature_bullets))
 
-    # Subsection 2: Changes & Improvements
+    # Subsection 2: Changes & Improvements (Requirement 5: double quotes)
     change_bullets = []
     for name in meaningful_touched[:5]:
         clean_name = str(name).strip("`\"' ")
         if is_ui_file:
-            change_bullets.append(f"Updates component layout and rendering in {clean_name}")
+            change_bullets.append(f'Updates component layout and rendering in "{clean_name}"')
             if sigs.get("events"):
                 change_bullets.append("Refines event handlers and user interactions")
             elif sigs.get("hooks"):
                 change_bullets.append("Adjusts internal hook dependencies and state flow")
         else:
-            change_bullets.append(f"Updates logic in `{name}`")
+            change_bullets.append(f'Updates logic in "{name}"')
     for h in (facts.get("headings") or [])[:3]:
         clean_h = h.strip("`\"' ")[:60]
-        change_bullets.append(f"Documents {clean_h}")
+        change_bullets.append(f'Documents "{clean_h}"')
     if not new_feature_bullets and not change_bullets and status != "D":
         if is_ui_file:
             if sigs.get("hooks"):
@@ -1223,21 +1240,19 @@ def _heuristic_message(path: str, status: Any = "M", facts: Optional[dict] = Non
     if change_bullets:
         sections.append("### Changes & Improvements\n" + "\n".join(f"- {b}" for b in change_bullets))
 
-    # Subsection 3: Removals & Deprecations (if any)
+    # Subsection 3: Removals & Deprecations (Requirement 5: double quotes)
     removal_bullets = []
     if status == "D":
-        removal_bullets.append(f"Removes `{base}` from the project repository")
+        removal_bullets.append(f'Removes "{base}" from the project repository')
     for kind, name in gone[:4]:
         k = kind_word.get(kind, kind)
-        removal_bullets.append(f"Removes {k} `{name}`")
+        removal_bullets.append(f'Removes {k} "{name}"')
 
     if removal_bullets:
         sections.append("### Removals & Deprecations\n" + "\n".join(f"- {b}" for b in removal_bullets))
 
-    # Subsection 4: Metrics / Summary
-    if status != "D":
-        stats_line = f"{added} line{'s' if added != 1 else ''} added, {removed} removed across {path}"
-        sections.append(f"### Changes Summary\n- {stats_line}")
+    # Note: Subsection 4 (Metrics / line added and removed summary) is intentionally omitted
+    # per Requirement 3: commit message descriptions should not have line counts.
 
     description = "\n\n".join(sections)
     return {"summary": summary, "description": description}
