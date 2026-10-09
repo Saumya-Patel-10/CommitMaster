@@ -58,7 +58,7 @@ def _clear_token() -> None:
 
 
 def launch_app():
-    """Main entry point — initialise DB and start the unified application."""
+    """Main entry point — initialise DB and run the non-blocking unified application loop."""
     try:
         from commitmaster import windows_integration
         windows_integration.set_dpi_awareness()
@@ -67,21 +67,94 @@ def launch_app():
         db.init_db()
 
         # ── 1. Check active account from multi-account manager ───────────────
-        user = None
+        current_user = None
         active_acc = account_manager.get_active_account()
         if active_acc and active_acc.get("username"):
-            user = db.get_user_by_username_or_email(active_acc["username"])
+            current_user = db.get_user_by_username_or_email(active_acc["username"])
 
         # ── 2. Fallback to persisted session token ───────────────────────────
-        if not user:
+        if not current_user:
             token = _load_token()
             if token:
-                user = db.validate_session_token(token)
+                current_user = db.validate_session_token(token)
 
-        if user:
-            _route_user(dict(user))
-        else:
-            _open_login()
+        # ── 3. Clean, Non-blocking Session Lifecycle Loop ────────────────────
+        while True:
+            if not current_user:
+                auth_result = {"user": None}
+                def on_login_success(u: dict):
+                    auth_result["user"] = u
+
+                win = LoginWindow(on_success=on_login_success)
+                win.run()
+
+                current_user = auth_result["user"] or getattr(win, "authenticated_user", None)
+                if not current_user:
+                    # User closed the login window without authenticating
+                    break
+
+            # Persist session token and active account
+            user_dict = dict(current_user)
+            token = db.create_session_token(user_dict["id"])
+            _save_token(token)
+            try:
+                account_manager.save_account(
+                    username=user_dict["username"],
+                    user_id=user_dict["id"],
+                    role=user_dict.get("role", "user"),
+                    full_name=user_dict.get("full_name", ""),
+                    email=user_dict.get("email", ""),
+                    avatar_color=user_dict.get("avatar_color", "")
+                )
+            except Exception:
+                pass
+
+            session_state = {"action": "exit", "next_user": None}
+
+            def on_logout():
+                _clear_token()
+                try:
+                    account_manager.clear_active_account()
+                except Exception:
+                    pass
+                session_state["action"] = "logout"
+                session_state["next_user"] = None
+
+            def on_switch_account(switched_user: dict):
+                session_state["action"] = "switch"
+                session_state["next_user"] = switched_user
+
+            username = user_dict.get("username", "")
+
+            # Strict exclusivity check: ONLY designated admin username opens admin portal
+            if db.is_admin_username(username):
+                import admin_app
+                admin_app._open_admin_window(
+                    user=user_dict,
+                    on_logout=on_logout,
+                    on_switch_account=on_switch_account
+                )
+            else:
+                dashboard = UserDashboard(
+                    user=user_dict,
+                    on_logout=on_logout,
+                    on_switch_account=on_switch_account
+                )
+                dashboard.run()
+                if getattr(dashboard, "next_action", None):
+                    session_state["action"] = dashboard.next_action
+                    session_state["next_user"] = getattr(dashboard, "next_user", None)
+
+            # Process state after the window has completely destroyed its mainloop
+            if session_state["action"] == "switch" and session_state["next_user"]:
+                current_user = session_state["next_user"]
+                continue
+            elif session_state["action"] == "logout":
+                current_user = None
+                continue
+            else:
+                break
+
     except Exception as exc:
         import traceback
         err_msg = traceback.format_exc()
@@ -97,67 +170,6 @@ def launch_app():
         except Exception:
             pass
         raise
-
-
-def _open_login():
-    """Display the unified login / signup window."""
-    def on_success(user: dict):
-        _route_user(user)
-
-    win = LoginWindow(on_success=on_success)
-    win.run()
-
-
-def _route_user(user: dict):
-    """
-    Route the authenticated user to either:
-      1. Admin Portal (AdminApp): ONLY and ONLY if user's username matches the designated
-         admin username (default "saumya.patel@Admin_#" or changed in settings).
-      2. User Dashboard: For all standard users.
-    """
-    # Persist session token and active account in multi-account manager
-    token = db.create_session_token(user["id"])
-    _save_token(token)
-    try:
-        account_manager.save_account(
-            username=user["username"],
-            user_id=user["id"],
-            role=user.get("role", "user"),
-            full_name=user.get("full_name", ""),
-            email=user.get("email", ""),
-            avatar_color=user.get("avatar_color", "")
-        )
-    except Exception:
-        pass
-
-    def on_logout():
-        _clear_token()
-        try:
-            account_manager.clear_active_account()
-        except Exception:
-            pass
-        _open_login()
-
-    def on_switch_account(switched_user: dict):
-        _route_user(switched_user)
-
-    username = user.get("username", "")
-
-    # Strict exclusivity check: ONLY the designated admin username opens the admin portal
-    if db.is_admin_username(username):
-        import admin_app
-        admin_app._open_admin_window(
-            user=user,
-            on_logout=on_logout,
-            on_switch_account=on_switch_account
-        )
-    else:
-        dashboard = UserDashboard(
-            user=user,
-            on_logout=on_logout,
-            on_switch_account=on_switch_account
-        )
-        dashboard.run()
 
 
 if __name__ == "__main__":
