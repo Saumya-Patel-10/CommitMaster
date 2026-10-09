@@ -56,6 +56,8 @@ def get_saved_accounts() -> List[Dict[str, Any]]:
                 acc["is_verified"] = db_u.get("is_verified", acc.get("is_verified", 0))
                 acc["full_name"] = db_u.get("full_name", acc.get("full_name", ""))
                 acc["username"] = db_u.get("username", acc.get("username", ""))
+                acc["avatar_color"] = db_u.get("avatar_color", acc.get("avatar_color", "#3fb950"))
+                acc["avatar_image"] = db_u.get("avatar_image", acc.get("avatar_image", ""))
                 updated = True
         except Exception:
             pass
@@ -119,6 +121,19 @@ def save_account(*args, **kwargs) -> None:
     uid = user_dict.get("id") or user_dict.get("user_id") or kwargs.get("user_id", 0)
     tok = tok or user_dict.get("token") or kwargs.get("token", "")
 
+    avatar_img = user_dict.get("avatar_image", kwargs.get("avatar_image", ""))
+    if not avatar_img and uid:
+        try:
+            db_u = db.get_user(uid)
+            if db_u and db_u.get("avatar_image"):
+                avatar_img = db_u["avatar_image"]
+        except Exception:
+            pass
+    if not avatar_img and uid:
+        candidate = os.path.join(APP_DIR, "assets", "avatars", f"user_{uid}.png")
+        if os.path.exists(candidate):
+            avatar_img = candidate
+
     acc_entry = {
         "id": uid,
         "username": user_dict.get("username", kwargs.get("username", "")),
@@ -126,6 +141,7 @@ def save_account(*args, **kwargs) -> None:
         "full_name": user_dict.get("full_name", kwargs.get("full_name", "")),
         "role": user_dict.get("role", kwargs.get("role", "user")),
         "avatar_color": user_dict.get("avatar_color", kwargs.get("avatar_color", "#3fb950")),
+        "avatar_image": avatar_img,
         "is_verified": user_dict.get("is_verified", kwargs.get("is_verified", 0)),
         "token": tok,
         "last_active": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -294,6 +310,23 @@ class AccountSwitcherDialog:
         canvas.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
 
+        def _on_sw_wheel(event):
+            delta = getattr(event, "delta", 0)
+            if not delta:
+                return "break"
+            pixels = int(-(delta / 120.0) * 35) if abs(delta) >= 120 else (-1 if delta > 0 else 1) * 25
+            try:
+                canvas.yview_scroll(pixels, "units")
+            except Exception:
+                pass
+            return "break"
+
+        self.dialog.bind("<MouseWheel>", _on_sw_wheel)
+        self.dialog.bind("<Button-4>", lambda e: canvas.yview_scroll(-25, "units"))
+        self.dialog.bind("<Button-5>", lambda e: canvas.yview_scroll(25, "units"))
+        canvas.bind("<MouseWheel>", _on_sw_wheel)
+        scrollable_frame.bind("<MouseWheel>", _on_sw_wheel)
+
         accounts = get_saved_accounts()
         curr_id = self.current_user.get("id")
 
@@ -341,18 +374,34 @@ class AccountSwitcherDialog:
 
         # Avatar photo or badge
         from commitmaster import avatar_utils
-        av_photo = avatar_utils.get_avatar_photo(acc, size=38, rounded=True, master=self.dialog)
+        if not acc.get("avatar_image") and acc.get("id"):
+            try:
+                db_u = db.get_user(acc["id"])
+                if db_u and db_u.get("avatar_image"):
+                    acc["avatar_image"] = db_u["avatar_image"]
+            except Exception:
+                pass
+        if not acc.get("avatar_image") and acc.get("id"):
+            candidate = os.path.join(avatar_utils.AVATARS_DIR, f"user_{acc['id']}.png")
+            if os.path.exists(candidate):
+                acc["avatar_image"] = candidate
+
+        if not hasattr(self, "_photos"):
+            self._photos = []
+
+        av_photo = avatar_utils.get_avatar_photo(acc, size=40, rounded=True, master=self.dialog)
         if av_photo:
-            av_lbl = tk.Label(card, image=av_photo, bg=card["bg"])
+            self._photos.append(av_photo)
+            av_lbl = tk.Label(card, image=av_photo, bg=card["bg"], width=40, height=40)
             av_lbl.image = av_photo
-            av_lbl.pack(side="left", padx=(0, 10))
+            av_lbl.pack(side="left", padx=(0, 12))
         else:
             av_color = acc.get("avatar_color", "#3fb950")
             initial = (acc.get("full_name") or acc.get("username") or "?")[0].upper()
-            av_canvas = tk.Canvas(card, width=38, height=38, bg=card["bg"], highlightthickness=0)
-            av_canvas.pack(side="left", padx=(0, 10))
-            av_canvas.create_oval(2, 2, 36, 36, fill=av_color, outline="")
-            av_canvas.create_text(19, 19, text=initial, fill="white", font=("Segoe UI", 12, "bold"))
+            av_canvas = tk.Canvas(card, width=40, height=40, bg=card["bg"], highlightthickness=0)
+            av_canvas.pack(side="left", padx=(0, 12))
+            av_canvas.create_oval(2, 2, 38, 38, fill=av_color, outline="")
+            av_canvas.create_text(20, 20, text=initial, fill="white", font=("Segoe UI", 12, "bold"))
 
         # Details
         info_box = tk.Frame(card, bg=card["bg"])
