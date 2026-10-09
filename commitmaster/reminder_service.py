@@ -121,7 +121,8 @@ class ReminderService(threading.Thread):
                 self.interval_enabled = bool(prefs.get("reminder_interval_enabled", 1))
                 self.interval_hours = int(prefs.get("reminder_interval_hours", 1))
                 self.interval_minutes = int(prefs.get("reminder_interval_minutes", 0))
-                self.app_monitor_enabled = bool(prefs.get("reminder_app_monitor_enabled", 1))
+                # IDE & Coding App monitoring is ALWAYS ON
+                self.app_monitor_enabled = True
                 self.only_if_dirty = bool(prefs.get("reminder_only_if_dirty", 1))
 
                 # Watched apps from DB preference or config
