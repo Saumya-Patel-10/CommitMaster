@@ -37,6 +37,7 @@ class LoginWindow:
         self._active_pattern = sys_pattern or "dot_matrix"
 
         self.root = tk.Tk()
+        self.authenticated_user: Optional[dict] = None
         self._mode = "login"  # or "register"
         self._setup_window()
         self._build_ui()
@@ -339,39 +340,31 @@ class LoginWindow:
             self._err_label.config(text="Please enter a valid Google Account address (@gmail.com).", fg=COLORS["error"])
             return
 
-        self._err_label.config(text=f"Sending verification code to {clean_email}...", fg=COLORS["info"])
-        self.root.update_idletasks()
-        ok, msg, code = otp_service.send_google_otp(clean_email, purpose="login")
-        if not ok:
-            self._err_label.config(text=msg, fg=COLORS["error"])
-            return
+        user = db.get_user_by_username_or_email(clean_email)
+        if not user:
+            # Create user for this Google account directly
+            uname = clean_email.split("@")[0]
+            base_uname = uname
+            c = 1
+            while db.check_user_exists(uname, clean_email) == "username":
+                uname = f"{base_uname}{c}"
+                c += 1
+            rand_pw = secrets.token_urlsafe(12)
+            uid = db.create_user(uname, clean_email, uname.replace(".", " ").title(), rand_pw)
+            if uid:
+                db.mark_user_verified(uid)
+                user = db.get_user(uid)
+        else:
+            db.mark_user_verified(user["id"])
+            user = db.get_user(user["id"])
 
-        def _on_verified():
-            user = db.get_user_by_username_or_email(clean_email)
-            if not user:
-                # Create user for this Google account
-                uname = clean_email.split("@")[0]
-                base_uname = uname
-                c = 1
-                while db.check_user_exists(uname, clean_email) == "username":
-                    uname = f"{base_uname}{c}"
-                    c += 1
-                rand_pw = secrets.token_urlsafe(12)
-                uid = db.create_user(uname, clean_email, uname.replace(".", " ").title(), rand_pw)
-                if uid:
-                    db.mark_user_verified(uid)
-                    user = db.get_user(uid)
-            else:
-                db.mark_user_verified(user["id"])
-                user = db.get_user(user["id"])
-
-            if user:
-                token = db.create_session_token(user["id"])
-                account_manager.save_account(user, token)
-                self.root.destroy()
+        if user:
+            token = db.create_session_token(user["id"])
+            account_manager.save_account(user, token)
+            self.authenticated_user = user
+            self.root.destroy()
+            if self.on_success:
                 self.on_success(user)
-
-        otp_service.GoogleOtpDialog(self.root, clean_email, on_success=_on_verified, purpose="login", initial_code=code)
 
     # ── Mode switching ────────────────────────────────────────────────────────
 
@@ -579,8 +572,10 @@ class LoginWindow:
                 if user:
                     token = db.create_session_token(user["id"])
                     account_manager.save_account(user, token)
+                    self.authenticated_user = user
                     self.root.destroy()
-                    self.on_success(user)
+                    if self.on_success:
+                        self.on_success(user)
                 else:
                     srv = db.get_server_url()
                     if srv:
@@ -648,38 +643,18 @@ class LoginWindow:
                     self._email_entry.focus()
                     return
 
-                # If Google account, trigger OTP verification
-                if otp_service.is_google_email(email):
-                    self._err_label.config(text=f"Sending verification code to {email}...", fg=COLORS["info"])
-                    self.root.update_idletasks()
-                    ok, msg, code = otp_service.send_google_otp(email, purpose="register")
-                    if not ok:
-                        self._err_label.config(text=msg, fg=COLORS["error"])
-                        return
-
-                    def _on_verified():
-                        uid = db.create_user(username, email, full_name, password)
-                        if uid:
-                            db.mark_user_verified(uid)
-                            user = db.get_user(uid)
-                            token = db.create_session_token(uid)
-                            account_manager.save_account(user, token)
-                            self.root.destroy()
-                            self.on_success(user)
-                        else:
-                            self._err_label.config(text="Failed to create account. Please try again.")
-
-                    otp_service.GoogleOtpDialog(self.root, email, on_success=_on_verified, purpose="register", initial_code=code)
-                    return
-
+                # Directly create account without email verification dialog (Requirement 2)
                 uid = db.create_user(username, email, full_name, password)
                 if uid:
+                    db.mark_user_verified(uid)
                     user = db.get_user(uid)
                     if user:
                         token = db.create_session_token(uid)
                         account_manager.save_account(user, token)
+                        self.authenticated_user = user
                         self.root.destroy()
-                        self.on_success(user)
+                        if self.on_success:
+                            self.on_success(user)
                     else:
                         self._err_label.config(text="Account created! Please sign in with your credentials.")
                         self._set_mode("login")
