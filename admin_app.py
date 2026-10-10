@@ -36,35 +36,43 @@ from commitmaster.github_account_dialog import GitHubAccountDialog, SelectGitHub
 from commitmaster.login_window import LoginWindow
 from commitmaster.reminder_service import ReminderService
 
-_TOKEN_FILE = os.path.join(APP_DIR, ".admin_session")
+from commitmaster import paths
+
+_TOKEN_FILE = paths.get_token_path()
+_ADMIN_TOKEN_FILE = paths.get_admin_token_path()
 
 
 # ── Token helpers ──────────────────────────────────────────────────────────────
 
 def _save_token(token: str) -> None:
-    try:
-        with open(_TOKEN_FILE, "w") as f:
-            json.dump({"token": token}, f)
-    except Exception:
-        pass
+    for path in (_TOKEN_FILE, _ADMIN_TOKEN_FILE):
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump({"token": token}, f)
+        except Exception:
+            pass
 
 
 def _load_token() -> str:
-    try:
-        if os.path.exists(_TOKEN_FILE):
-            with open(_TOKEN_FILE) as f:
-                return json.load(f).get("token", "")
-    except Exception:
-        pass
+    for path in (_TOKEN_FILE, _ADMIN_TOKEN_FILE):
+        try:
+            if os.path.exists(path):
+                with open(path, "r", encoding="utf-8") as f:
+                    tok = json.load(f).get("token", "")
+                    if tok:
+                        return tok
+        except Exception:
+            pass
     return ""
 
 
 def _clear_token() -> None:
-    try:
-        if os.path.exists(_TOKEN_FILE):
-            os.remove(_TOKEN_FILE)
-    except Exception:
-        pass
+    for path in (_TOKEN_FILE, _ADMIN_TOKEN_FILE):
+        try:
+            if os.path.exists(path):
+                os.remove(path)
+        except Exception:
+            pass
 
 
 # ── Entry point ────────────────────────────────────────────────────────────────
@@ -1846,6 +1854,24 @@ class AdminApp:
         )
 
         watched_all = db.get_watched_repos(self.user["id"])
+        # Silently auto-link any authorized repositories matching folders in user's projects_dirs
+        try:
+            import json
+            prefs = db.get_preferences(self.user["id"]) or {}
+            raw_dirs = prefs.get("projects_dirs", "[]")
+            dirs_list = json.loads(raw_dirs) if isinstance(raw_dirs, str) else []
+            for r in watched_all:
+                if not (r.get("local_path") or "").strip():
+                    rname = r.get("repo_name", "")
+                    for pd in dirs_list:
+                        candidate = os.path.normpath(os.path.join(pd, rname))
+                        if os.path.isdir(candidate) and commit_engine.is_git_repo(candidate):
+                            db.set_watched_repo_local_path(r["id"], self.user["id"], candidate)
+                            r["local_path"] = candidate
+                            break
+        except Exception:
+            pass
+
         active_count = sum(1 for r in watched_all if r.get("is_active_watch"))
         local_count = sum(1 for r in watched_all if r.get("local_path"))
 
@@ -1950,7 +1976,6 @@ class AdminApp:
             is_active_watch=1,
         )
         self._gd_selected_repo = folder
-        messagebox.showinfo("Repository Added", f"Repository '{rname}' added and authorized in CommitMaster!", parent=self.root)
         self._nav_to("watched_repos")
 
     def _wr_remove_repo(self, repo: Dict):
@@ -2060,7 +2085,6 @@ class AdminApp:
         if d:
             if commit_engine.is_git_repo(d):
                 db.set_watched_repo_local_path(repo["id"], self.user["id"], d)
-                messagebox.showinfo("Linked", f"Linked '{repo['repo_name']}' to {d}", parent=self.root)
                 self._nav_to("watched_repos")
             else:
                 messagebox.showwarning("Not a Git Repo", f"Folder '{d}' does not contain a .git directory.", parent=self.root)
