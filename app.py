@@ -22,39 +22,46 @@ APP_DIR = os.path.dirname(os.path.abspath(__file__))
 if APP_DIR not in sys.path:
     sys.path.insert(0, APP_DIR)
 
+from commitmaster import paths
 from commitmaster import database as db
 from commitmaster import account_manager
 from commitmaster.login_window import LoginWindow
 from commitmaster.user_dashboard import UserDashboard
 
-# Path for persisting the last-used session token
-_TOKEN_FILE = os.path.join(APP_DIR, ".session_token")
+# Persistent paths for session tokens
+_TOKEN_FILE = paths.get_token_path()
+_ADMIN_TOKEN_FILE = paths.get_admin_token_path()
 
 
 def _save_token(token: str) -> None:
-    try:
-        with open(_TOKEN_FILE, "w") as f:
-            json.dump({"token": token}, f)
-    except Exception:
-        pass
+    for path in (_TOKEN_FILE, _ADMIN_TOKEN_FILE):
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump({"token": token}, f)
+        except Exception:
+            pass
 
 
 def _load_token() -> str:
-    try:
-        if os.path.exists(_TOKEN_FILE):
-            with open(_TOKEN_FILE) as f:
-                return json.load(f).get("token", "")
-    except Exception:
-        pass
+    for path in (_TOKEN_FILE, _ADMIN_TOKEN_FILE):
+        try:
+            if os.path.exists(path):
+                with open(path, "r", encoding="utf-8") as f:
+                    tok = json.load(f).get("token", "")
+                    if tok:
+                        return tok
+        except Exception:
+            pass
     return ""
 
 
 def _clear_token() -> None:
-    try:
-        if os.path.exists(_TOKEN_FILE):
-            os.remove(_TOKEN_FILE)
-    except Exception:
-        pass
+    for path in (_TOKEN_FILE, _ADMIN_TOKEN_FILE):
+        try:
+            if os.path.exists(path):
+                os.remove(path)
+        except Exception:
+            pass
 
 
 def launch_app():
@@ -79,7 +86,30 @@ def launch_app():
             if token:
                 current_user = db.validate_session_token(token)
 
-        # ── 3. Clean, Non-blocking Session Lifecycle Loop ────────────────────
+        # ── 3. Fallback to default or saved account ──────────────────────────
+        if not current_user:
+            default_acc = account_manager.get_default_account()
+            if default_acc and default_acc.get("username"):
+                current_user = db.get_user_by_username_or_email(default_acc["username"])
+
+        # ── 4. Fallback to designated default admin account ──────────────────
+        if not current_user:
+            admin_uname = db.get_admin_username()
+            if admin_uname:
+                current_user = db.get_user_by_username_or_email(admin_uname)
+
+        # If user was found via any auto sign-in fallback, ensure fresh active session
+        if current_user:
+            user_dict = dict(current_user)
+            token = db.create_session_token(user_dict["id"])
+            _save_token(token)
+            db.set_active_session_token(token)
+            try:
+                account_manager.save_account(user_dict, token)
+            except Exception:
+                pass
+
+        # ── 5. Clean, Non-blocking Session Lifecycle Loop ────────────────────
         while True:
             if not current_user:
                 auth_result = {"user": None}
@@ -98,21 +128,16 @@ def launch_app():
             user_dict = dict(current_user)
             token = db.create_session_token(user_dict["id"])
             _save_token(token)
+            db.set_active_session_token(token)
             try:
-                account_manager.save_account(
-                    username=user_dict["username"],
-                    user_id=user_dict["id"],
-                    role=user_dict.get("role", "user"),
-                    full_name=user_dict.get("full_name", ""),
-                    email=user_dict.get("email", ""),
-                    avatar_color=user_dict.get("avatar_color", "")
-                )
+                account_manager.save_account(user_dict, token)
             except Exception:
                 pass
 
             session_state = {"action": "exit", "next_user": None}
 
             def on_logout():
+
                 _clear_token()
                 try:
                     account_manager.clear_active_account()
