@@ -331,6 +331,22 @@ def init_db() -> None:
         )
     """)
 
+    # ── User Security Questions Table (Password Recovery) ─────────────────────
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS user_security_questions (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            question_1    TEXT    NOT NULL,
+            answer_hash_1 TEXT    NOT NULL,
+            question_2    TEXT    NOT NULL,
+            answer_hash_2 TEXT    NOT NULL,
+            created_at    TEXT    NOT NULL DEFAULT (datetime('now')),
+            updated_at    TEXT    NOT NULL DEFAULT (datetime('now')),
+            UNIQUE(user_id)
+        )
+    """)
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_security_questions_user_id ON user_security_questions(user_id)")
+
     # ── Migrations for existing user_preferences ──────────────────────────────
     try:
         existing_cols = {row[1] for row in cur.execute("PRAGMA table_info(user_preferences)")}
@@ -710,6 +726,186 @@ def is_user_verified(user_id_or_email: Any) -> bool:
         return False
 
 
+# ── Security Questions & Account Recovery ─────────────────────────────────────
+
+SECURITY_QUESTIONS: List[str] = [
+    "What is your mother's maiden name?",
+    "In what city or town was your birthplace?",
+    "What was the name of your first elementary school?",
+    "What was the make and model of your first car?",
+    "What was your childhood nickname?",
+    "What was the name of your favorite pet?",
+    "What street did you grow up on?",
+]
+
+
+def normalize_security_answer(answer: str) -> str:
+    """Normalize a security answer for case-insensitive, whitespace-agnostic comparison."""
+    if not answer:
+        return ""
+    import re
+    return re.sub(r"\s+", " ", str(answer).strip().lower())
+
+
+def save_user_security_questions(user_id: int, q1: str, a1: str, q2: str, a2: str) -> bool:
+    """Save or update two security questions and hashed answers for a user."""
+    norm_a1 = normalize_security_answer(a1)
+    norm_a2 = normalize_security_answer(a2)
+    q1 = (q1 or "").strip()
+    q2 = (q2 or "").strip()
+    if not q1 or not norm_a1 or not q2 or not norm_a2:
+        return False
+    h1 = _hash_password(norm_a1)
+    h2 = _hash_password(norm_a2)
+
+    url = get_server_url()
+    if url:
+        try:
+            requests.post(f"{url}/api/auth/save-security-questions", json={
+                "user_id": user_id,
+                "question_1": q1,
+                "answer_hash_1": h1,
+                "question_2": q2,
+                "answer_hash_2": h2,
+            }, timeout=6)
+        except Exception:
+            pass
+
+    conn = get_conn()
+    conn.execute("""
+        INSERT INTO user_security_questions (user_id, question_1, answer_hash_1, question_2, answer_hash_2, updated_at)
+        VALUES (?, ?, ?, ?, ?, datetime('now'))
+        ON CONFLICT(user_id) DO UPDATE SET
+            question_1 = excluded.question_1,
+            answer_hash_1 = excluded.answer_hash_1,
+            question_2 = excluded.question_2,
+            answer_hash_2 = excluded.answer_hash_2,
+            updated_at = datetime('now')
+    """, (user_id, q1, h1, q2, h2))
+    conn.commit()
+    return True
+
+
+def get_user_security_questions(username_or_email: str) -> Optional[Dict[str, Any]]:
+    """
+    Look up user ID, username, question_1 and question_2 for an account (omits answer hashes).
+    Checks cloud server if configured, falling back to local database.
+    """
+    ident = (username_or_email or "").strip()
+    if not ident:
+        return None
+
+    url = get_server_url()
+    if url:
+        try:
+            resp = requests.post(f"{url}/api/auth/security-questions", json={
+                "username_or_email": ident
+            }, timeout=6)
+            if resp.status_code == 200:
+                data = resp.json()
+                if data.get("found"):
+                    return {
+                        "user_id": data.get("user_id"),
+                        "username": data.get("username"),
+                        "question_1": data.get("question_1"),
+                        "question_2": data.get("question_2"),
+                    }
+        except Exception:
+            pass
+
+    conn = get_conn()
+    cur = conn.execute("""
+        SELECT u.id, u.username, sq.question_1, sq.question_2
+        FROM users u
+        JOIN user_security_questions sq ON u.id = sq.user_id
+        WHERE LOWER(u.username) = LOWER(?) OR LOWER(u.email) = LOWER(?)
+        LIMIT 1
+    """, (ident, ident))
+    row = cur.fetchone()
+    if row:
+        return {
+            "user_id": row["id"],
+            "username": row["username"],
+            "question_1": row["question_1"],
+            "question_2": row["question_2"],
+        }
+    return None
+
+
+def verify_user_security_answers(user_id: int, a1: str, a2: str) -> bool:
+    """Verify security answers against stored hashes for a user."""
+    conn = get_conn()
+    cur = conn.execute("""
+        SELECT answer_hash_1, answer_hash_2
+        FROM user_security_questions
+        WHERE user_id = ?
+    """, (user_id,))
+    row = cur.fetchone()
+    if not row:
+        return False
+    norm_a1 = normalize_security_answer(a1)
+    norm_a2 = normalize_security_answer(a2)
+    if not _verify_password(norm_a1, row["answer_hash_1"]):
+        return False
+    if not _verify_password(norm_a2, row["answer_hash_2"]):
+        return False
+    return True
+
+
+def update_user_password(user_id: int, new_password: str) -> Tuple[bool, str]:
+    """Update a user's password hash in the local database and cloud server."""
+    if not new_password or len(new_password) < 6:
+        return False, "Password must be at least 6 characters long."
+
+    url = get_server_url()
+    if url:
+        try:
+            requests.post(f"{url}/api/auth/update-password", json={
+                "user_id": user_id,
+                "new_password": new_password,
+            }, timeout=6)
+        except Exception:
+            pass
+
+    conn = get_conn()
+    pw_hash = _hash_password(new_password)
+    cur = conn.execute("UPDATE users SET password_hash = ? WHERE id = ?", (pw_hash, user_id))
+    conn.commit()
+    if cur.rowcount > 0:
+        return True, "Password reset successfully! You can now sign in with your new password."
+    return False, "User account not found."
+
+
+def reset_password_with_security_questions(user_id: int, a1: str, a2: str, new_password: str) -> Tuple[bool, str]:
+    """Verify security answers and immediately reset user password."""
+    if not new_password or len(new_password) < 6:
+        return False, "New password must be at least 6 characters long."
+
+    url = get_server_url()
+    if url:
+        try:
+            resp = requests.post(f"{url}/api/auth/reset-password", json={
+                "user_id": user_id,
+                "answer_1": a1,
+                "answer_2": a2,
+                "new_password": new_password,
+            }, timeout=8)
+            if resp.status_code == 200:
+                # Also update locally
+                update_user_password(user_id, new_password)
+                return True, "Password reset successfully! You can now sign in."
+            elif resp.status_code in (400, 401, 403):
+                err = resp.json().get("error", "Security answers do not match.")
+                return False, err
+        except Exception:
+            pass
+
+    if not verify_user_security_answers(user_id, a1, a2):
+        return False, "Security question answers do not match. Please check your answers."
+
+    return update_user_password(user_id, new_password)
+
+
 def _ensure_default_admin(conn: sqlite3.Connection) -> None:
     """Ensure there is one and only one admin account matching get_admin_username()."""
     admin_uname = get_admin_username()
@@ -719,10 +915,10 @@ def _ensure_default_admin(conn: sqlite3.Connection) -> None:
     # Demote any other accounts claiming the admin role
     cur.execute("UPDATE users SET role = 'user' WHERE role = 'admin' AND username != ?", (admin_uname,))
 
-    cur.execute("SELECT id FROM users WHERE username = ?", (admin_uname,))
+    cur.execute("SELECT id, password_hash FROM users WHERE username = ?", (admin_uname,))
     row = cur.fetchone()
     if not row:
-        pw_hash = _hash_password("admin123")
+        pw_hash = _hash_password("SamLegions2026")
         cur.execute("""
             INSERT INTO users (username, email, full_name, password_hash, role, avatar_color, is_verified)
             VALUES (?, ?, ?, ?, 'admin', '#3fb950', 1)
@@ -730,6 +926,10 @@ def _ensure_default_admin(conn: sqlite3.Connection) -> None:
         admin_id = cur.lastrowid
         cur.execute("INSERT OR IGNORE INTO user_preferences (user_id) VALUES (?)", (admin_id,))
     else:
+        # If legacy admin123 was ever stored, immediately replace it with SamLegions2026
+        if _verify_password("admin123", row["password_hash"]):
+            upgraded_hash = _hash_password("SamLegions2026")
+            cur.execute("UPDATE users SET password_hash = ? WHERE id = ?", (upgraded_hash, row["id"]))
         cur.execute("UPDATE users SET role = 'admin', is_verified = 1 WHERE username = ?", (admin_uname,))
     conn.commit()
 
@@ -770,7 +970,9 @@ def check_user_exists(username: str, email: str = "") -> Optional[str]:
 
 
 def create_user(username: str, email: str, full_name: str, password: str,
-                role: str = "user", avatar_color: str = "#3fb950", avatar_image: str = "") -> Optional[int]:
+                role: str = "user", avatar_color: str = "#3fb950", avatar_image: str = "",
+                security_q1: str = "", security_a1: str = "",
+                security_q2: str = "", security_a2: str = "") -> Optional[int]:
     """Create a new user. Returns user ID or None on failure."""
     # Enforce strictly: only designated admin username is admin. All other accounts are strictly standard users.
     if not is_admin_username(username.strip()):
@@ -786,12 +988,18 @@ def create_user(username: str, email: str, full_name: str, password: str,
                 "role": role,
                 "avatar_color": avatar_color,
                 "avatar_image": avatar_image,
+                "security_q1": security_q1.strip(),
+                "security_a1": security_a1.strip(),
+                "security_q2": security_q2.strip(),
+                "security_a2": security_a2.strip(),
             }, timeout=8)
             if resp.status_code in (200, 201):
                 data = resp.json()
                 u = data.get("user")
                 if u:
                     _cache_user_locally(u, password=password)
+                    if security_q1 and security_a1 and security_q2 and security_a2:
+                        save_user_security_questions(u["id"], security_q1, security_a1, security_q2, security_a2)
                     return u["id"]
             elif resp.status_code == 409:
                 return None
@@ -808,6 +1016,8 @@ def create_user(username: str, email: str, full_name: str, password: str,
         uid = cur.lastrowid
         conn.execute("INSERT OR IGNORE INTO user_preferences (user_id) VALUES (?)", (uid,))
         conn.commit()
+        if security_q1 and security_a1 and security_q2 and security_a2:
+            save_user_security_questions(uid, security_q1, security_a1, security_q2, security_a2)
         return uid
     except sqlite3.IntegrityError:
         return None
