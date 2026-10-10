@@ -63,6 +63,7 @@ def launch_app():
         from commitmaster import windows_integration
         windows_integration.set_dpi_awareness()
         windows_integration.init_app_user_model_id("unified")
+        windows_integration.register_windows_app("user")
 
         db.init_db()
 
