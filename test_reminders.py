@@ -83,7 +83,7 @@ class TestNotificationReminders(unittest.TestCase):
 
     def test_config_defaults(self):
         """Test config.json default includes reminder settings and expanded watched IDEs."""
-        cfg = config.load_config()
+        cfg = config.DEFAULTS
         self.assertIn("watched_apps", cfg)
         self.assertIn("Code.exe", cfg["watched_apps"])
         self.assertIn("Antigravity.exe", cfg["watched_apps"])
