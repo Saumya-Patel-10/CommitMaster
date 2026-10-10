@@ -15,10 +15,9 @@ from commitmaster.logger import get
 
 log = get("config")
 
-CONFIG_FILE = os.path.join(
-    getattr(sys, "_MEIPASS", os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
-    "config.json",
-)
+from commitmaster import paths
+
+CONFIG_FILE = paths.get_config_path()
 
 DEFAULTS: Dict[str, Any] = {
     # Process names of coding apps to watch (Task Manager → Details to find these).
