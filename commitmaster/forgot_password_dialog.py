@@ -235,14 +235,9 @@ class ForgotPasswordDialog:
 
         data = db.get_user_security_questions(ident)
         if not data:
-            # Check if user exists but has no questions configured
-            existing_user = db.get_user_by_username_or_email(ident)
-            if existing_user:
-                self._msg_lbl.config(
-                    text="This account does not have security questions configured. Please sign in or contact an administrator to recover access."
-                )
-            else:
-                self._msg_lbl.config(text=f"No account found matching '{ident}'. Please check the spelling.")
+            self._msg_lbl.config(
+                text="Unable to recover this account with security questions. Please verify the username or email, or contact an administrator."
+            )
             return
 
         self._user_data = data
