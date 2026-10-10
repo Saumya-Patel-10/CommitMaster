@@ -9,9 +9,10 @@
       "role": "admin",
       "avatar_color": "#ffa657",
       "avatar_image": "C:\\Data\\Saumya\\Projects\\CommitMaster\\assets\\avatars\\user_1.png",
-      "is_verified": 0,
+      "is_verified": 1,
       "token": "",
-      "last_active": "2026-10-10 00:12:19"
+      "last_active": "2026-10-10 01:53:06",
+      "is_active": true
     }
   ]
 }
