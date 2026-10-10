@@ -9,7 +9,11 @@ ENV PYTHONUNBUFFERED=1 \
 COPY requirements-server.txt .
 RUN pip install --no-cache-dir -r requirements-server.txt
 
-COPY server.py .
+RUN useradd -m -u 1000 appuser && chown -R appuser:appuser /app
+
+COPY --chown=appuser:appuser server.py .
+
+USER appuser
 
 EXPOSE 8000
 
