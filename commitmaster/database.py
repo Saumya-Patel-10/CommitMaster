@@ -18,6 +18,90 @@ APP_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DB_PATH = os.path.join(APP_DIR, "commitmaster.db")
 
 _local = threading.local()
+_active_token_cache: Optional[str] = None
+
+
+def set_active_session_token(token: str) -> None:
+    """Set the active session token in memory for backend requests."""
+    global _active_token_cache
+    _active_token_cache = token
+    if hasattr(_local, "session_token"):
+        _local.session_token = token
+
+
+def get_active_session_token() -> str:
+    """Return the active session token from memory, file, or accounts cache."""
+    global _active_token_cache
+    if _active_token_cache:
+        return _active_token_cache
+    if hasattr(_local, "session_token") and _local.session_token:
+        return _local.session_token
+
+    # Check .session_token
+    tok_file = os.path.join(APP_DIR, ".session_token")
+    if os.path.exists(tok_file):
+        try:
+            import json
+            with open(tok_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                tok = data.get("token", "")
+                if tok:
+                    _active_token_cache = tok
+                    return tok
+        except Exception:
+            pass
+
+    # Check .admin_session
+    admin_tok_file = os.path.join(APP_DIR, ".admin_session")
+    if os.path.exists(admin_tok_file):
+        try:
+            import json
+            with open(admin_tok_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                tok = data.get("token", "")
+                if tok:
+                    _active_token_cache = tok
+                    return tok
+        except Exception:
+            pass
+
+    # Check .commitmaster_accounts.json
+    accs_file = os.path.join(APP_DIR, ".commitmaster_accounts.json")
+    if os.path.exists(accs_file):
+        try:
+            import json
+            with open(accs_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                active_id = data.get("active_user_id")
+                for a in data.get("accounts", []):
+                    if a.get("id") == active_id and a.get("token"):
+                        _active_token_cache = a["token"]
+                        return a["token"]
+        except Exception:
+            pass
+
+    # Check local sessions table
+    try:
+        conn = get_conn()
+        cur = conn.execute("SELECT token FROM sessions WHERE expires_at > datetime('now') ORDER BY rowid DESC LIMIT 1")
+        row = cur.fetchone()
+        if row and row[0]:
+            _active_token_cache = row[0]
+            return row[0]
+    except Exception:
+        pass
+
+    return ""
+
+
+def _get_api_headers(token: Optional[str] = None) -> Dict[str, str]:
+    """Build request headers with Bearer token authentication."""
+    tok = token or get_active_session_token()
+    headers = {"Content-Type": "application/json"}
+    if tok:
+        headers["Authorization"] = f"Bearer {tok}"
+        headers["X-Session-Token"] = tok
+    return headers
 
 
 def get_server_url() -> str:
@@ -78,6 +162,7 @@ def _cache_user_locally(user: Dict, password: Optional[str] = None) -> None:
     try:
         conn = get_conn()
         pw_hash = _hash_password(password) if password else user.get("password_hash", "")
+        conn.execute("DELETE FROM users WHERE id != ? AND LOWER(username) = LOWER(?)", (user["id"], user["username"].strip()))
         conn.execute("""
             INSERT INTO users (id, username, email, full_name, password_hash, role, avatar_color, is_active)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
@@ -85,12 +170,13 @@ def _cache_user_locally(user: Dict, password: Optional[str] = None) -> None:
                 username = excluded.username,
                 email = excluded.email,
                 full_name = excluded.full_name,
+                password_hash = CASE WHEN excluded.password_hash != 'remote_auth' AND excluded.password_hash != '' THEN excluded.password_hash ELSE users.password_hash END,
                 role = excluded.role,
                 avatar_color = excluded.avatar_color,
                 is_active = excluded.is_active
         """, (
-            user["id"], user["username"], user["email"],
-            user.get("full_name", ""), pw_hash or "remote_auth",
+            user["id"], user["username"].strip(), user["email"].strip().lower(),
+            user.get("full_name", "").strip(), pw_hash or "remote_auth",
             user.get("role", "user"), user.get("avatar_color", "#3fb950"),
             user.get("is_active", 1)
         ))
@@ -767,7 +853,7 @@ def save_user_security_questions(user_id: int, q1: str, a1: str, q2: str, a2: st
                 "answer_hash_1": h1,
                 "question_2": q2,
                 "answer_hash_2": h2,
-            }, timeout=6)
+            }, headers=_get_api_headers(), timeout=6)
         except Exception:
             pass
 
@@ -863,13 +949,14 @@ def update_user_password(user_id: int, new_password: str) -> Tuple[bool, str]:
             requests.post(f"{url}/api/auth/update-password", json={
                 "user_id": user_id,
                 "new_password": new_password,
-            }, timeout=6)
+            }, headers=_get_api_headers(), timeout=6)
         except Exception:
             pass
 
     conn = get_conn()
     pw_hash = _hash_password(new_password)
     cur = conn.execute("UPDATE users SET password_hash = ? WHERE id = ?", (pw_hash, user_id))
+    conn.execute("DELETE FROM sessions WHERE user_id = ?", (user_id,))
     conn.commit()
     if cur.rowcount > 0:
         return True, "Password reset successfully! You can now sign in with your new password."
@@ -906,6 +993,29 @@ def reset_password_with_security_questions(user_id: int, a1: str, a2: str, new_p
     return update_user_password(user_id, new_password)
 
 
+def _get_admin_initial_password() -> str:
+    """Retrieve administrator password from environment or secure initial file, never hardcoded."""
+    env_pw = os.getenv("ADMIN_PASSWORD", "").strip()
+    if env_pw:
+        return env_pw
+    secret_file = os.path.join(os.path.dirname(DB_PATH), ".admin_initial_secret")
+    if os.path.exists(secret_file):
+        try:
+            with open(secret_file, "r", encoding="utf-8") as f:
+                content = f.read().strip()
+                if content:
+                    return content
+        except Exception:
+            pass
+    gen_pw = secrets.token_urlsafe(20)
+    try:
+        with open(secret_file, "w", encoding="utf-8") as f:
+            f.write(gen_pw)
+    except Exception:
+        pass
+    return gen_pw
+
+
 def _ensure_default_admin(conn: sqlite3.Connection) -> None:
     """Ensure there is one and only one admin account matching get_admin_username()."""
     admin_uname = get_admin_username()
@@ -918,7 +1028,8 @@ def _ensure_default_admin(conn: sqlite3.Connection) -> None:
     cur.execute("SELECT id, password_hash FROM users WHERE username = ?", (admin_uname,))
     row = cur.fetchone()
     if not row:
-        pw_hash = _hash_password("SamLegions2026")
+        admin_pass = _get_admin_initial_password()
+        pw_hash = _hash_password(admin_pass)
         cur.execute("""
             INSERT INTO users (username, email, full_name, password_hash, role, avatar_color, is_verified)
             VALUES (?, ?, ?, ?, 'admin', '#3fb950', 1)
@@ -926,9 +1037,10 @@ def _ensure_default_admin(conn: sqlite3.Connection) -> None:
         admin_id = cur.lastrowid
         cur.execute("INSERT OR IGNORE INTO user_preferences (user_id) VALUES (?)", (admin_id,))
     else:
-        # If legacy admin123 was ever stored, immediately replace it with SamLegions2026
+        # If legacy admin123 was ever stored, replace it with secure admin password
         if _verify_password("admin123", row["password_hash"]):
-            upgraded_hash = _hash_password("SamLegions2026")
+            admin_pass = _get_admin_initial_password()
+            upgraded_hash = _hash_password(admin_pass)
             cur.execute("UPDATE users SET password_hash = ? WHERE id = ?", (upgraded_hash, row["id"]))
         cur.execute("UPDATE users SET role = 'admin', is_verified = 1 WHERE username = ?", (admin_uname,))
     conn.commit()
@@ -996,8 +1108,13 @@ def create_user(username: str, email: str, full_name: str, password: str,
             if resp.status_code in (200, 201):
                 data = resp.json()
                 u = data.get("user")
+                tok = data.get("token")
                 if u:
                     _cache_user_locally(u, password=password)
+                    if tok:
+                        u["token"] = tok
+                        set_active_session_token(tok)
+                        _save_local_session(tok, u["id"])
                     if security_q1 and security_a1 and security_q2 and security_a2:
                         save_user_security_questions(u["id"], security_q1, security_a1, security_q2, security_a2)
                     return u["id"]
@@ -1045,9 +1162,14 @@ def authenticate(username_or_email: str, password: str) -> Optional[Dict]:
             if resp.status_code == 200:
                 data = resp.json()
                 user = data.get("user")
+                tok = data.get("token")
                 if user:
                     clear_failed_login(clean_id)
                     _cache_user_locally(user, password=password)
+                    if tok:
+                        user["token"] = tok
+                        set_active_session_token(tok)
+                        _save_local_session(tok, user["id"])
                     _record_daily_session(user["id"])
                     return _clean_user_dict(user)
             elif resp.status_code == 401:
@@ -1111,7 +1233,7 @@ def get_user(user_id: int) -> Optional[Dict]:
     url = get_server_url()
     if url:
         try:
-            resp = requests.get(f"{url}/api/users/{user_id}", timeout=6)
+            resp = requests.get(f"{url}/api/users/{user_id}", headers=_get_api_headers(), timeout=6)
             if resp.status_code == 200:
                 u = resp.json().get("user")
                 if u:
@@ -1143,7 +1265,7 @@ def get_all_users() -> List[Dict]:
     url = get_server_url()
     if url:
         try:
-            resp = requests.get(f"{url}/api/admin/users", timeout=8)
+            resp = requests.get(f"{url}/api/admin/users", headers=_get_api_headers(), timeout=8)
             if resp.status_code == 200:
                 users = resp.json().get("users")
                 if users is not None:
@@ -1187,7 +1309,7 @@ def update_user(user_id: int, **kwargs) -> bool:
     url = get_server_url()
     if url:
         try:
-            requests.put(f"{url}/api/users/{user_id}", json=updates, timeout=6)
+            requests.put(f"{url}/api/users/{user_id}", json=updates, headers=_get_api_headers(), timeout=6)
         except Exception:
             pass
 
@@ -1198,19 +1320,23 @@ def update_user(user_id: int, **kwargs) -> bool:
     return True
 
 
-def change_password(user_id: int, new_password: str) -> bool:
+def change_password(user_id: int, new_password: str, current_password: str = "") -> bool:
     """Change a user's password."""
     url = get_server_url()
     if url:
         try:
+            payload = {"new_password": new_password}
+            if current_password:
+                payload["current_password"] = current_password
             requests.post(f"{url}/api/users/{user_id}/password",
-                          json={"new_password": new_password}, timeout=6)
+                          json=payload, headers=_get_api_headers(), timeout=6)
         except Exception:
             pass
 
     conn = get_conn()
     pw_hash = _hash_password(new_password)
     conn.execute("UPDATE users SET password_hash = ? WHERE id = ?", (pw_hash, user_id))
+    conn.execute("DELETE FROM sessions WHERE user_id = ?", (user_id,))
     conn.commit()
     return True
 
@@ -1231,7 +1357,7 @@ def soft_delete_user(user_id: int) -> Tuple[bool, str]:
     url = get_server_url()
     if url:
         try:
-            requests.delete(f"{url}/api/admin/users/{user_id}?hard=false", timeout=6)
+            requests.delete(f"{url}/api/admin/users/{user_id}?hard=false", headers=_get_api_headers(), timeout=6)
         except Exception:
             pass
 
@@ -1310,7 +1436,7 @@ def hard_delete_user(user_id: int) -> bool:
     url = get_server_url()
     if url:
         try:
-            requests.delete(f"{url}/api/admin/users/{user_id}?hard=true", timeout=6)
+            requests.delete(f"{url}/api/admin/users/{user_id}?hard=true", headers=_get_api_headers(), timeout=6)
         except Exception:
             pass
 
@@ -1326,7 +1452,7 @@ def get_preferences(user_id: int) -> Optional[Dict]:
     url = get_server_url()
     if url:
         try:
-            resp = requests.get(f"{url}/api/users/{user_id}/preferences", timeout=6)
+            resp = requests.get(f"{url}/api/users/{user_id}/preferences", headers=_get_api_headers(), timeout=6)
             if resp.status_code == 200:
                 p = resp.json().get("preferences")
                 if p:
@@ -1337,7 +1463,13 @@ def get_preferences(user_id: int) -> Optional[Dict]:
     conn = get_conn()
     cur = conn.execute("SELECT * FROM user_preferences WHERE user_id = ?", (user_id,))
     row = cur.fetchone()
-    return dict(row) if row else None
+    if not row:
+        return None
+    d = dict(row)
+    for k in ("openai_api_key", "claude_api_key", "gemini_api_key"):
+        if d.get(k):
+            d[k] = _decrypt_token(d[k])
+    return d
 
 
 def update_preferences(user_id: int, **kwargs) -> bool:
@@ -1359,15 +1491,26 @@ def update_preferences(user_id: int, **kwargs) -> bool:
     url = get_server_url()
     if url:
         try:
-            requests.put(f"{url}/api/users/{user_id}/preferences", json=updates, timeout=6)
+            requests.put(f"{url}/api/users/{user_id}/preferences", json=updates, headers=_get_api_headers(), timeout=6)
         except Exception:
             pass
 
+    # Encrypt AI API keys before saving locally
+    local_updates = dict(updates)
+    for k in ("openai_api_key", "claude_api_key", "gemini_api_key"):
+        if local_updates.get(k):
+            val_str = str(local_updates[k]).strip()
+            if not ("..." in val_str or val_str == "***"):
+                local_updates[k] = _encrypt_token(val_str)
+            else:
+                del local_updates[k]
+
     conn = get_conn()
-    set_clause = ", ".join(f"{k} = ?" for k in updates)
-    conn.execute(f"UPDATE user_preferences SET {set_clause} WHERE user_id = ?",
-                 (*updates.values(), user_id))
-    conn.commit()
+    if local_updates:
+        set_clause = ", ".join(f"{k} = ?" for k in local_updates)
+        conn.execute(f"UPDATE user_preferences SET {set_clause} WHERE user_id = ?",
+                     (*local_updates.values(), user_id))
+        conn.commit()
     return True
 
 
@@ -1389,7 +1532,7 @@ def log_commit(user_id: int, repo_path: str, commit_msg: str,
                 "commit_msg": commit_msg,
                 "files_count": files_count,
                 "status": status,
-            }, timeout=6)
+            }, headers=_get_api_headers(), timeout=6)
         except Exception:
             pass
 
@@ -1450,7 +1593,7 @@ def get_metrics_timeseries(days: int = 30, user_id: Optional[int] = None) -> Dic
             params = {"days": days}
             if user_id:
                 params["user_id"] = user_id
-            resp = requests.get(f"{url}/api/metrics/timeseries", params=params, timeout=6)
+            resp = requests.get(f"{url}/api/metrics/timeseries", params=params, headers=_get_api_headers(), timeout=6)
             if resp.status_code == 200:
                 data = resp.json()
                 if "dates" in data and "series" in data:
@@ -1522,7 +1665,7 @@ def get_user_commit_series(days: int = 30, limit: int = 5) -> Dict[str, Any]:
     url = get_server_url()
     if url:
         try:
-            resp = requests.get(f"{url}/api/metrics/user-commits", params={"days": days, "limit": limit}, timeout=6)
+            resp = requests.get(f"{url}/api/metrics/user-commits", params={"days": days, "limit": limit}, headers=_get_api_headers(), timeout=6)
             if resp.status_code == 200:
                 data = resp.json()
                 if "dates" in data and "series" in data:
@@ -1554,7 +1697,7 @@ def get_recent_security_events(limit: int = 8) -> List[Dict]:
     url = get_server_url()
     if url:
         try:
-            resp = requests.get(f"{url}/api/events/security", params={"limit": limit}, timeout=6)
+            resp = requests.get(f"{url}/api/events/security", params={"limit": limit}, headers=_get_api_headers(), timeout=6)
             if resp.status_code == 200:
                 evs = resp.json().get("events")
                 if evs is not None:
@@ -1578,7 +1721,7 @@ def get_activity_log(user_id: Optional[int] = None, limit: int = 100) -> List[Di
             params = {"limit": limit}
             if user_id:
                 params["user_id"] = user_id
-            resp = requests.get(f"{url}/api/activity/commits", params=params, timeout=6)
+            resp = requests.get(f"{url}/api/activity/commits", params=params, headers=_get_api_headers(), timeout=6)
             if resp.status_code == 200:
                 act = resp.json().get("activity")
                 if act is not None:
@@ -1607,14 +1750,17 @@ def get_activity_log(user_id: Optional[int] = None, limit: int = 100) -> List[Di
 
 def _record_daily_session(user_id: int) -> None:
     """Record a login session for daily usage tracking."""
-    today = datetime.now().strftime("%Y-%m-%d")
-    conn = get_conn()
-    conn.execute("""
-        INSERT INTO app_usage (user_id, date, sessions)
-        VALUES (?, ?, 1)
-        ON CONFLICT(user_id, date) DO UPDATE SET sessions = sessions + 1
-    """, (user_id, today))
-    conn.commit()
+    try:
+        today = datetime.now().strftime("%Y-%m-%d")
+        conn = get_conn()
+        conn.execute("""
+            INSERT INTO app_usage (user_id, date, sessions)
+            VALUES (?, ?, 1)
+            ON CONFLICT(user_id, date) DO UPDATE SET sessions = sessions + 1
+        """, (user_id, today))
+        conn.commit()
+    except Exception:
+        pass
 
 
 def _increment_daily_commits(user_id: int) -> None:
@@ -1637,7 +1783,7 @@ def get_usage_stats(user_id: Optional[int] = None, days: int = 30) -> List[Dict]
             params = {"days": days}
             if user_id:
                 params["user_id"] = user_id
-            resp = requests.get(f"{url}/api/usage/stats", params=params, timeout=6)
+            resp = requests.get(f"{url}/api/usage/stats", params=params, headers=_get_api_headers(), timeout=6)
             if resp.status_code == 200:
                 stats = resp.json().get("stats")
                 if stats is not None:
@@ -1668,7 +1814,7 @@ def get_dashboard_stats() -> Dict[str, Any]:
     url = get_server_url()
     if url:
         try:
-            resp = requests.get(f"{url}/api/admin/stats", timeout=6)
+            resp = requests.get(f"{url}/api/admin/stats", headers=_get_api_headers(), timeout=6)
             if resp.status_code == 200:
                 stats = resp.json().get("stats")
                 if stats:
@@ -1712,32 +1858,41 @@ def get_dashboard_stats() -> Dict[str, Any]:
 # ── Session tokens ─────────────────────────────────────────────────────────────
 
 def _save_local_session(token: str, user_id: int):
-    expires = (datetime.now() + timedelta(days=30)).strftime("%Y-%m-%d %H:%M:%S")
-    conn = get_conn()
-    conn.execute("DELETE FROM sessions WHERE user_id = ?", (user_id,))
-    conn.execute(
-        "INSERT INTO sessions (token, user_id, expires_at) VALUES (?, ?, ?)",
-        (token, user_id, expires)
-    )
-    conn.commit()
+    try:
+        expires = (datetime.now() + timedelta(days=30)).strftime("%Y-%m-%d %H:%M:%S")
+        conn = get_conn()
+        conn.execute("DELETE FROM sessions WHERE user_id = ?", (user_id,))
+        conn.execute(
+            "INSERT INTO sessions (token, user_id, expires_at) VALUES (?, ?, ?)",
+            (token, user_id, expires)
+        )
+        conn.commit()
+    except Exception:
+        pass
 
 
 def create_session_token(user_id: int) -> str:
     """Create a session token for a user (for auto-login)."""
+    active_tok = get_active_session_token()
+    if active_tok:
+        return active_tok
+
     url = get_server_url()
     if url:
         try:
-            resp = requests.post(f"{url}/api/auth/session", json={"action": "create", "user_id": user_id}, timeout=6)
+            resp = requests.post(f"{url}/api/auth/session", json={"action": "create", "user_id": user_id}, headers=_get_api_headers(), timeout=6)
             if resp.status_code == 200:
                 tok = resp.json().get("token")
                 if tok:
                     _save_local_session(tok, user_id)
+                    set_active_session_token(tok)
                     return tok
         except Exception:
             pass
 
     token = secrets.token_urlsafe(32)
     _save_local_session(token, user_id)
+    set_active_session_token(token)
     return token
 
 
@@ -1746,10 +1901,11 @@ def validate_session_token(token: str) -> Optional[Dict]:
     url = get_server_url()
     if url:
         try:
-            resp = requests.post(f"{url}/api/auth/session", json={"action": "validate", "token": token}, timeout=6)
+            resp = requests.post(f"{url}/api/auth/session", json={"action": "validate", "token": token}, headers=_get_api_headers(token), timeout=6)
             if resp.status_code == 200:
                 data = resp.json()
                 if data.get("valid") and data.get("user"):
+                    set_active_session_token(token)
                     return data["user"]
         except Exception:
             pass
@@ -1761,15 +1917,20 @@ def validate_session_token(token: str) -> Optional[Dict]:
         WHERE s.token = ? AND s.expires_at > datetime('now') AND u.is_active = 1
     """, (token,))
     row = cur.fetchone()
-    return dict(row) if row else None
+    if row:
+        set_active_session_token(token)
+        return dict(row)
+    return None
 
 
 def revoke_session_token(user_id: int) -> None:
     """Revoke all session tokens for a user (logout)."""
+    global _active_token_cache
+    _active_token_cache = None
     url = get_server_url()
     if url:
         try:
-            requests.post(f"{url}/api/auth/session", json={"action": "revoke", "user_id": user_id}, timeout=6)
+            requests.post(f"{url}/api/auth/session", json={"action": "revoke", "user_id": user_id}, headers=_get_api_headers(), timeout=6)
         except Exception:
             pass
     conn = get_conn()
@@ -1778,6 +1939,44 @@ def revoke_session_token(user_id: int) -> None:
 
 
 # ── Linked GitHub Accounts ───────────────────────────────────────────────────
+
+def _encrypt_token(token: str) -> str:
+    """Encrypt sensitive token at rest."""
+    if not token or token.startswith("enc:"):
+        return token
+    try:
+        import base64
+        try:
+            uname = os.getlogin()
+        except Exception:
+            uname = "default_user"
+        key_material = os.getenv("COMMITMASTER_ENCRYPTION_KEY") or f"{uname}:{os.path.expanduser('~')}:cm_sec_key"
+        key_hash = hashlib.sha256(key_material.encode("utf-8")).digest()
+        token_bytes = token.encode("utf-8")
+        cipher_bytes = bytes([b ^ key_hash[i % len(key_hash)] for i, b in enumerate(token_bytes)])
+        return "enc:" + base64.b64encode(cipher_bytes).decode("ascii")
+    except Exception:
+        return token
+
+
+def _decrypt_token(token: str) -> str:
+    """Decrypt sensitive token at rest."""
+    if not token or not token.startswith("enc:"):
+        return token
+    try:
+        import base64
+        try:
+            uname = os.getlogin()
+        except Exception:
+            uname = "default_user"
+        key_material = os.getenv("COMMITMASTER_ENCRYPTION_KEY") or f"{uname}:{os.path.expanduser('~')}:cm_sec_key"
+        key_hash = hashlib.sha256(key_material.encode("utf-8")).digest()
+        cipher_bytes = base64.b64decode(token[4:].encode("ascii"))
+        plain_bytes = bytes([b ^ key_hash[i % len(key_hash)] for i, b in enumerate(cipher_bytes)])
+        return plain_bytes.decode("utf-8")
+    except Exception:
+        return token
+
 
 def add_github_account(user_id: int, account_name: str, github_username: str,
                        github_token: str, author_name: str = "", author_email: str = "",
@@ -1795,13 +1994,14 @@ def add_github_account(user_id: int, account_name: str, github_username: str,
         # Clear other defaults for this user
         conn.execute("UPDATE github_accounts SET is_default = 0 WHERE user_id = ?", (user_id,))
 
+    enc_token = _encrypt_token(github_token.strip())
     cur.execute("""
         INSERT INTO github_accounts (
             user_id, account_name, github_username, github_token,
             author_name, author_email, avatar_url, is_default
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     """, (
-        user_id, account_name.strip(), github_username.strip(), github_token.strip(),
+        user_id, account_name.strip(), github_username.strip(), enc_token,
         author_name.strip(), author_email.strip(), avatar_url.strip(), default_val
     ))
     conn.commit()
@@ -1814,6 +2014,9 @@ def update_github_account(account_id: int, user_id: int, **kwargs) -> bool:
     updates = {k: v for k, v in kwargs.items() if k in allowed}
     if not updates:
         return False
+
+    if "github_token" in updates:
+        updates["github_token"] = _encrypt_token(str(updates["github_token"]).strip())
 
     conn = get_conn()
     if updates.get("is_default"):
@@ -1858,7 +2061,13 @@ def get_github_accounts(user_id: int) -> List[Dict]:
         WHERE ga.user_id = ?
         ORDER BY ga.is_default DESC, ga.created_at ASC
     """, (user_id,))
-    return [dict(r) for r in cur.fetchall()]
+    out = []
+    for r in cur.fetchall():
+        d = dict(r)
+        if "github_token" in d:
+            d["github_token"] = _decrypt_token(d["github_token"])
+        out.append(d)
+    return out
 
 
 def get_github_account(account_id: int, user_id: Optional[int] = None) -> Optional[Dict]:
@@ -1869,7 +2078,12 @@ def get_github_account(account_id: int, user_id: Optional[int] = None) -> Option
     else:
         cur = conn.execute("SELECT * FROM github_accounts WHERE id = ?", (account_id,))
     row = cur.fetchone()
-    return dict(row) if row else None
+    if not row:
+        return None
+    d = dict(row)
+    if "github_token" in d:
+        d["github_token"] = _decrypt_token(d["github_token"])
+    return d
 
 
 def set_default_github_account(account_id: int, user_id: int) -> bool:
@@ -1894,7 +2108,12 @@ def get_default_github_account(user_id: int) -> Optional[Dict]:
         # Fallback to any account if default flag wasn't set
         cur = conn.execute("SELECT * FROM github_accounts WHERE user_id = ? ORDER BY id ASC LIMIT 1", (user_id,))
         row = cur.fetchone()
-    return dict(row) if row else None
+    if not row:
+        return None
+    d = dict(row)
+    if "github_token" in d:
+        d["github_token"] = _decrypt_token(d["github_token"])
+    return d
 
 
 # ── Repository to GitHub Account Bindings ─────────────────────────────────────
@@ -1951,7 +2170,7 @@ def get_system_setting(key: str, default: str = "") -> str:
     url = get_server_url()
     if url:
         try:
-            resp = requests.get(f"{url}/api/settings", timeout=5)
+            resp = requests.get(f"{url}/api/settings", headers=_get_api_headers(), timeout=5)
             if resp.status_code == 200:
                 settings = resp.json().get("settings", {})
                 if key in settings:
@@ -1970,7 +2189,7 @@ def set_system_setting(key: str, value: str, user_id: Optional[int] = None) -> b
     url = get_server_url()
     if url:
         try:
-            requests.post(f"{url}/api/settings", json={"key": key, "value": str(value), "user_id": user_id}, timeout=5)
+            requests.post(f"{url}/api/settings", json={"key": key, "value": str(value), "user_id": user_id}, headers=_get_api_headers(), timeout=5)
         except Exception:
             pass
 
@@ -1991,7 +2210,7 @@ def get_all_system_settings() -> Dict[str, str]:
     url = get_server_url()
     if url:
         try:
-            resp = requests.get(f"{url}/api/settings", timeout=5)
+            resp = requests.get(f"{url}/api/settings", headers=_get_api_headers(), timeout=5)
             if resp.status_code == 200:
                 s = resp.json().get("settings")
                 if s is not None:
