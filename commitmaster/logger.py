@@ -10,8 +10,10 @@ import os
 import sys
 from logging.handlers import RotatingFileHandler
 
-APP_DIR = getattr(sys, "_MEIPASS", os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-LOG_FILE = os.path.join(APP_DIR, "commitmaster.log")
+from commitmaster import paths
+
+APP_DIR = paths.get_data_dir()
+LOG_FILE = paths.get_log_path()
 
 _fmt = logging.Formatter(
     "%(asctime)s [%(levelname)-8s] %(name)s — %(message)s",
