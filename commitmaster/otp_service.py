@@ -43,7 +43,7 @@ def send_google_otp(email: str, purpose: str = "verify_account") -> Tuple[bool, 
     clean_email = email.strip().lower()
     code = generate_otp()
     db.save_verification_otp(clean_email, code, purpose=purpose, expiry_minutes=10)
-    log.info("Generated OTP for %s [purpose=%s]: %s", clean_email, purpose, code)
+    log.info("Generated OTP for %s [purpose=%s]", clean_email, purpose)
 
     # 1. Attempt sending via SMTP if configured
     smtp_host = db.get_system_setting("smtp_host") or os.getenv("SMTP_HOST", "")
