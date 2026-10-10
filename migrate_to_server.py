@@ -21,8 +21,13 @@ import requests
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 LOCAL_DB = os.path.join(APP_DIR, "commitmaster.db")
 
-def migrate(server_url: str, secret_key: str = "commitmaster-secret-seed-2026"):
+def migrate(server_url: str, secret_key: str = ""):
     server_url = server_url.rstrip("/")
+    if not secret_key:
+        secret_key = os.getenv("ADMIN_MIGRATION_SECRET", "").strip()
+    if not secret_key:
+        print("Error: Migration requires an admin migration secret via --secret or ADMIN_MIGRATION_SECRET.")
+        return False
     print("=" * 60)
     print("CommitMaster — Database Cloud Migration")
     print("=" * 60)
@@ -92,7 +97,7 @@ def migrate(server_url: str, secret_key: str = "commitmaster-secret-seed-2026"):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Migrate local CommitMaster data to Cloud Backend Server")
     parser.add_argument("--server", default="http://localhost:8000", help="CommitMaster Server URL")
-    parser.add_argument("--secret", default="commitmaster-secret-seed-2026", help="Admin migration secret key")
+    parser.add_argument("--secret", default=os.getenv("ADMIN_MIGRATION_SECRET", ""), help="Admin migration secret key")
     args = parser.parse_args()
 
     success = migrate(args.server, args.secret)
