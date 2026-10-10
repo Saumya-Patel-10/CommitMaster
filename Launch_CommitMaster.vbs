@@ -21,7 +21,18 @@ If Not fso.FileExists(shortcutPath) Then
     On Error GoTo 0
 End If
 
-' Determine best Python executable
+' If compiled native executable exists, launch it directly so Task Manager shows CommitMaster!
+exePath = currentDir & "\dist\CommitMaster.exe"
+installedExe = WshShell.ExpandEnvironmentStrings("%LOCALAPPDATA%\Programs\CommitMaster\CommitMaster.exe")
+If fso.FileExists(exePath) Then
+    WshShell.Run """" & exePath & """", 1, False
+    WScript.Quit
+ElseIf fso.FileExists(installedExe) Then
+    WshShell.Run """" & installedExe & """", 1, False
+    WScript.Quit
+End If
+
+' Determine best Python executable fallback
 pyExe = "pythonw.exe"
 If fso.FileExists("C:\Python314\pythonw.exe") Then
     pyExe = "C:\Python314\pythonw.exe"
