@@ -10,8 +10,10 @@ import shutil
 from typing import Any, Dict, Optional, Tuple
 from PIL import Image, ImageDraw, ImageFont, ImageTk
 
-APP_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-AVATARS_DIR = os.path.join(APP_DIR, "assets", "avatars")
+from commitmaster import paths
+
+APP_DIR = paths.get_data_dir()
+AVATARS_DIR = paths.get_avatars_dir()
 
 _PHOTO_CACHE: Dict[str, ImageTk.PhotoImage] = {}
 
