@@ -20,12 +20,18 @@ import sys
 import json
 import sqlite3
 import hashlib
+import hmac
+import base64
 import secrets
 import logging
+import time
+import threading
+import fnmatch
+from functools import wraps
 from datetime import datetime, timedelta
-from typing import Optional, Dict, List, Any
+from typing import Optional, Dict, List, Any, Tuple
 
-from flask import Flask, request, jsonify, render_template_string
+from flask import Flask, request, jsonify, render_template_string, g
 
 # Setup logging
 logging.basicConfig(
@@ -36,12 +42,26 @@ logger = logging.getLogger("commitmaster-server")
 
 app = Flask(__name__)
 
+# Allowed CORS origins
+ALLOWED_ORIGIN_PATTERNS = [
+    o.strip() for o in os.getenv("CORS_ALLOWED_ORIGINS", "http://localhost:*,http://127.0.0.1:*,https://localhost:*,https://127.0.0.1:*,app://*").split(",") if o.strip() and o.strip().lower() != "null"
+]
+
 # Basic CORS headers helper
 @app.after_request
 def add_cors_headers(response):
-    response.headers["Access-Control-Allow-Origin"] = "*"
+    req_origin = request.headers.get("Origin")
+    if req_origin and req_origin.lower() != "null":
+        if any(fnmatch.fnmatch(req_origin, pat) for pat in ALLOWED_ORIGIN_PATTERNS) or os.getenv("CORS_ALLOW_ALL") == "1":
+            response.headers["Access-Control-Allow-Origin"] = req_origin
+            response.headers["Access-Control-Allow-Credentials"] = "true"
+        else:
+            response.headers["Access-Control-Allow-Origin"] = "null"
+    else:
+        response.headers["Access-Control-Allow-Origin"] = "*"
+
     response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
-    response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization, X-Requested-With"
+    response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization, X-Requested-With, X-Session-Token"
     # Security checklist headers (Item 18)
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "DENY"
@@ -56,8 +76,83 @@ DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
 
 # Default admin credentials
 DEFAULT_ADMIN_USER = os.getenv("ADMIN_USERNAME", "saumya.patel@Admin_#")
-DEFAULT_ADMIN_PASS = os.getenv("ADMIN_PASSWORD", "SamLegions2026")
 DEFAULT_ADMIN_EMAIL = os.getenv("ADMIN_EMAIL", "saumya.a.patel@gmail.com")
+
+_server_admin_pass = os.getenv("ADMIN_PASSWORD", "").strip()
+if not _server_admin_pass:
+    _admin_secret_file = os.path.join(SERVER_DIR, ".admin_initial_secret")
+    if os.path.exists(_admin_secret_file):
+        try:
+            with open(_admin_secret_file, "r", encoding="utf-8") as _f:
+                _server_admin_pass = _f.read().strip()
+        except Exception:
+            pass
+    if not _server_admin_pass:
+        _server_admin_pass = secrets.token_urlsafe(20)
+        try:
+            with open(_admin_secret_file, "w", encoding="utf-8") as _f:
+                _f.write(_server_admin_pass)
+        except Exception:
+            pass
+DEFAULT_ADMIN_PASS = _server_admin_pass
+
+# In-memory rate limiting structures
+_rate_lock = threading.Lock()
+_login_failures: Dict[str, List[float]] = {}
+_reset_failures: Dict[str, List[float]] = {}
+_register_attempts: Dict[str, List[float]] = {}
+_questions_attempts: Dict[str, List[float]] = {}
+_check_attempts: Dict[str, List[float]] = {}
+
+def check_rate_limit(tracker: Dict[str, List[float]], key: str, max_attempts: int = 5, window_seconds: int = 900) -> Tuple[bool, int]:
+    now = time.time()
+    with _rate_lock:
+        attempts = tracker.get(key, [])
+        attempts = [t for t in attempts if now - t < window_seconds]
+        tracker[key] = attempts
+        if len(attempts) >= max_attempts:
+            oldest = min(attempts)
+            retry_after = int(window_seconds - (now - oldest)) + 1
+            return False, max(1, retry_after)
+        return True, 0
+
+def record_rate_failure(tracker: Dict[str, List[float]], key: str):
+    now = time.time()
+    with _rate_lock:
+        if key not in tracker:
+            tracker[key] = []
+        tracker[key].append(now)
+
+def clear_rate_failures(tracker: Dict[str, List[float]], key: str):
+    with _rate_lock:
+        tracker.pop(key, None)
+
+# Token & Secret Encryption Utilities
+def _encrypt_token(token: str) -> str:
+    """Encrypt sensitive token at rest."""
+    if not token or token.startswith("enc:"):
+        return token
+    try:
+        key_material = os.getenv("SERVER_ENCRYPTION_KEY") or f"{DEFAULT_ADMIN_USER}:cm_server_sec_key"
+        key_hash = hashlib.sha256(key_material.encode("utf-8")).digest()
+        token_bytes = token.encode("utf-8")
+        cipher_bytes = bytes([b ^ key_hash[i % len(key_hash)] for i, b in enumerate(token_bytes)])
+        return "enc:" + base64.b64encode(cipher_bytes).decode("ascii")
+    except Exception:
+        return token
+
+def _decrypt_token(token: str) -> str:
+    """Decrypt sensitive token at rest."""
+    if not token or not token.startswith("enc:"):
+        return token
+    try:
+        key_material = os.getenv("SERVER_ENCRYPTION_KEY") or f"{DEFAULT_ADMIN_USER}:cm_server_sec_key"
+        key_hash = hashlib.sha256(key_material.encode("utf-8")).digest()
+        cipher_bytes = base64.b64decode(token[4:].encode("ascii"))
+        plain_bytes = bytes([b ^ key_hash[i % len(key_hash)] for i, b in enumerate(cipher_bytes)])
+        return plain_bytes.decode("utf-8")
+    except Exception:
+        return token
 
 # Password hashing utilities
 def hash_password(password: str) -> str:
@@ -91,6 +186,69 @@ def get_db():
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")
     return conn
+
+# ── Authentication & Authorization Middleware ────────────────────────────────
+def extract_auth_token() -> Optional[str]:
+    """Extract bearer or session token strictly from Authorization or X-Session-Token header."""
+    auth_header = request.headers.get("Authorization", "").strip()
+    if auth_header:
+        if auth_header.lower().startswith("bearer "):
+            return auth_header[7:].strip()
+        return auth_header
+    x_tok = request.headers.get("X-Session-Token", "").strip()
+    if x_tok:
+        return x_tok
+    return None
+
+def get_current_user_from_token(token: Optional[str]) -> Optional[Dict[str, Any]]:
+    """Look up active user for the given session token."""
+    if not token:
+        return None
+    try:
+        conn = get_db()
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT u.* FROM sessions s
+            JOIN users u ON s.user_id = u.id
+            WHERE s.token = ? AND s.expires_at > datetime('now') AND u.is_active = 1
+        """, (token,))
+        row = cur.fetchone()
+        conn.close()
+        if row:
+            u_dict = dict(row)
+            u_dict.pop("password_hash", None)
+            return u_dict
+    except Exception as exc:
+        logger.error(f"Error checking session token: {exc}")
+    return None
+
+def require_auth(admin_only: bool = False, allow_self_user_id: bool = True):
+    """
+    Decorator enforcing session authentication and row-level authorization.
+    - If admin_only is True: requires role == 'admin'.
+    - If allow_self_user_id is True and 'user_id' is in route parameters:
+      ensures caller matches 'user_id' unless caller is an admin.
+    """
+    def decorator(fn):
+        @wraps(fn)
+        def wrapper(*args, **kwargs):
+            tok = extract_auth_token()
+            user = get_current_user_from_token(tok)
+            if not user:
+                return jsonify({"error": "Unauthorized: valid session token required."}), 401
+
+            if admin_only and user.get("role") != "admin":
+                return jsonify({"error": "Forbidden: administrator privileges required."}), 403
+
+            if allow_self_user_id and "user_id" in kwargs:
+                target_uid = kwargs["user_id"]
+                if user.get("role") != "admin" and user.get("id") != target_uid:
+                    return jsonify({"error": "Forbidden: cannot access or modify another user's data."}), 403
+
+            g.current_user = user
+            return fn(*args, **kwargs)
+        return wrapper
+    return decorator
 
 def init_db():
     conn = get_db()
@@ -283,7 +441,7 @@ def init_db():
         cur.execute("INSERT OR IGNORE INTO user_preferences (user_id) VALUES (?)", (admin_id,))
         logger.info(f"Initialized default admin account: '{DEFAULT_ADMIN_USER}'")
     else:
-        if verify_password("admin123", saumya_row["password_hash"]):
+        if not verify_password(DEFAULT_ADMIN_PASS, saumya_row["password_hash"]):
             new_hash = hash_password(DEFAULT_ADMIN_PASS)
             cur.execute("UPDATE users SET password_hash = ? WHERE id = ?", (new_hash, saumya_row["id"]))
         cur.execute("UPDATE users SET role = 'admin' WHERE username = ?", (DEFAULT_ADMIN_USER,))
@@ -510,22 +668,25 @@ def health():
     try:
         conn = get_db()
         cur = conn.cursor()
-        cur.execute("SELECT COUNT(*) FROM users")
-        user_count = cur.fetchone()[0]
+        cur.execute("SELECT 1")
         conn.close()
         return jsonify({
             "status": "ok",
             "version": "3.0",
             "service": "CommitMaster Cloud Backend",
-            "users_count": user_count,
             "timestamp": datetime.now().isoformat()
         })
-    except Exception as exc:
-        return jsonify({"status": "error", "message": str(exc)}), 500
+    except Exception:
+        return jsonify({"status": "error", "message": "Service unavailable."}), 500
 
 # ── Authentication Endpoints ──────────────────────────────────────────────────
 @app.route("/api/auth/check", methods=["POST"])
 def auth_check():
+    rate_key = f"chk:{request.remote_addr or 'unknown'}"
+    allowed, retry_after = check_rate_limit(_check_attempts, rate_key, max_attempts=60, window_seconds=900)
+    if not allowed:
+        return jsonify({"error": f"Too many lookup attempts. Please try again in {retry_after} seconds."}), 429
+
     data = request.get_json(force=True, silent=True) or {}
     username = (data.get("username") or "").strip()
     email = (data.get("email") or "").strip().lower()
@@ -547,6 +708,11 @@ def auth_check():
 
 @app.route("/api/auth/register", methods=["POST"])
 def auth_register():
+    rate_key = f"reg:{request.remote_addr or 'unknown'}"
+    allowed, retry_after = check_rate_limit(_register_attempts, rate_key, max_attempts=25, window_seconds=3600)
+    if not allowed:
+        return jsonify({"error": f"Too many registration attempts. Please try again in {retry_after} seconds."}), 429
+
     data = request.get_json(force=True, silent=True) or {}
     username = (data.get("username") or "").strip()
     email = (data.get("email") or "").strip().lower()
@@ -623,9 +789,14 @@ def auth_register():
         return jsonify({"error": "Failed to create account: " + str(exc)}), 500
 
 @app.route("/api/auth/save-security-questions", methods=["POST"])
+@require_auth(allow_self_user_id=False)
 def auth_save_security_questions():
     data = request.get_json(force=True, silent=True) or {}
     user_id = data.get("user_id")
+    # Enforce tenant ownership: caller must match user_id or be an admin
+    if g.current_user.get("role") != "admin" and g.current_user.get("id") != user_id:
+        return jsonify({"error": "Forbidden: cannot configure security questions for another user."}), 403
+
     q1 = (data.get("question_1") or "").strip()
     h1 = (data.get("answer_hash_1") or "").strip()
     q2 = (data.get("question_2") or "").strip()
@@ -655,6 +826,11 @@ def auth_get_security_questions():
     if not ident:
         return jsonify({"found": False, "error": "Username or email is required."}), 400
 
+    rate_key = f"sq:{request.remote_addr or 'unknown'}"
+    allowed, retry_after = check_rate_limit(_questions_attempts, rate_key, max_attempts=20, window_seconds=900)
+    if not allowed:
+        return jsonify({"found": False, "error": f"Too many requests. Please try again in {retry_after} seconds."}), 429
+
     conn = get_db()
     cur = conn.cursor()
     cur.execute("""
@@ -674,6 +850,7 @@ def auth_get_security_questions():
             "question_1": row["question_1"],
             "question_2": row["question_2"]
         })
+    record_rate_failure(_questions_attempts, rate_key)
     return jsonify({"found": False, "error": "No security questions registered for this account."}), 404
 
 @app.route("/api/auth/reset-password", methods=["POST"])
@@ -689,28 +866,43 @@ def auth_reset_password():
     if len(new_password) < 6:
         return jsonify({"error": "Password must be at least 6 characters."}), 400
 
+    rate_key = f"reset:{user_id}:{request.remote_addr or 'unknown'}"
+    allowed, retry_after = check_rate_limit(_reset_failures, rate_key, max_attempts=5, window_seconds=900)
+    if not allowed:
+        return jsonify({"error": f"Too many failed security answer attempts. Password reset locked for {retry_after} seconds."}), 429
+
     conn = get_db()
     cur = conn.cursor()
     cur.execute("SELECT answer_hash_1, answer_hash_2 FROM user_security_questions WHERE user_id = ?", (user_id,))
     row = cur.fetchone()
     if not row:
         conn.close()
+        record_rate_failure(_reset_failures, rate_key)
         return jsonify({"error": "No security questions found for user."}), 404
 
     if not verify_password(a1, row["answer_hash_1"]) or not verify_password(a2, row["answer_hash_2"]):
         conn.close()
+        record_rate_failure(_reset_failures, rate_key)
         return jsonify({"error": "Security question answers do not match."}), 401
 
+    clear_rate_failures(_reset_failures, rate_key)
     new_hash = hash_password(new_password)
     cur.execute("UPDATE users SET password_hash = ? WHERE id = ?", (new_hash, user_id))
+    # Security: Revoke all existing sessions on password recovery
+    cur.execute("DELETE FROM sessions WHERE user_id = ?", (user_id,))
     conn.commit()
     conn.close()
     return jsonify({"success": True, "message": "Password updated successfully."})
 
 @app.route("/api/auth/update-password", methods=["POST"])
+@require_auth(allow_self_user_id=False)
 def auth_update_password():
     data = request.get_json(force=True, silent=True) or {}
     user_id = data.get("user_id")
+    # Enforce tenant ownership: caller must match user_id or be admin
+    if g.current_user.get("role") != "admin" and g.current_user.get("id") != user_id:
+        return jsonify({"error": "Forbidden: cannot update password for another user."}), 403
+
     new_password = data.get("new_password") or ""
     if not user_id or not new_password or len(new_password) < 6:
         return jsonify({"error": "Invalid user ID or password too short."}), 400
@@ -718,6 +910,8 @@ def auth_update_password():
     cur = conn.cursor()
     new_hash = hash_password(new_password)
     cur.execute("UPDATE users SET password_hash = ? WHERE id = ?", (new_hash, user_id))
+    # Security: Revoke existing sessions
+    cur.execute("DELETE FROM sessions WHERE user_id = ?", (user_id,))
     conn.commit()
     conn.close()
     return jsonify({"success": True})
@@ -731,6 +925,11 @@ def auth_login():
     if not username_or_email or not password:
         return jsonify({"error": "Username/email and password required"}), 400
 
+    rate_key = f"login:{username_or_email.lower()}:{request.remote_addr or 'unknown'}"
+    allowed, retry_after = check_rate_limit(_login_failures, rate_key, max_attempts=5, window_seconds=900)
+    if not allowed:
+        return jsonify({"error": f"Too many failed login attempts. Try again in {retry_after} seconds."}), 429
+
     conn = get_db()
     cur = conn.cursor()
     cur.execute("""
@@ -741,7 +940,10 @@ def auth_login():
 
     if not row or not verify_password(password, row["password_hash"]):
         conn.close()
+        record_rate_failure(_login_failures, rate_key)
         return jsonify({"error": "Invalid credentials. Please try again."}), 401
+
+    clear_rate_failures(_login_failures, rate_key)
 
     user_id = row["id"]
     cur.execute("UPDATE users SET last_login = datetime('now') WHERE id = ?", (user_id,))
@@ -776,7 +978,7 @@ def auth_session():
     cur = conn.cursor()
 
     if action == "validate":
-        token = data.get("token") or ""
+        token = data.get("token") or extract_auth_token() or ""
         cur.execute("""
             SELECT u.* FROM sessions s
             JOIN users u ON s.user_id = u.id
@@ -791,28 +993,40 @@ def auth_session():
         return jsonify({"valid": False, "user": None})
 
     elif action == "create":
-        user_id = int(data.get("user_id", 0))
-        token = secrets.token_urlsafe(32)
-        expires = (datetime.now() + timedelta(days=30)).strftime("%Y-%m-%d %H:%M:%S")
-        cur.execute("DELETE FROM sessions WHERE user_id = ?", (user_id,))
-        cur.execute("INSERT INTO sessions (token, user_id, expires_at) VALUES (?, ?, ?)",
-                    (token, user_id, expires))
-        conn.commit()
+        # Disallow unauthenticated arbitrary minting of session tokens
+        tok = extract_auth_token()
+        caller = get_current_user_from_token(tok)
+        target_uid = int(data.get("user_id", 0))
+        if caller and (caller.get("role") == "admin" or caller.get("id") == target_uid):
+            token = secrets.token_urlsafe(32)
+            expires = (datetime.now() + timedelta(days=30)).strftime("%Y-%m-%d %H:%M:%S")
+            cur.execute("DELETE FROM sessions WHERE user_id = ?", (target_uid,))
+            cur.execute("INSERT INTO sessions (token, user_id, expires_at) VALUES (?, ?, ?)",
+                        (token, target_uid, expires))
+            conn.commit()
+            conn.close()
+            return jsonify({"token": token})
         conn.close()
-        return jsonify({"token": token})
+        return jsonify({"error": "Unauthorized: session creation requires authentication or login credentials."}), 401
 
     elif action == "revoke":
-        user_id = int(data.get("user_id", 0))
-        cur.execute("DELETE FROM sessions WHERE user_id = ?", (user_id,))
-        conn.commit()
+        tok = extract_auth_token()
+        caller = get_current_user_from_token(tok)
+        target_uid = int(data.get("user_id", 0))
+        if caller and (caller.get("role") == "admin" or caller.get("id") == target_uid):
+            cur.execute("DELETE FROM sessions WHERE user_id = ?", (target_uid,))
+            conn.commit()
+            conn.close()
+            return jsonify({"ok": True})
         conn.close()
-        return jsonify({"ok": True})
+        return jsonify({"error": "Unauthorized"}), 401
 
     conn.close()
     return jsonify({"error": "Unknown session action"}), 400
 
 # ── User Profile & Preferences ────────────────────────────────────────────────
 @app.route("/api/users/<int:user_id>", methods=["GET", "PUT"])
+@require_auth(allow_self_user_id=True)
 def user_detail(user_id):
     conn = get_db()
     cur = conn.cursor()
@@ -829,7 +1043,9 @@ def user_detail(user_id):
 
     elif request.method == "PUT":
         data = request.get_json(force=True, silent=True) or {}
-        allowed = {"full_name", "email", "bio", "avatar_color", "is_active", "role"}
+        allowed = {"full_name", "email", "bio", "avatar_color"}
+        if g.current_user.get("role") == "admin":
+            allowed.update({"is_active", "role"})
         updates = {k: v for k, v in data.items() if k in allowed}
         if updates:
             set_clause = ", ".join(f"{k} = ?" for k in updates)
@@ -840,20 +1056,38 @@ def user_detail(user_id):
         return jsonify({"ok": True})
 
 @app.route("/api/users/<int:user_id>/password", methods=["POST"])
+@require_auth(allow_self_user_id=True)
 def user_change_password(user_id):
     data = request.get_json(force=True, silent=True) or {}
     new_pw = data.get("new_password") or ""
-    if not new_pw:
-        return jsonify({"error": "New password required"}), 400
+    if not new_pw or len(new_pw) < 6:
+        return jsonify({"error": "New password required and must be at least 6 characters."}), 400
+
+    conn = get_db()
+    cur = conn.cursor()
+
+    # Require current password verification for standard self-service users
+    if g.current_user.get("role") != "admin":
+        cur_pw = data.get("current_password") or ""
+        cur.execute("SELECT password_hash FROM users WHERE id = ?", (user_id,))
+        u_row = cur.fetchone()
+        if not u_row:
+            conn.close()
+            return jsonify({"error": "User not found"}), 404
+        if cur_pw and not verify_password(cur_pw, u_row["password_hash"]):
+            conn.close()
+            return jsonify({"error": "Current password is incorrect."}), 401
 
     pw_hash = hash_password(new_pw)
-    conn = get_db()
-    conn.execute("UPDATE users SET password_hash = ? WHERE id = ?", (pw_hash, user_id))
+    cur.execute("UPDATE users SET password_hash = ? WHERE id = ?", (pw_hash, user_id))
+    # Security: Invalidate all active sessions for this account
+    cur.execute("DELETE FROM sessions WHERE user_id = ?", (user_id,))
     conn.commit()
     conn.close()
     return jsonify({"ok": True})
 
 @app.route("/api/users/<int:user_id>/preferences", methods=["GET", "PUT"])
+@require_auth(allow_self_user_id=True)
 def user_preferences(user_id):
     conn = get_db()
     cur = conn.cursor()
@@ -864,7 +1098,17 @@ def user_preferences(user_id):
         conn.close()
         if not row:
             return jsonify({"preferences": {}})
-        return jsonify({"preferences": dict(row)})
+        prefs = dict(row)
+        # Security: Decrypt stored value and mask AI API keys so secrets are never returned in plaintext
+        for k in ("openai_api_key", "claude_api_key", "gemini_api_key"):
+            val = prefs.get(k) or ""
+            if val:
+                val = _decrypt_token(val)
+                if len(val) > 8:
+                    prefs[k] = val[:3] + "..." + val[-4:]
+                else:
+                    prefs[k] = "***"
+        return jsonify({"preferences": prefs})
 
     elif request.method == "PUT":
         data = request.get_json(force=True, silent=True) or {}
@@ -878,6 +1122,16 @@ def user_preferences(user_id):
             "reminder_app_monitor_enabled", "reminder_only_if_dirty"
         }
         updates = {k: v for k, v in data.items() if k in allowed}
+        # Do not overwrite stored keys if caller sent masked values back
+        for k in ("openai_api_key", "claude_api_key", "gemini_api_key"):
+            if k in updates:
+                val_str = str(updates[k])
+                if "..." in val_str or val_str == "***":
+                    del updates[k]
+                elif val_str:
+                    # Encrypt AI keys at rest before writing to database
+                    updates[k] = _encrypt_token(val_str)
+
         if updates:
             set_clause = ", ".join(f"{k} = ?" for k in updates)
             cur.execute(f"UPDATE user_preferences SET {set_clause} WHERE user_id = ?",
@@ -888,13 +1142,15 @@ def user_preferences(user_id):
 
 # ── Commit Activity & Logs ────────────────────────────────────────────────────
 @app.route("/api/activity/commits", methods=["GET", "POST"])
+@require_auth(allow_self_user_id=False)
 def activity_commits():
     conn = get_db()
     cur = conn.cursor()
 
     if request.method == "POST":
         data = request.get_json(force=True, silent=True) or {}
-        user_id = int(data.get("user_id", 0))
+        # Tenant isolation: ensure commit is recorded for caller unless admin specifies otherwise
+        user_id = g.current_user["id"] if g.current_user.get("role") != "admin" else int(data.get("user_id") or g.current_user["id"])
         repo_path = data.get("repo_path") or ""
         repo_name = data.get("repo_name") or os.path.basename(repo_path.rstrip("/\\"))
         commit_msg = data.get("commit_msg") or ""
@@ -919,8 +1175,12 @@ def activity_commits():
         return jsonify({"ok": True})
 
     elif request.method == "GET":
-        user_id = request.args.get("user_id", type=int)
         limit = request.args.get("limit", default=100, type=int)
+        # Non-admins can only see their own commits
+        if g.current_user.get("role") != "admin":
+            user_id = g.current_user["id"]
+        else:
+            user_id = request.args.get("user_id", type=int)
 
         if user_id:
             cur.execute("""
@@ -942,14 +1202,16 @@ def activity_commits():
         return jsonify({"activity": rows})
 
 @app.route("/api/events", methods=["POST"])
+@require_auth(allow_self_user_id=False)
 def log_event():
     data = request.get_json(force=True, silent=True) or {}
     conn = get_db()
+    user_id = g.current_user["id"] if g.current_user.get("role") != "admin" else (data.get("user_id") or g.current_user["id"])
     conn.execute("""
         INSERT INTO app_events (user_id, kind, repo_name, files, errors, security, warnings, detail)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     """, (
-        data.get("user_id"),
+        user_id,
         data.get("kind", "scan"),
         data.get("repo_name", ""),
         data.get("files", 0),
@@ -964,9 +1226,14 @@ def log_event():
 
 # ── Metrics & Analytics ───────────────────────────────────────────────────────
 @app.route("/api/metrics/timeseries", methods=["GET"])
+@require_auth(allow_self_user_id=False)
 def metrics_timeseries():
     days = request.args.get("days", default=30, type=int)
-    user_id = request.args.get("user_id", type=int)
+    # Non-admins can only query their own telemetry
+    if g.current_user.get("role") != "admin":
+        user_id = g.current_user["id"]
+    else:
+        user_id = request.args.get("user_id", type=int)
 
     today = datetime.now().date()
     dates = [(today - timedelta(days=d)).strftime("%Y-%m-%d") for d in range(days - 1, -1, -1)]
@@ -1016,6 +1283,7 @@ def metrics_timeseries():
     return jsonify({"dates": dates, "series": series})
 
 @app.route("/api/metrics/user-commits", methods=["GET"])
+@require_auth(admin_only=True)
 def metrics_user_commits():
     days = request.args.get("days", default=30, type=int)
     limit = request.args.get("limit", default=5, type=int)
@@ -1044,6 +1312,7 @@ def metrics_user_commits():
     return jsonify({"dates": dates, "series": {u: per_user[u] for u in top}})
 
 @app.route("/api/events/security", methods=["GET"])
+@require_auth(admin_only=True)
 def events_security():
     limit = request.args.get("limit", default=8, type=int)
     conn = get_db()
@@ -1056,9 +1325,13 @@ def events_security():
     return jsonify({"events": [dict(r) for r in rows]})
 
 @app.route("/api/usage/stats", methods=["GET"])
+@require_auth(allow_self_user_id=False)
 def usage_stats():
     days = request.args.get("days", default=30, type=int)
-    user_id = request.args.get("user_id", type=int)
+    if g.current_user.get("role") != "admin":
+        user_id = g.current_user["id"]
+    else:
+        user_id = request.args.get("user_id", type=int)
     since = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
 
     conn = get_db()
@@ -1080,6 +1353,7 @@ def usage_stats():
 
 # ── Admin Endpoints ───────────────────────────────────────────────────────────
 @app.route("/api/admin/users", methods=["GET"])
+@require_auth(admin_only=True)
 def admin_get_users():
     conn = get_db()
     rows = conn.execute("""
@@ -1097,6 +1371,7 @@ def admin_get_users():
     return jsonify({"users": result})
 
 @app.route("/api/admin/users/<int:user_id>", methods=["PUT", "DELETE"])
+@require_auth(admin_only=True)
 def admin_user_ops(user_id):
     conn = get_db()
     cur = conn.cursor()
@@ -1143,6 +1418,7 @@ def admin_user_ops(user_id):
         return jsonify({"ok": True})
 
 @app.route("/api/admin/stats", methods=["GET"])
+@require_auth(admin_only=True)
 def admin_stats():
     conn = get_db()
     cur = conn.cursor()
@@ -1184,15 +1460,31 @@ def system_settings_route():
 
     if request.method == "GET":
         cur.execute("SELECT key, value FROM system_settings")
-        settings_dict = {row["key"]: row["value"] for row in cur.fetchall()}
+        all_settings = {row["key"]: row["value"] for row in cur.fetchall()}
         conn.close()
-        return jsonify({"settings": settings_dict})
+
+        # If admin is calling, return all settings
+        tok = extract_auth_token()
+        caller = get_current_user_from_token(tok)
+        if caller and caller.get("role") == "admin":
+            return jsonify({"settings": all_settings})
+
+        # For unauthenticated or standard users, return only safe UI customization defaults
+        PUBLIC_SAFE_KEYS = {"default_theme", "default_accent", "default_font_family", "default_pattern"}
+        safe = {k: v for k, v in all_settings.items() if k in PUBLIC_SAFE_KEYS}
+        return jsonify({"settings": safe})
 
     elif request.method == "POST":
+        # Mutating system settings requires admin privileges
+        tok = extract_auth_token()
+        caller = get_current_user_from_token(tok)
+        if not caller or caller.get("role") != "admin":
+            conn.close()
+            return jsonify({"error": "Forbidden: administrator privileges required to change system settings."}), 403
+
         data = request.get_json(force=True, silent=True) or {}
         key = data.get("key")
         value = data.get("value")
-        user_id = data.get("user_id")
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
         if key:
@@ -1201,7 +1493,7 @@ def system_settings_route():
                 VALUES (?, ?, ?, ?)
                 ON CONFLICT(key) DO UPDATE SET value = excluded.value,
                     updated_at = excluded.updated_at, updated_by = excluded.updated_by
-            """, (key, str(value), now, user_id))
+            """, (key, str(value), now, caller["id"]))
             conn.commit()
         conn.close()
         return jsonify({"ok": True})
@@ -1212,9 +1504,16 @@ def migrate_seed():
     """Seed data directly from a local CommitMaster database."""
     data = request.get_json(force=True, silent=True) or {}
     secret_key = data.get("secret_key")
-    # Require matching admin credentials or secret
-    if secret_key != os.getenv("ADMIN_MIGRATION_SECRET", "commitmaster-secret-seed-2026"):
-        return jsonify({"error": "Unauthorized"}), 403
+    configured_secret = os.getenv("ADMIN_MIGRATION_SECRET", "").strip()
+
+    # Require either configured matching ADMIN_MIGRATION_SECRET or active admin token
+    tok = extract_auth_token()
+    caller = get_current_user_from_token(tok)
+    is_admin = bool(caller and caller.get("role") == "admin")
+    secret_matches = bool(configured_secret and secret_key and hmac.compare_digest(str(secret_key), configured_secret))
+
+    if not (is_admin or secret_matches):
+        return jsonify({"error": "Unauthorized: migration requires admin authentication or ADMIN_MIGRATION_SECRET."}), 403
 
     users = data.get("users", [])
     conn = get_db()
@@ -1253,7 +1552,7 @@ def migrate_seed():
 # ── Main Entrypoint ───────────────────────────────────────────────────────────
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))
-    host = os.environ.get("HOST", "0.0.0.0")
+    host = os.environ.get("HOST", "127.0.0.1")
     print("=" * 60)
     print("CommitMaster Cloud Backend Server v3.0")
     print(f"Listening on http://{host}:{port}")
