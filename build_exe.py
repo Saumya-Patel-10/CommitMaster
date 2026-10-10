@@ -30,6 +30,7 @@ def build_single(target_script: str, exe_name: str, description: str, icon_file:
         "--hidden-import", "PIL.ImageTk",
         "--hidden-import", "PIL.ImageDraw",
         "--hidden-import", "winreg",
+        "--hidden-import", "commitmaster.paths",
         "--hidden-import", "commitmaster.tray_manager",
         "--hidden-import", "commitmaster.startup_manager",
         "--hidden-import", "commitmaster.social_auth",
