@@ -26,6 +26,7 @@ from commitmaster.app_styles import COLORS, FONTS
 from commitmaster import database as db
 from commitmaster import account_manager
 from commitmaster import github_service
+from commitmaster import otp_service
 from commitmaster.logger import get
 
 log = get("social_auth")
@@ -36,14 +37,29 @@ AVATARS_DIR = os.path.join(APP_DIR, "assets", "avatars")
 
 def download_and_save_avatar(user_id: int, image_url: str) -> Optional[str]:
     """Download avatar image from a remote URL and store it locally as the user's profile pic."""
-    if not image_url or not image_url.startswith(("http://", "https://")):
+    if not image_url or not image_url.startswith("https://"):
         return None
 
+    import urllib.parse
+    import ipaddress
     try:
+        parsed = urllib.parse.urlparse(image_url)
+        hostname = (parsed.hostname or "").lower()
+        if not hostname:
+            return None
+        try:
+            ip = ipaddress.ip_address(hostname)
+            if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_multicast or ip.is_reserved:
+                return None
+        except ValueError:
+            pass
+        if hostname in ("localhost", "127.0.0.1", "::1", "metadata.google.internal") or hostname.endswith((".local", ".internal", ".lan")):
+            return None
+
         os.makedirs(AVATARS_DIR, exist_ok=True)
         dest_path = os.path.join(AVATARS_DIR, f"user_{user_id}.png")
 
-        resp = requests.get(image_url, timeout=8, headers={"User-Agent": "CommitMaster-Desktop-App"})
+        resp = requests.get(image_url, timeout=8, headers={"User-Agent": "CommitMaster-Desktop-App"}, allow_redirects=False)
         if resp.status_code == 200 and resp.content:
             import io
             with Image.open(io.BytesIO(resp.content)) as img:
@@ -488,10 +504,27 @@ class GoogleAuthDialog:
             self._status_lbl.config(text="Please enter a valid Google Account email address.", fg=COLORS["error"])
             return
 
-        self._submit_btn.config(state="disabled", text="Verifying Google Account...")
-        self._status_lbl.config(text="Authenticating with Google Account...", fg=COLORS["info"])
+        self._submit_btn.config(state="disabled", text="Sending verification code...")
+        self._status_lbl.config(text="Sending OTP verification code to Google account...", fg=COLORS["info"])
         self.dialog.update_idletasks()
 
+        ok, msg, _ = otp_service.send_google_otp(email, purpose="social_login")
+        self._submit_btn.config(state="normal", text="🌐 Sign in with Google")
+        if not ok:
+            self._status_lbl.config(text=f"Failed to send verification code: {msg}", fg=COLORS["error"])
+            return
+
+        self._status_lbl.config(text="Verification code sent! Please verify the OTP to sign in.", fg=COLORS["success"])
+
+        # Require successful OTP verification before granting session access
+        otp_service.GoogleOtpDialog(
+            self.dialog, email,
+            on_success=lambda: self._complete_google_auth(email),
+            purpose="social_login"
+        )
+
+    def _complete_google_auth(self, email: str):
+        """Called ONLY after OTP ownership of email has been strictly verified."""
         user = db.get_user_by_username_or_email(email)
         if not user:
             # CREATE NEW ACCOUNT WITH GOOGLE
@@ -508,7 +541,6 @@ class GoogleAuthDialog:
 
             uid = db.create_user(uname, email, full_name, rand_pw)
             if not uid:
-                self._submit_btn.config(state="normal", text="🌐 Sign in with Google")
                 self._status_lbl.config(text="Could not create user account in local database.", fg=COLORS["error"])
                 return
 
@@ -521,7 +553,7 @@ class GoogleAuthDialog:
                 pass
 
             user = db.get_user(uid)
-            log.info("Created new account with Google: @%s (uid: %d)", uname, uid)
+            log.info("Created new verified account with Google: @%s (uid: %d)", uname, uid)
         else:
             # EXISTING USER: Sign in
             uid = user["id"]
@@ -533,7 +565,7 @@ class GoogleAuthDialog:
             except Exception:
                 pass
             user = db.get_user(uid)
-            log.info("Signed in existing user with Google: @%s (uid: %d)", user["username"], uid)
+            log.info("Signed in existing user with verified Google: @%s (uid: %d)", user["username"], uid)
 
         session_token = db.create_session_token(user["id"])
         account_manager.save_account(user, session_token)
