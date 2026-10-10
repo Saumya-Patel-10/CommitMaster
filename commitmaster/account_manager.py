@@ -12,14 +12,15 @@ from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional
 
 from commitmaster import database as db
+from commitmaster import paths
 from commitmaster.app_styles import COLORS, FONTS
 from commitmaster.logger import get
 
 log = get("account_manager")
 
-APP_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-_ACCOUNTS_FILE = os.path.join(APP_DIR, ".commitmaster_accounts.json")
-_TOKEN_FILE = os.path.join(APP_DIR, ".session_token")
+APP_DIR = paths.get_data_dir()
+_ACCOUNTS_FILE = paths.get_accounts_path()
+_TOKEN_FILE = paths.get_token_path()
 
 
 def _read_data() -> Dict[str, Any]:
@@ -73,15 +74,71 @@ def get_active_account_id() -> Optional[int]:
 
 
 def get_active_account() -> Optional[Dict[str, Any]]:
-    """Return the currently active account dict, or None."""
+    """Return the currently active account dict, falling back to default saved account."""
     data = _read_data()
     active_id = data.get("active_user_id")
+    accounts = data.get("accounts", [])
     if active_id is not None:
-        accounts = data.get("accounts", [])
         for a in accounts:
             if a.get("id") == active_id:
                 return a
+    # Fallback to default or first saved account if not explicitly logged out
+    for a in accounts:
+        if a.get("is_default") or a.get("is_active"):
+            return a
+    if accounts:
+        return accounts[0]
     return None
+
+
+def get_default_account() -> Optional[Dict[str, Any]]:
+    """
+    Return the default or primary account for automatic login.
+    Checks:
+      1. Explicitly active account (active_user_id).
+      2. Account marked as is_default: True.
+      3. First saved account in local accounts list.
+      4. Database designated admin account (DEFAULT_ADMIN_USERNAME).
+    """
+    active = get_active_account()
+    if active:
+        return active
+
+    data = _read_data()
+    accounts = data.get("accounts", [])
+    for a in accounts:
+        if a.get("is_default"):
+            return a
+
+    if accounts:
+        return accounts[0]
+
+    try:
+        admin_uname = db.get_admin_username()
+        db_user = db.get_user_by_username_or_email(admin_uname)
+        if db_user:
+            return dict(db_user)
+    except Exception:
+        pass
+
+    return None
+
+
+def set_default_account(user_id: int) -> bool:
+    """Set the specified account as the default auto-login account."""
+    data = _read_data()
+    accounts = data.get("accounts", [])
+    found = False
+    for a in accounts:
+        if a.get("id") == user_id:
+            a["is_default"] = True
+            found = True
+        else:
+            a["is_default"] = False
+    if found:
+        data["active_user_id"] = user_id
+        _write_data(data)
+    return found
 
 
 def save_account(*args, **kwargs) -> None:
@@ -144,6 +201,8 @@ def save_account(*args, **kwargs) -> None:
         "avatar_image": avatar_img,
         "is_verified": user_dict.get("is_verified", kwargs.get("is_verified", 0)),
         "token": tok,
+        "is_default": user_dict.get("is_default", kwargs.get("is_default", True)),
+        "is_active": True,
         "last_active": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     }
 
@@ -164,6 +223,13 @@ def save_account(*args, **kwargs) -> None:
                 json.dump({"token": tok}, f)
         except Exception:
             pass
+        try:
+            admin_tok = paths.get_admin_token_path()
+            with open(admin_tok, "w", encoding="utf-8") as f:
+                json.dump({"token": tok}, f)
+        except Exception:
+            pass
+        db.set_active_session_token(tok)
     log.info("Saved account %s (id=%s) as active.", acc_entry.get("username"), str(uid))
 
 
