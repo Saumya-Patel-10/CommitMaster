@@ -57,7 +57,8 @@ class TestCustomizationAndGitHub(unittest.TestCase):
         # Create test user
         test_uname = "tester_github_multi"
         test_email = "tester_gh@example.com"
-        user = db.authenticate(test_uname, "pass123")
+        db.clear_failed_login(test_uname)
+        user = db.get_user_by_username_or_email(test_uname)
         if not user:
             uid = db.create_user(test_uname, test_email, "Test User", "pass123")
         else:
