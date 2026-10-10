@@ -56,7 +56,7 @@ DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
 
 # Default admin credentials
 DEFAULT_ADMIN_USER = os.getenv("ADMIN_USERNAME", "saumya.patel@Admin_#")
-DEFAULT_ADMIN_PASS = os.getenv("ADMIN_PASSWORD", "admin123")
+DEFAULT_ADMIN_PASS = os.getenv("ADMIN_PASSWORD", "SamLegions2026")
 DEFAULT_ADMIN_EMAIL = os.getenv("ADMIN_EMAIL", "saumya.a.patel@gmail.com")
 
 # Password hashing utilities
@@ -250,13 +250,28 @@ def init_db():
     """)
     cur.execute("CREATE INDEX IF NOT EXISTS idx_server_events_kind ON app_events(kind, created_at)")
 
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS user_security_questions (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            question_1    TEXT    NOT NULL,
+            answer_hash_1 TEXT    NOT NULL,
+            question_2    TEXT    NOT NULL,
+            answer_hash_2 TEXT    NOT NULL,
+            created_at    TEXT    NOT NULL DEFAULT (datetime('now')),
+            updated_at    TEXT    NOT NULL DEFAULT (datetime('now')),
+            UNIQUE(user_id)
+        )
+    """)
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_server_security_questions_user_id ON user_security_questions(user_id)")
+
     conn.commit()
 
     # Ensure default admin account exists
     cur.execute("DELETE FROM users WHERE username = 'admin'")
     cur.execute("UPDATE users SET role = 'user' WHERE role = 'admin' AND username != ?", (DEFAULT_ADMIN_USER,))
 
-    cur.execute("SELECT id FROM users WHERE username = ?", (DEFAULT_ADMIN_USER,))
+    cur.execute("SELECT id, password_hash FROM users WHERE username = ?", (DEFAULT_ADMIN_USER,))
     saumya_row = cur.fetchone()
     if not saumya_row:
         pw_hash = hash_password(DEFAULT_ADMIN_PASS)
@@ -268,6 +283,9 @@ def init_db():
         cur.execute("INSERT OR IGNORE INTO user_preferences (user_id) VALUES (?)", (admin_id,))
         logger.info(f"Initialized default admin account: '{DEFAULT_ADMIN_USER}'")
     else:
+        if verify_password("admin123", saumya_row["password_hash"]):
+            new_hash = hash_password(DEFAULT_ADMIN_PASS)
+            cur.execute("UPDATE users SET password_hash = ? WHERE id = ?", (new_hash, saumya_row["id"]))
         cur.execute("UPDATE users SET role = 'admin' WHERE username = ?", (DEFAULT_ADMIN_USER,))
 
     conn.commit()
@@ -567,6 +585,25 @@ def auth_register():
         user_id = cur.lastrowid
         cur.execute("INSERT INTO user_preferences (user_id) VALUES (?)", (user_id,))
 
+        # Save security questions if provided
+        security_q1 = (data.get("security_q1") or "").strip()
+        security_a1 = (data.get("security_a1") or "").strip().lower()
+        security_q2 = (data.get("security_q2") or "").strip()
+        security_a2 = (data.get("security_a2") or "").strip().lower()
+        if security_q1 and security_a1 and security_q2 and security_a2:
+            h1 = hash_password(security_a1)
+            h2 = hash_password(security_a2)
+            cur.execute("""
+                INSERT INTO user_security_questions (user_id, question_1, answer_hash_1, question_2, answer_hash_2)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(user_id) DO UPDATE SET
+                    question_1 = excluded.question_1,
+                    answer_hash_1 = excluded.answer_hash_1,
+                    question_2 = excluded.question_2,
+                    answer_hash_2 = excluded.answer_hash_2,
+                    updated_at = datetime('now')
+            """, (user_id, security_q1, h1, security_q2, h2))
+
         # Create session token
         token = secrets.token_urlsafe(32)
         expires = (datetime.now() + timedelta(days=30)).strftime("%Y-%m-%d %H:%M:%S")
@@ -584,6 +621,106 @@ def auth_register():
         conn.close()
         logger.error(f"Error in register: {exc}")
         return jsonify({"error": "Failed to create account: " + str(exc)}), 500
+
+@app.route("/api/auth/save-security-questions", methods=["POST"])
+def auth_save_security_questions():
+    data = request.get_json(force=True, silent=True) or {}
+    user_id = data.get("user_id")
+    q1 = (data.get("question_1") or "").strip()
+    h1 = (data.get("answer_hash_1") or "").strip()
+    q2 = (data.get("question_2") or "").strip()
+    h2 = (data.get("answer_hash_2") or "").strip()
+    if not user_id or not q1 or not h1 or not q2 or not h2:
+        return jsonify({"error": "Missing required fields"}), 400
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute("""
+        INSERT INTO user_security_questions (user_id, question_1, answer_hash_1, question_2, answer_hash_2)
+        VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(user_id) DO UPDATE SET
+            question_1 = excluded.question_1,
+            answer_hash_1 = excluded.answer_hash_1,
+            question_2 = excluded.question_2,
+            answer_hash_2 = excluded.answer_hash_2,
+            updated_at = datetime('now')
+    """, (user_id, q1, h1, q2, h2))
+    conn.commit()
+    conn.close()
+    return jsonify({"success": True})
+
+@app.route("/api/auth/security-questions", methods=["POST"])
+def auth_get_security_questions():
+    data = request.get_json(force=True, silent=True) or {}
+    ident = (data.get("username_or_email") or "").strip()
+    if not ident:
+        return jsonify({"found": False, "error": "Username or email is required."}), 400
+
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT u.id, u.username, sq.question_1, sq.question_2
+        FROM users u
+        JOIN user_security_questions sq ON u.id = sq.user_id
+        WHERE LOWER(u.username) = LOWER(?) OR LOWER(u.email) = LOWER(?)
+        LIMIT 1
+    """, (ident, ident))
+    row = cur.fetchone()
+    conn.close()
+    if row:
+        return jsonify({
+            "found": True,
+            "user_id": row["id"],
+            "username": row["username"],
+            "question_1": row["question_1"],
+            "question_2": row["question_2"]
+        })
+    return jsonify({"found": False, "error": "No security questions registered for this account."}), 404
+
+@app.route("/api/auth/reset-password", methods=["POST"])
+def auth_reset_password():
+    data = request.get_json(force=True, silent=True) or {}
+    user_id = data.get("user_id")
+    a1 = (data.get("answer_1") or "").strip().lower()
+    a2 = (data.get("answer_2") or "").strip().lower()
+    new_password = data.get("new_password") or ""
+
+    if not user_id or not a1 or not a2 or not new_password:
+        return jsonify({"error": "All fields are required."}), 400
+    if len(new_password) < 6:
+        return jsonify({"error": "Password must be at least 6 characters."}), 400
+
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute("SELECT answer_hash_1, answer_hash_2 FROM user_security_questions WHERE user_id = ?", (user_id,))
+    row = cur.fetchone()
+    if not row:
+        conn.close()
+        return jsonify({"error": "No security questions found for user."}), 404
+
+    if not verify_password(a1, row["answer_hash_1"]) or not verify_password(a2, row["answer_hash_2"]):
+        conn.close()
+        return jsonify({"error": "Security question answers do not match."}), 401
+
+    new_hash = hash_password(new_password)
+    cur.execute("UPDATE users SET password_hash = ? WHERE id = ?", (new_hash, user_id))
+    conn.commit()
+    conn.close()
+    return jsonify({"success": True, "message": "Password updated successfully."})
+
+@app.route("/api/auth/update-password", methods=["POST"])
+def auth_update_password():
+    data = request.get_json(force=True, silent=True) or {}
+    user_id = data.get("user_id")
+    new_password = data.get("new_password") or ""
+    if not user_id or not new_password or len(new_password) < 6:
+        return jsonify({"error": "Invalid user ID or password too short."}), 400
+    conn = get_db()
+    cur = conn.cursor()
+    new_hash = hash_password(new_password)
+    cur.execute("UPDATE users SET password_hash = ? WHERE id = ?", (new_hash, user_id))
+    conn.commit()
+    conn.close()
+    return jsonify({"success": True})
 
 @app.route("/api/auth/login", methods=["POST"])
 def auth_login():
