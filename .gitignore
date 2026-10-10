@@ -23,6 +23,8 @@ venv/
 *.log
 .admin_session
 .session_token
+.admin_initial_secret
+.admin_secret
 .commitmaster_accounts.json
 .env
 .env.*
