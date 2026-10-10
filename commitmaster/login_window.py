@@ -176,9 +176,19 @@ class LoginWindow:
 
         # 4. Password
         self._pass_frame = tk.Frame(self._card_inner, bg=COLORS["bg_card"])
-        tk.Label(self._pass_frame, text="Password",
+        pass_hdr = tk.Frame(self._pass_frame, bg=COLORS["bg_card"])
+        pass_hdr.pack(fill="x")
+        tk.Label(pass_hdr, text="Password",
                  font=FONTS["label_bold"], fg=COLORS["text_secondary"],
-                 bg=COLORS["bg_card"]).pack(anchor="w")
+                 bg=COLORS["bg_card"]).pack(side="left")
+        self._forgot_btn = tk.Label(
+            pass_hdr, text="Forgot password?",
+            font=("Segoe UI", 9, "underline"), fg=COLORS["accent"], bg=COLORS["bg_card"],
+            cursor="hand2"
+        )
+        self._forgot_btn.pack(side="right")
+        self._forgot_btn.bind("<Button-1>", lambda e: self._open_forgot_password())
+
         self._pass_entry = self._make_entry(self._pass_frame, show="•")
         self._pass_entry.bind("<Return>", lambda e: self._submit())
 
@@ -189,6 +199,41 @@ class LoginWindow:
                  bg=COLORS["bg_card"]).pack(anchor="w")
         self._confirm_entry = self._make_entry(self._confirm_frame, show="•")
         self._confirm_entry.bind("<Return>", lambda e: self._submit())
+
+        # 6. Security Questions Section (register only for account recovery)
+        self._security_frame = tk.Frame(self._card_inner, bg=COLORS["bg_card"])
+        sec_box = tk.Frame(self._security_frame, bg=COLORS["bg_medium"], padx=10, pady=10,
+                           highlightthickness=1, highlightbackground=COLORS["border"])
+        sec_box.pack(fill="x", pady=(2, 0))
+
+        tk.Label(sec_box, text="🛡️ Security Questions (Password Recovery)",
+                 font=FONTS["label_bold"], fg=COLORS["accent"], bg=COLORS["bg_medium"]).pack(anchor="w")
+        tk.Label(
+            sec_box, text="Answer two questions so you can recover your account if you forget your password.",
+            font=FONTS["caption"], fg=COLORS["text_secondary"], bg=COLORS["bg_medium"], wraplength=320, justify="left"
+        ).pack(anchor="w", pady=(2, 6))
+
+        # Question 1
+        tk.Label(sec_box, text="Question 1", font=FONTS["caption"],
+                 fg=COLORS["text_secondary"], bg=COLORS["bg_medium"]).pack(anchor="w")
+        self._q1_combo = ttk.Combobox(
+            sec_box, values=db.SECURITY_QUESTIONS, state="readonly", font=FONTS["body_sm"]
+        )
+        self._q1_combo.current(0)
+        self._q1_combo.pack(fill="x", pady=(2, 3))
+        self._a1_entry = self._make_entry(sec_box)
+        self._a1_entry.bind("<Return>", lambda e: self._submit())
+
+        # Question 2
+        tk.Label(sec_box, text="Question 2", font=FONTS["caption"],
+                 fg=COLORS["text_secondary"], bg=COLORS["bg_medium"]).pack(anchor="w", pady=(6, 0))
+        self._q2_combo = ttk.Combobox(
+            sec_box, values=db.SECURITY_QUESTIONS, state="readonly", font=FONTS["body_sm"]
+        )
+        self._q2_combo.current(1)
+        self._q2_combo.pack(fill="x", pady=(2, 3))
+        self._a2_entry = self._make_entry(sec_box)
+        self._a2_entry.bind("<Return>", lambda e: self._submit())
 
         # Error label
         self._err_label = tk.Label(self._card_inner, text="", font=FONTS["body_sm"],
@@ -205,15 +250,38 @@ class LoginWindow:
         )
         self._add_hover(self._submit_btn, COLORS["accent_hover"], COLORS["accent"])
 
-        # Google Account OTP sign in button
-        self._google_otp_btn = tk.Button(
-            self._card_inner, text="🔐 Sign in with Google (OTP)", font=FONTS["body_sm"],
+        # ── Social Logins (GitHub & Google) ──────────────────────────────────
+        self._social_sep_frame = tk.Frame(self._card_inner, bg=COLORS["bg_card"])
+        sep_l = tk.Frame(self._social_sep_frame, height=1, bg=COLORS["border"])
+        sep_l.pack(side="left", fill="x", expand=True)
+        tk.Label(
+            self._social_sep_frame, text="  or continue with  ",
+            font=FONTS["caption"], fg=COLORS["text_muted"], bg=COLORS["bg_card"]
+        ).pack(side="left")
+        sep_r = tk.Frame(self._social_sep_frame, height=1, bg=COLORS["border"])
+        sep_r.pack(side="left", fill="x", expand=True)
+
+        self._social_btns_frame = tk.Frame(self._card_inner, bg=COLORS["bg_card"])
+
+        self._github_btn = tk.Button(
+            self._social_btns_frame, text="🐙  Continue with GitHub", font=FONTS["body_sm"],
             bg=COLORS["bg_medium"], fg=COLORS["text_primary"],
             activebackground=COLORS["bg_card_hover"], activeforeground=COLORS["accent"],
             relief="flat", cursor="hand2", bd=0,
-            command=self._google_otp_signin, padx=12, pady=6
+            command=self._open_github_auth, padx=12, pady=7
         )
-        self._add_hover(self._google_otp_btn, COLORS["bg_card_hover"], COLORS["bg_medium"])
+        self._add_hover(self._github_btn, COLORS["bg_card_hover"], COLORS["bg_medium"])
+        self._github_btn.pack(fill="x", pady=(0, 6))
+
+        self._google_btn = tk.Button(
+            self._social_btns_frame, text="🌐  Continue with Google", font=FONTS["body_sm"],
+            bg=COLORS["bg_medium"], fg=COLORS["text_primary"],
+            activebackground=COLORS["bg_card_hover"], activeforeground="#4285f4",
+            relief="flat", cursor="hand2", bd=0,
+            command=self._open_google_auth, padx=12, pady=7
+        )
+        self._add_hover(self._google_btn, COLORS["bg_card_hover"], COLORS["bg_medium"])
+        self._google_btn.pack(fill="x")
 
         # ── Toggle login / register footer ────────────────────────────────────
         toggle_f = tk.Frame(outer, bg=COLORS["bg_darkest"])
@@ -386,48 +454,34 @@ class LoginWindow:
             btn.pack(side="right")
             self._add_hover(btn, COLORS["accent_hover"], COLORS["accent"])
 
-    def _google_otp_signin(self):
-        """Trigger Google Account OTP Sign In / Verification flow."""
-        cur_val = self._user_entry.get().strip()
-        init_val = cur_val if "@" in cur_val else ""
-        email = simpledialog.askstring(
-            "Google Account Sign In / Verification",
-            "Enter your Google Account email address (@gmail.com):",
-            initialvalue=init_val,
-            parent=self.root
-        )
-        if not email or not email.strip():
-            return
-        clean_email = email.strip().lower()
-        if not otp_service.is_google_email(clean_email):
-            self._err_label.config(text="Please enter a valid Google Account address (@gmail.com).", fg=COLORS["error"])
-            return
+    def _open_github_auth(self):
+        """Open GitHub authentication and account creation dialog."""
+        from commitmaster.social_auth import GitHubAuthDialog
+        GitHubAuthDialog(self.root, on_success=self._on_social_success)
 
-        user = db.get_user_by_username_or_email(clean_email)
-        if not user:
-            # Create user for this Google account directly
-            uname = clean_email.split("@")[0]
-            base_uname = uname
-            c = 1
-            while db.check_user_exists(uname, clean_email) == "username":
-                uname = f"{base_uname}{c}"
-                c += 1
-            rand_pw = secrets.token_urlsafe(12)
-            uid = db.create_user(uname, clean_email, uname.replace(".", " ").title(), rand_pw)
-            if uid:
-                db.mark_user_verified(uid)
-                user = db.get_user(uid)
-        else:
-            db.mark_user_verified(user["id"])
-            user = db.get_user(user["id"])
+    def _open_google_auth(self):
+        """Open Google authentication and account creation dialog."""
+        from commitmaster.social_auth import GoogleAuthDialog
+        GoogleAuthDialog(self.root, on_success=self._on_social_success)
 
-        if user:
-            token = db.create_session_token(user["id"])
-            account_manager.save_account(user, token)
-            self.authenticated_user = user
-            self.root.destroy()
-            if self.on_success:
-                self.on_success(user)
+    def _open_forgot_password(self):
+        """Open the password reset dialog via security questions."""
+        from commitmaster.forgot_password_dialog import ForgotPasswordDialog
+        def _on_reset_done(username: str):
+            if username:
+                self._user_entry.delete(0, "end")
+                self._user_entry.insert(0, username)
+                self._pass_entry.delete(0, "end")
+                self._pass_entry.focus()
+            self._err_label.config(text="Password reset! Please sign in with your new password.", fg=COLORS["success"])
+        ForgotPasswordDialog(self.root, on_success=_on_reset_done)
+
+    def _on_social_success(self, user):
+        """Callback when user successfully logs in or creates account via GitHub or Google."""
+        self.authenticated_user = user
+        self._on_close()
+        if self.on_success:
+            self.on_success(user)
 
     # ── Mode switching ────────────────────────────────────────────────────────
 
@@ -437,8 +491,8 @@ class LoginWindow:
 
         # Unpack all form widgets inside card
         for widget in [self._name_frame, self._user_frame, self._email_frame,
-                       self._pass_frame, self._confirm_frame, self._err_label,
-                       self._submit_btn, self._google_otp_btn]:
+                       self._pass_frame, self._confirm_frame, self._security_frame, self._err_label,
+                       self._submit_btn, self._social_sep_frame, self._social_btns_frame]:
             widget.pack_forget()
 
         if mode == "login":
@@ -449,16 +503,22 @@ class LoginWindow:
             # Pack login fields in order
             self._user_frame.pack(fill="x", pady=(0, 8))
             self._pass_frame.pack(fill="x", pady=(0, 8))
+            self._forgot_btn.pack(side="right")
             self._err_label.pack(pady=(2, 6))
             self._submit_btn.config(text="Sign In")
             self._submit_btn.pack(fill="x", pady=(4, 0))
-            self._google_otp_btn.pack(fill="x", pady=(8, 0))
+
+            # Social options for Sign In
+            self._github_btn.config(text="🐙  Continue with GitHub")
+            self._google_btn.config(text="🌐  Continue with Google")
+            self._social_sep_frame.pack(fill="x", pady=(12, 8))
+            self._social_btns_frame.pack(fill="x")
 
             self._toggle_lbl.config(text="Don't have an account? ")
             self._toggle_btn.config(text="Create one")
 
-            # Adjust window height for compact login
-            self._resize_window(580)
+            # Adjust window height for compact login with social options
+            self._resize_window(660)
             self._user_entry.focus()
 
         else:  # register
@@ -466,21 +526,30 @@ class LoginWindow:
             self._mode_title.config(text="Create Account")
             self._user_label.config(text="Username")
 
-            # Pack all 5 registration fields in logical order
+            self._forgot_btn.pack_forget()
+
+            # Pack all registration fields in logical order
             self._name_frame.pack(fill="x", pady=(0, 8))
             self._user_frame.pack(fill="x", pady=(0, 8))
             self._email_frame.pack(fill="x", pady=(0, 8))
             self._pass_frame.pack(fill="x", pady=(0, 8))
             self._confirm_frame.pack(fill="x", pady=(0, 8))
+            self._security_frame.pack(fill="x", pady=(0, 8))
             self._err_label.pack(pady=(2, 6))
             self._submit_btn.config(text="Create Account")
             self._submit_btn.pack(fill="x", pady=(4, 0))
+
+            # Social options for Account Creation
+            self._github_btn.config(text="🐙  Sign up with GitHub")
+            self._google_btn.config(text="🌐  Sign up with Google")
+            self._social_sep_frame.pack(fill="x", pady=(12, 8))
+            self._social_btns_frame.pack(fill="x")
 
             self._toggle_lbl.config(text="Already have an account? ")
             self._toggle_btn.config(text="Sign in")
 
             # Adjust window height for full registration form
-            self._resize_window(720)
+            self._resize_window(880)
             self._name_entry.focus()
 
         # Update scrollregion and reset view to top
@@ -707,8 +776,36 @@ class LoginWindow:
                     self._email_entry.focus()
                     return
 
-                # Directly create account without email verification dialog (Requirement 2)
-                uid = db.create_user(username, email, full_name, password)
+                # Validate security questions (Password recovery)
+                q1 = self._q1_combo.get().strip()
+                a1 = self._a1_entry.get().strip()
+                q2 = self._q2_combo.get().strip()
+                a2 = self._a2_entry.get().strip()
+
+                if not q1 or not q2:
+                    self._err_label.config(text="Please select both security questions.")
+                    return
+
+                if q1 == q2:
+                    self._err_label.config(text="Please select two different security questions.")
+                    return
+
+                if not a1 or len(a1) < 2:
+                    self._err_label.config(text="Please answer security question 1 (at least 2 characters).")
+                    self._a1_entry.focus()
+                    return
+
+                if not a2 or len(a2) < 2:
+                    self._err_label.config(text="Please answer security question 2 (at least 2 characters).")
+                    self._a2_entry.focus()
+                    return
+
+                # Create account with security questions for password recovery
+                uid = db.create_user(
+                    username, email, full_name, password,
+                    security_q1=q1, security_a1=a1,
+                    security_q2=q2, security_a2=a2
+                )
                 if uid:
                     db.mark_user_verified(uid)
                     user = db.get_user(uid)
