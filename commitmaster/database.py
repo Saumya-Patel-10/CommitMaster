@@ -13,9 +13,11 @@ from datetime import datetime, timedelta
 from typing import Optional, Dict, List, Any, Tuple, Iterator
 import requests
 
-# Database file path (same directory as config.json or %LOCALAPPDATA%)
-APP_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DB_PATH = os.path.join(APP_DIR, "commitmaster.db")
+from commitmaster import paths
+
+# Database file path (always persistent, never in temporary _MEIPASS)
+APP_DIR = paths.get_data_dir()
+DB_PATH = paths.get_db_path()
 
 _local = threading.local()
 _active_token_cache: Optional[str] = None
@@ -38,7 +40,7 @@ def get_active_session_token() -> str:
         return _local.session_token
 
     # Check .session_token
-    tok_file = os.path.join(APP_DIR, ".session_token")
+    tok_file = paths.get_token_path()
     if os.path.exists(tok_file):
         try:
             import json
@@ -52,7 +54,7 @@ def get_active_session_token() -> str:
             pass
 
     # Check .admin_session
-    admin_tok_file = os.path.join(APP_DIR, ".admin_session")
+    admin_tok_file = paths.get_admin_token_path()
     if os.path.exists(admin_tok_file):
         try:
             import json
@@ -66,7 +68,7 @@ def get_active_session_token() -> str:
             pass
 
     # Check .commitmaster_accounts.json
-    accs_file = os.path.join(APP_DIR, ".commitmaster_accounts.json")
+    accs_file = paths.get_accounts_path()
     if os.path.exists(accs_file):
         try:
             import json
