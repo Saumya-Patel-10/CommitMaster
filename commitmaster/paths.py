@@ -47,7 +47,7 @@ def get_data_dir() -> str:
     # 2. Check if running directly in or alongside workspace repository
     # Workspace repo has the authentic commitmaster.db
     workspace_db = os.path.join(_WORKSPACE_DIR, "commitmaster.db")
-    if os.path.exists(workspace_db):
+    if not getattr(sys, "frozen", False) and os.path.exists(workspace_db):
         # We are in the workspace repo (either source or running in repo/dist)
         # Also ensure %LOCALAPPDATA%\CommitMaster is initialized as a backup
         try:
