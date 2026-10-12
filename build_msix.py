@@ -21,12 +21,40 @@ LAYOUT_DIR = os.path.join(APP_DIR, "msix_layout")
 ASSETS_DIR = os.path.join(LAYOUT_DIR, "Assets")
 OUTPUT_MSIX = os.path.join(DIST_DIR, "CommitMaster.msix")
 
-# App identity details for Microsoft Store
-PACKAGE_NAME = "CommitMaster"
-PACKAGE_DISPLAY_NAME = "CommitMaster"
-PUBLISHER_NAME = "CN=SaumyaPatel"
-PUBLISHER_DISPLAY_NAME = "Saumya Patel"
-VERSION = "3.0.0.0"
+# App identity details for Microsoft Store (Defaults; can be overridden via store_identity.json)
+STORE_IDENTITY_FILE = os.path.join(APP_DIR, "store_identity.json")
+
+DEFAULT_IDENTITY = {
+    "package_name": "CommitMaster",
+    "package_display_name": "CommitMaster",
+    "publisher_name": "CN=SaumyaPatel",
+    "publisher_display_name": "Saumya Patel",
+    "version": "3.0.0.0",
+}
+
+
+def load_store_identity() -> dict:
+    """Load package identity details from store_identity.json if present."""
+    identity = dict(DEFAULT_IDENTITY)
+    if os.path.exists(STORE_IDENTITY_FILE):
+        try:
+            import json
+            with open(STORE_IDENTITY_FILE, "r", encoding="utf-8") as f:
+                user_id = json.load(f)
+                identity.update({k: v for k, v in user_id.items() if v})
+            print(f"[CONFIG] Loaded Store Identity from {STORE_IDENTITY_FILE}")
+        except Exception as e:
+            print(f"[WARN] Failed to read store_identity.json: {e}")
+    else:
+        # Create a template file so the user can easily adjust Partner Center values
+        try:
+            import json
+            with open(STORE_IDENTITY_FILE, "w", encoding="utf-8") as f:
+                json.dump(identity, f, indent=2)
+            print(f"[INFO] Created template identity configuration: {STORE_IDENTITY_FILE}")
+        except Exception:
+            pass
+    return identity
 
 
 def find_windows_kit_tool(tool_name: str) -> str:
@@ -84,8 +112,17 @@ def generate_store_assets():
     print("[OK] Microsoft Store visual assets generated in msix_layout/Assets/")
 
 
-def generate_appx_manifest():
+def generate_appx_manifest(identity: dict = None):
     """Write standard AppxManifest.xml for Windows 10/11 Desktop Bridge."""
+    if identity is None:
+        identity = load_store_identity()
+
+    pkg_name = identity.get("package_name", "CommitMaster")
+    pkg_display = identity.get("package_display_name", "CommitMaster")
+    pub_name = identity.get("publisher_name", "CN=SaumyaPatel")
+    pub_display = identity.get("publisher_display_name", "Saumya Patel")
+    ver = identity.get("version", "3.0.0.0")
+
     manifest_path = os.path.join(LAYOUT_DIR, "AppxManifest.xml")
     content = f"""<?xml version="1.0" encoding="utf-8"?>
 <Package
@@ -95,14 +132,14 @@ def generate_appx_manifest():
   IgnorableNamespaces="uap rescap">
 
   <Identity
-    Name="{PACKAGE_NAME}"
-    Publisher="{PUBLISHER_NAME}"
-    Version="{VERSION}"
+    Name="{pkg_name}"
+    Publisher="{pub_name}"
+    Version="{ver}"
     ProcessorArchitecture="x64" />
 
   <Properties>
-    <DisplayName>{PACKAGE_DISPLAY_NAME}</DisplayName>
-    <PublisherDisplayName>{PUBLISHER_DISPLAY_NAME}</PublisherDisplayName>
+    <DisplayName>{pkg_display}</DisplayName>
+    <PublisherDisplayName>{pub_display}</PublisherDisplayName>
     <Logo>Assets\\StoreLogo.png</Logo>
     <Description>CommitMaster — Developer session companion for intelligent Git commits, reminders, and repository monitoring.</Description>
   </Properties>
@@ -112,7 +149,7 @@ def generate_appx_manifest():
   </Dependencies>
 
   <Resources>
-    <Resource Language="x-generate" />
+    <Resource Language="en-us" />
   </Resources>
 
   <Applications>
@@ -120,7 +157,7 @@ def generate_appx_manifest():
       Executable="CommitMaster.exe"
       EntryPoint="Windows.FullTrustApplication">
       <uap:VisualElements
-        DisplayName="{PACKAGE_DISPLAY_NAME}"
+        DisplayName="{pkg_display}"
         Description="Developer session companion for intelligent Git commits, reminders, and repository monitoring."
         BackgroundColor="#0d1117"
         Square150x150Logo="Assets\\Square150x150Logo.png"
@@ -138,7 +175,7 @@ def generate_appx_manifest():
 """
     with open(manifest_path, "w", encoding="utf-8") as f:
         f.write(content.strip())
-    print("[OK] AppxManifest.xml generated successfully.")
+    print("[OK] AppxManifest.xml generated successfully (Language: en-us).")
 
 
 def build_msix_package():

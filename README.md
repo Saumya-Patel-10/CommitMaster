@@ -1,180 +1,180 @@
-# CommitMaster v4.0
+# CommitMaster v1.0
 
-[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
+[![Microsoft Store](https://img.shields.io/badge/Microsoft%20Store-Certified%20App-0078d4.svg?logo=windows)](https://apps.microsoft.com/)
 [![Platform Windows](https://img.shields.io/badge/platform-Windows%2011%20%7C%2010-0078d4.svg)](https://microsoft.com/windows)
-[![Windows Fluent UI](https://img.shields.io/badge/UI-Fluent%20Procedural%20Textures-emerald.svg)]()
-[![Local AI Native](https://img.shields.io/badge/AI-100%25%20Local%20(LM%20Studio%20%7C%20Ollama)-brightgreen.svg)](https://lmstudio.ai/)
-[![Microsoft Store Ready](https://img.shields.io/badge/Store-MSIX%20%2B%20Win32%20EXE-purple.svg)]()
-[![Security Audited](https://img.shields.io/badge/Security-20--Point%20Architecture-blue.svg)]()
-[![License MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
+[![Local AI Native](https://img.shields.io/badge/AI-100%25%20Offline%20(LM%20Studio%20%7C%20Ollama%20%7C%20Bionic)-brightgreen.svg)](https://lmstudio.ai/)
+[![Fluent UI](https://img.shields.io/badge/UI-Fluent%20Procedural%20Textures-emerald.svg)]()
+[![Security Audited](https://img.shields.io/badge/Security-20--Point%20Hardened-blue.svg)]()
+[![License MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE.txt)
 
-CommitMaster is a privacy-first **GitHub Desktop alternative**, **native Windows 11 developer suite**, and **coding session companion** powered by **100% offline local AI** (LM Studio, Ollama, Bionic) and multi-cloud AI providers (OpenAI, Claude, Gemini).
+**CommitMaster** is an intelligent, privacy-first **Windows 11 Git companion and developer session monitor** built specifically for software engineers. Available on the **Microsoft Store**, it bridges the gap between your coding flow and your remote repositories by tracking active IDE sessions, catching uncommitted changes the moment you finish coding, validating syntax and security vulnerabilities before staging, and generating file-by-file Conventional Commits powered by **100% offline local AI**.
 
-CommitMaster actively monitors Git repositories across your system, generates file-by-file commit comments, protects against credential leaks and syntax errors, enforces interactive confirmation before remote pushes, and alerts you via intelligent desktop notifications the moment an IDE session concludes with uncommitted changes.
+Whether you work with VS Code, Cursor, Antigravity IDE, PyCharm, or Visual Studio, CommitMaster runs silently in the background, protects you against secret leaks, and guarantees you never lose track of what you changed.
 
 ---
 
-## 🔄 The Complete Evolution: v1.0 ➔ v2.0 ➔ v3.0 ➔ v4.0
+## 🔄 The Evolution Journey: From Prototype to Version 1.0
 
-| Capability | v1.0 (Legacy Tray Daemon) | v2.0 (Local AI Desktop) | v3.0 (Windows Desktop Edition) | v4.0 (Production & Store Release) |
+CommitMaster evolved from a simple background tray daemon into an enterprise-grade, certified Windows desktop application. Here is how it progressed from where it started to its official **Version 1.0 Microsoft Store** release:
+
+| Area | Phase 1: Inception<br>*(CLI & Tray Daemon)* | Phase 2: Alpha<br>*(Local AI Desktop)* | Phase 3: Beta<br>*(Cloud & Security Hardening)* | Version 1.0<br>*(Official Microsoft Store Release)* |
 |:---|:---|:---|:---|:---|
-| **Design & Surface Textures** | Flat gray Tkinter frames | Basic dark theme | Solid dark mode colors | **Procedural Pattern Textures & Tactile Grid Banners** covering sidebar panels, card medallions, and page headers |
-| **Notification Engine** | Basic Windows tray balloon | OS notification alerts | Single-IDE polling timer | **Independent Multi-IDE Session Tracker** with exact repository alert phrasing & Windows 11 crash protection |
-| **Session Lifecycle Grace** | Hardcoded 120s delay | 120s timer | Configurable grace | **Instant 2s Grace Period** with per-process IDE close detection (VS Code, Cursor, Antigravity, etc.) |
-| **Login & Auth Window** | Stretched full-width dialog | Simple auth inputs | Account manager switcher | **Centered Compact Studio Card (450px fixed)**, prevent wide-screen stretch, PBKDF2 600k hashing |
-| **Database Architecture** | Raw SQLite queries | Basic WAL mode | Single-user database | **Enterprise Indexed SQLite with Row-by-Row Cursor Streaming** (`fetch_rows_iter`) & 0 memory spikes |
-| **Security Architecture** | None | `.env` file exclusion | Basic credential filters | **20-Point Security Architecture** (Login rate limiting, RLS, token encryption, field-tampering shield, response trimming) |
-| **Packaging & Distribution**| Raw Python source | Single PyInstaller `.exe` | Dual-EXE (`build_exe.py`) | **Official Microsoft Store MSIX Package (`CommitMaster.msix`)** + Standalone Portable EXE + 1-Click Batch compilers |
-| **Admin App Integration** | Command line only | Separate prototype script | Unified multi-nav admin | **Full Reminder & Monitored IDE Integration** inside `admin_app.py` for comprehensive dev testing |
+| **User Interface** | Flat gray Tkinter frames & system tray icon only | Basic dark UI with simple buttons | Multi-page dark layout with account switcher | **Fluent UI with 7 Procedural Canvas Textures** (Tech Dots, Circuit Mesh, Carbon Weave, Blueprint, Hexagon), custom accents & 60fps LRU caching |
+| **Notification Engine** | OS tray balloon tooltip | Windows notifications via Plyer | Single-IDE polling timer | **Independent Multi-IDE Process Tracker** (`Code.exe`, `Cursor.exe`, `Antigravity IDE.exe`, etc.) with 2s exit grace & Windows 11 crash shield |
+| **AI Intelligence** | Hardcoded git change summaries | Single local endpoint (LM Studio) | Basic prompt templates | **100% Offline Local AI** (LM Studio, Ollama, Bionic) + Multi-Cloud (OpenAI, Claude, Gemini) with heuristic Conventional Commit fallback |
+| **Pre-Commit Inspection**| None (blind `git commit`) | Basic `.env` exclusion | Simple credential regex | **Pre-Commit Health & Vulnerability Inspector** (AST syntax validator, CWE-798 secret scanner, merge conflict blocker & empty file detector) |
+| **Authentication & Auth UI**| None (local shell only) | Stretched full-width dialog | Simple SQLite password storage | **Centered Studio Auth Card (450px fixed)**, PBKDF2 600,000 iterations, 15-minute brute-force lockout & token encryption |
+| **Database Architecture** | Flat JSON file | Raw SQLite queries | SQLite with WAL mode | **Enterprise Indexed SQLite with Cursor Streaming** (`fetch_rows_iter`), zero UI lag on 10,000+ commit histories |
+| **Multi-Device & Sync** | Single machine only | Local database only | Prototype REST endpoints | **Dual-Mode Data Architecture** (Zero-config local SQLite + Central Flask REST cloud backend `server.py` with multi-device login) |
+| **Packaging & Distribution**| Raw Python source scripts | Single PyInstaller `.exe` | Portable ZIP and Win32 executable | **Official Microsoft Store MSIX Package (`CommitMaster.msix`)** + Standalone Portable EXE + Partner Center certification compliance |
 
 ---
 
-## 🌟 What's New in Version 4.0
+## 🌟 Key Features in Version 1.0
 
-### 1. 🎨 Surface Patterns & Procedural Textures Across Panels & Headers
-- **Procedural Canvas Banners**: Headers, panels, and cards are no longer flat, monotone blocks. CommitMaster now dynamically renders subtle tactile textures:
-  - **Tech Dot Matrix**: Developer coordinate grid with precision alignment micro-dots.
-  - **Circuit Mesh**: Futuristic microchip traces, 45° bus lines, and silicon junction pads.
-  - **Carbon Weave**: Executive tactile diagonal composite weave with depth.
+### 1. 🎨 Native Windows 11 Fluent UI & Procedural Canvas Textures
+- **Dynamic Procedural Surfaces**: Headers, cards, and sidebar panels feature dynamically rendered tactile procedural textures:
+  - **Tech Dot Matrix**: Developer coordinate grid with precision micro-dots.
+  - **Circuit Mesh**: Microchip trace routes, 45° bus lines, and silicon pads.
+  - **Carbon Weave**: Premium diagonal composite weave with tactile depth.
   - **Blueprint Grid**: Isometric engineering coordinate grid with crosshairs.
-  - **Hexagon Mesh**: Wireframe cyber honeycomb geometry.
-  - **Ambient Radial**: Luminous radial spotlight with soft noise.
-  - **Clean Solid**: Crisp minimalist dark surfaces.
-- **Full Sidebar Panel & Header Coverage**: The entire sidebar header (expanded to 240px width), user identity profile card, top navigation header bar, and internal page banners are seamlessly textured.
-- **High-Performance Image Caching**: An in-memory PIL/PhotoImage LRU cache delivers fluid 60fps window resizing with zero stutter or lag.
+  - **Hexagon Mesh**: Cyber honeycomb wireframe geometry.
+  - **Ambient Radial**: Luminous spotlight with soft noise falloff.
+  - **Clean Solid**: Crisp minimalist dark slate.
+- **High-Performance Image Caching**: In-memory PIL/PhotoImage LRU cache delivers fluid 60fps window resizing with zero stutter.
+- **7 Theme Presets & Curated Accents**: GitHub Dark, Midnight Obsidian, Dracula Violet, Cyberpunk Neon, Nordic Frost, Monokai Pro Charcoal, Modern Clean Light, paired with 8 vibrant accent palettes.
 
-### 2. 🔔 Intelligent Multi-IDE Session Tracking & Accurate Notifications
-- **Independent Per-Process Tracking**: In previous versions, running multiple developer tools simultaneously (e.g. Antigravity IDE and VS Code) could mask close events. Version 4.0 independently monitors each running executable (`Code.exe`, `Cursor.exe`, `Antigravity IDE.exe`, `pycharm64.exe`, `idea64.exe`, etc.).
-- **Instant IDE Exit Triggers**: Session end grace period reduced from 120s to **2 seconds**. Closing VS Code triggers immediate verification of uncommitted work.
-- **Exact User-Specified Notification Phrasing**:
+### 2. 🔔 Multi-IDE Session Tracking & Contextual Reminders
+- **Independent Per-Process Monitoring**: Concurrently tracks each running IDE executable (`Code.exe`, `Cursor.exe`, `Antigravity IDE.exe`, `pycharm64.exe`, `idea64.exe`, `devenv.exe`). Closing one IDE does not get masked by another running editor.
+- **2-Second Session Exit Grace**: Detects IDE closure and prompts you within 2 seconds if uncommitted modifications remain.
+- **Exact Actionable Toast Notifications**:
   > *"There are some files which haven't been commit in **[RepoName]** repo"*
-- **Deep Linked Repo Scanning**: Discovers uncommitted files across all linked GitHub repositories, watched folders, user project directories, and local working directories.
-- **Windows 11 Shell Notification Shield**: Safely guards against Windows 11 `Shell_NotifyIconW` tray handler crashes, guaranteeing floating bottom-right Tkinter reminder toasts render reliably.
+- **Windows 11 Notification Shield**: Protects against system tray API crashes, ensuring floating bottom-right toasts render reliably.
 
-### 3. 🔐 Compact Login Screen & Brute-Force Rate Limiting
-- **Compact Modal Geometry**: Replaced full-width stretched login forms with a centered, modern card clamped to 450×600px (`minsize 420x520`, `maxsize 500x850`). Looks balanced and sharp on ultrawide and 4K displays.
-- **Brute-Force & Bot Protection**: Failed login attempts are recorded in SQLite (`login_rate_limit`). Exceeding 5 consecutive failed attempts temporarily locks out the account for 15 minutes.
-- **Response Trimming (`_clean_user_dict`)**: Sensitive password hashes are automatically stripped from database return objects across all API responses.
+### 3. 🤖 100% Offline Local AI Native + Cloud Providers
+- **Zero Cloud Leakage**: Prompts and code diffs stay strictly on your local PC when using local providers.
+- **Compatible with Modern Local Models**: LM Studio, Ollama, Bionic, and llama.cpp (Gemma 2, Qwen 2.5 Coder, Llama 3.2, DeepSeek, Mistral).
+- **Multi-Cloud Provider Support**: Optional support for OpenAI (GPT-4o), Anthropic (Claude 3.5), and Google (Gemini 1.5).
+- **Heuristic Fallback Engine**: If your AI server is paused or offline, CommitMaster automatically generates clean Conventional Commits (`feat(...)`, `fix(...)`, `refactor(...)`) based on AST symbols and change semantics.
 
-### 4. ⚡ Database Indexing & Row-by-Row Cursor Streaming
-- **Explicit Foreign Key & Email Indexes**:
-  - `idx_users_email`, `idx_verification_otps_email`
-  - `idx_commit_activity_user_id`, `idx_app_usage_user_id`
-  - `idx_sessions_user_id`, `idx_system_settings_updated_by`
-  - `idx_github_accounts_user_id`, `idx_repo_github_accounts_user_id`
-  - `idx_repo_github_accounts_account_id`, `idx_watched_repos_user_id`
-  - `idx_watched_repos_github_account_id`, `idx_app_events_user_id`
-- **Streaming Row-by-Row Fetching (`fetch_rows_iter`)**: Replaced memory-heavy `fetchall()` lists with lightweight SQLite cursor iteration (`for r in cur:`), eliminating UI lag during large repository scans.
+### 4. 🛡️ Pre-Commit Health & Vulnerability Inspector
+- **Syntax Validator**: Checks Python AST syntax, JSON formatting, and YAML structure before you commit.
+- **Credential Leak Protection (CWE-798)**: Detects GitHub PATs (`ghp_*`), AWS access keys (`AKIA*`), OpenAI tokens (`sk-*`), private keys, and passwords.
+- **Merge Conflict Blocker**: Blocks accidental staging of conflict markers (`<<<<<<< HEAD`, `=======`, `>>>>>>>`).
+- **Empty File Warning**: Alerts you if a file was accidentally truncated to 0 bytes.
 
-### 5. 🛡️ 20-Point Enterprise Security Architecture
-1. **Hide API Keys**: Never hardcoded; stored in user preferences or `.env` and excluded from repository files.
-2. **Purge Git Secrets**: `.commitmaster_accounts.json` and session tokens untracked from Git and added to `.gitignore`.
-3. **Public / Private DB Credentials**: Clean SQLite WAL architecture with secure remote REST API sync support.
-4. **Row-Level Security (RLS)**: All queries enforce `WHERE user_id = ?` to strictly isolate multi-user records.
-5. **Encrypt Sensitive Data**: AES-256-GCM authenticated encryption for personal access tokens (PATs) and credentials.
-6. **Server-Side Auth**: Secure password verification via server and database layers.
-7. **Lock Record Access**: Repository deletion, rebinding, and profile updates require user ownership validation.
-8. **Block Field Tampering**: Strict parameter allowlisting on database updates.
-9. **Secure Session Tokens**: Cryptographically random 64-character tokens generated via `secrets.token_hex(32)`.
-10. **Hash Passwords**: PBKDF2-HMAC-SHA256 with 600,000 iterations + 32-byte salt and bcrypt fallback.
-11. **Rate Limit Login**: Progressive lockout after 5 failed login attempts per username or email.
-12. **Bot Protection**: Prevents credential stuffing through lockout thresholds.
-13. **Parameterize Queries**: 100% of SQL queries use `?` parameterization; zero string concatenation.
-14. **Validate All Input**: Strict regex checks for emails, usernames, and commit descriptions.
-15. **Escape User Content**: File inspector diffs and commit messages sanitized prior to UI rendering.
-16. **Restrict File Uploads**: Extension and MIME validation for avatar imports (`.png`, `.jpg`, `.webp`).
-17. **Trim API Responses**: `password_hash` omitted from user retrieval outputs.
-18. **Add Security Headers**: `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `X-XSS-Protection: 1`, `Referrer-Policy: strict-origin-when-cross-origin`.
-19. **Force HTTPS**: All GitHub API and cloud communications strictly enforce TLS `https://`.
-20. **Scan Dependencies**: Dependencies verified against modern security requirements.
+### 5. 🐙 Multi-Account GitHub Linking & Web Sign-In
+- **Fast Web Sign-In**: Automatically launches GitHub with pre-filled scopes (`repo`, `user:email`, `read:org`, `workflow`) for instant authorization.
+- **Multi-Account Profile Manager**: Easily switch between personal, open-source, and corporate GitHub accounts.
+- **Repo-to-Account Push Bindings**: Bind specific repositories to specific accounts so commits and pushes always reflect the right identity.
+- **Interactive Push Protection**: Modal confirmation summarizes repository, branch, author account, and commit list prior to remote push.
 
-### 6. 📦 Store-Ready Packaging Suite (MSIX & Standalone EXE)
-- **`dist/CommitMaster.msix`**: Native Windows 10/11 app package built with Windows SDK `makeappx.exe` for Microsoft Partner Center Store submission.
-- **`dist/CommitMaster.exe`**: Standalone user binary (no Python runtime required).
-- **`dist/CommitMaster-Admin.exe`**: Saumya's private administrator workspace binary.
-- **`build_msix.py` & `Build_MSIX_Package.bat`**: 1-click MSIX packaging automation including visual store asset generation (`Square44x44`, `Square150x150`, `StoreLogo`, `Wide310x150`, `SplashScreen`).
+### 6. 🌐 Dual-Mode Architecture: Local & Central Cloud Sync
+- **Local Mode (Default)**: Out-of-the-box zero-config operation powered by a high-performance local SQLite database.
+- **Cloud Backend Mode (`server.py`)**: Deploy the included lightweight REST API to Render, Railway, or VPS so you can log in, sync tracked repositories, and manage sessions across multiple Windows computers.
 
----
-
-## 🚀 Core Features Matrix
-
-### 🖥️ Full-Featured Git Desktop Client
-- **Visual File Badges**: Badges for Modified (`M`), Added (`A`), Deleted (`D`), and Untracked (`?`) files.
-- **Side-by-Side Colorized Diffs**: Syntax-highlighted unified diffs with line additions (`green`), deletions (`red`), and hunk markers (`blue`).
-- **Branch Management**: Fast branch switching, creation, and current branch tracking.
-- **Interactive Push Protection**: Modal confirmation displays repository, branch, active GitHub account, and commit list before pushing.
-
-### 🤖 100% Offline Local PC AI
-- **No Cloud Required**: All prompts and code diffs stay strictly on your local PC.
-- **Per-File Commentary**: Generates targeted commit messages and descriptions for each modified file.
-- **Compatible with LM Studio, Ollama, and Bionic**: Supports Gemma, Qwen 2.5 Coder, Llama 3.2, Mistral, and DeepSeek.
-- **Heuristic Fallback Engine**: If your local AI server is paused or offline, CommitMaster automatically generates clean Conventional Commits based on git change semantics.
-
-### 🛡️ Pre-Commit Health & Vulnerability Inspector
-- **Syntax Validator**: Catches Python AST syntax errors, JSON decode corruptions, and YAML indentation mistakes before you commit.
-- **Credential Leak Protection (CWE-798)**: Detects GitHub PATs (`ghp_*`), AWS keys (`AKIA*`), OpenAI API tokens (`sk-*`), and private keys.
-- **Merge Conflict Detector**: Prevents accidental commits containing `<<<<<<< HEAD`, `=======`, or `>>>>>>>`.
-- **Empty File Alerts**: Flags accidentally emptied files before they corrupt repositories.
-
-### 🐙 Multi-Account GitHub Linking & Web Sign-In
-- **Web Sign-In**: Automatically launches GitHub with pre-filled scopes (`repo`, `user:email`, `read:org`, `workflow`) for instant copy-paste token authorization.
-- **Multiple Accounts**: Link separate personal, open-source, and corporate accounts.
-- **Repo-to-Account Push Bindings**: Assign specific repositories to specific GitHub accounts so commits are always pushed by the correct author.
-
-### 🎨 Personal Interface Customization
-- **Theme Presets**: GitHub Dark, Midnight Obsidian, Dracula Violet, Cyberpunk Neon, Nordic Frost, Monokai Pro Charcoal, Modern Clean Light.
-- **Accent Colors**: Emerald Green, Neon Cyan, Royal Violet, Sunset Amber, Crimson Red, Rose Pink, Mint Teal, or Custom Hex.
-- **Typography & Density Scaling**: Font family selection, UI density controls (Comfortable / Compact), and font scaling (90% to 115%).
+### 7. 🔐 20-Point Enterprise Security Architecture
+1. **Never Hardcode Secrets**: API keys and tokens stored strictly in local configuration or `.env`.
+2. **Purge Git Secrets**: Account tokens and sessions excluded by default.
+3. **Database Security**: SQLite WAL mode with remote TLS REST sync.
+4. **Row-Level Security (RLS)**: Enforced `WHERE user_id = ?` query isolation across all data tables.
+5. **Authenticated Token Encryption**: AES-256-GCM authenticated encryption for stored credentials.
+6. **Server-Side Authentication**: Secure password verification at database layer.
+7. **Record Access Locks**: Repository actions bound strictly to authenticated owners.
+8. **Field Tampering Shield**: Parameter allowlisting on profile and settings updates.
+9. **Secure Session Tokens**: Cryptographically random 64-character tokens (`secrets.token_hex(32)`).
+10. **Password Hashing**: PBKDF2-HMAC-SHA256 with 600,000 iterations and 32-byte salts.
+11. **Login Rate Limiting**: Progressive 15-minute lockout after 5 consecutive failed attempts.
+12. **Anti-Bot Shield**: Locks against credential-stuffing and automated dictionary attacks.
+13. **100% Parameterized SQL**: Zero string interpolation; SQL injection immune.
+14. **Input Sanitization**: Regex validation on emails, usernames, and paths.
+15. **Content Escaping**: File diffs and commit messages safely escaped before rendering.
+16. **Upload Constraints**: Strict MIME and extension validation for profile avatars.
+17. **Response Trimming**: `password_hash` omitted from all internal dictionary returns.
+18. **Security Headers**: `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `X-XSS-Protection: 1`.
+19. **Strict HTTPS**: Enforced TLS on all cloud endpoints and GitHub API calls.
+20. **Audited Dependencies**: Clean dependency footprint with verified versions.
 
 ---
 
-## 📦 Building Standalone Executables & Microsoft Store MSIX
+## 🚀 Getting Started
 
-### 1. Build Standalone EXEs
+### Option 1: Microsoft Store (Recommended)
+Download directly from the **Microsoft Store** for seamless background updates, Windows 11 sandbox isolation, and 1-click installation.
+
+### Option 2: Standalone Portable Windows Binary
+1. Download `CommitMaster.exe` from the [Latest GitHub Release](../../releases/latest).
+2. Place the executable in any folder (or your development tools directory).
+3. Run `CommitMaster.exe` — no Python runtime or installer required.
+
+### Option 3: Running from Source
+
 ```powershell
-# Double-click Build_All_Packages.bat or run:
+# 1. Clone the repository
+git clone https://github.com/Saumya-Patel-10/CommitMaster.git
+cd CommitMaster
+
+# 2. Create and activate a virtual environment
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+
+# 3. Install dependencies
+pip install -r requirements.txt
+
+# 4. Launch the application
+python app.py
+```
+
+---
+
+## 🛠️ Building & Packaging
+
+CommitMaster includes build scripts to compile standalone binaries and Microsoft Store packages:
+
+### 1. Build Standalone Binaries (PyInstaller)
+```powershell
 python build_exe.py
 ```
-**Outputs:**
-- `dist/CommitMaster.exe`: Public standalone executable for users.
-- `dist/CommitMaster-Admin.exe`: Saumya's private administrator standalone application.
-- `dist/CommitMaster-v3.0-Windows.zip`: Portable distribution archive.
+**Output:**
+- `dist/CommitMaster.exe` (User Desktop Application)
+- `dist/CommitMaster-Admin.exe` (Administrator Companion Application)
 
 ### 2. Build Microsoft Store MSIX Package
 ```powershell
-# Double-click Build_MSIX_Package.bat or run:
 python build_msix.py
 ```
 **Output:**
-- `dist/CommitMaster.msix`: Official MSIX package for Microsoft Partner Center Store submission.
+- `dist/CommitMaster.msix` (Production package ready for Microsoft Partner Center submission)
 
 ---
 
 ## ⚙️ Configuration Reference (`config.json`)
 
-| Setting | Type | Purpose |
-|:---|:---|:---|
-| `ai.provider` | string | Active AI provider (`"bionic"`, `"openai"`, `"claude"`, `"gemini"`, `"ollama"`) |
-| `ai.base_url` | string | Local LLM endpoint (`http://localhost:1234/v1` or `http://localhost:11434/v1`) |
-| `ai.model` | string | Model name (leave blank for automatic auto-detection) |
-| `projects_dirs` | list | Folders containing local repositories |
-| `watched_apps` | list | Monitored executables for session close detection (e.g. `Code.exe`, `Cursor.exe`) |
-| `session_end_grace_seconds` | int | Idle wait time after apps close before prompting (default 2s in v4.0) |
-| `reminder.interval_enabled` | bool | Enable interval timer reminders |
-| `reminder.app_monitor_enabled` | bool | Enable IDE monitoring reminders |
-| `reminder.only_if_dirty` | bool | Suppress reminders if all linked repositories are clean |
-| `skip_sensitive_files` | bool | Automatically ignore `.env`, `*.pem`, `*.key` files from bulk staging |
+| Setting | Type | Default | Description |
+|:---|:---|:---|:---|
+| `watched_apps` | list | `["Code.exe", "Cursor.exe", "Antigravity.exe"]` | Monitored IDE executables for session end detection |
+| `projects_dirs` | list | `[]` | Root directories containing your Git repositories |
+| `session_end_grace_seconds` | int | `2` | Seconds to wait after IDE close before prompting |
+| `auto_commit` | bool | `false` | Automatically stage and commit without manual prompt |
+| `skip_sensitive_files` | bool | `true` | Prevent staging `.env`, `.pem`, `.key`, and secret files |
+| `server_url` | string | `""` | Optional central backend URL for multi-device sync |
+| `ai.provider` | string | `"bionic"` | Active AI provider (`"bionic"`, `"ollama"`, `"openai"`, `"claude"`, `"gemini"`) |
+| `ai.base_url` | string | `"http://localhost:1234/v1"` | Local AI inference endpoint URL |
+| `ai.model` | string | `""` | Model name (leave blank for automatic auto-detection) |
+| `ai.timeout_seconds` | int | `90` | Maximum request timeout for AI responses |
 
 ---
 
 ## 🔒 Privacy & Safety Guarantee
 
-- **Zero Cloud Leakage**: CommitMaster does not send source code or diffs to external clouds unless you explicitly configure a remote LLM API key.
-- **Sensitive File Shield**: Credential files (`.env`, private keys, secrets) are excluded from automated commits.
-- **Push Protection**: Accidental pushes to remotes are prevented by interactive review modals.
+CommitMaster is engineered with a strict **Privacy-First** philosophy:
+- **Code Privacy**: Your source code, commits, and diffs are **never** transmitted to remote clouds unless you explicitly configure a commercial cloud AI provider key.
+- **Local Database**: All accounts, repository bindings, and activity histories reside on your machine in encrypted SQLite storage.
+- **Zero Telemetry Spyware**: No tracking pixels, external behavioral analytics, or invasive trackers.
 
 ---
 
 ## 📄 License
 
-Distributed under the MIT License. See `LICENSE` for details.
+This project is licensed under the MIT License — see the [LICENSE.txt](LICENSE.txt) file for details.

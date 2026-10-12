@@ -1,26 +1,42 @@
-# Python
+# Python & Bytecode
 __pycache__/
-*.pyc
-*.pyo
+*.py[cod]
+*$py.class
+
+# PyInstaller & Build Artifacts
 build/
 dist/
 *.spec
+msix_layout/
+Real_Store_Screenshots/
 
-# Local settings (contains personal paths; app regenerates it with defaults)
+# Code Signing Certificates & Keys
+*.pfx
+*.cer
+*.key
+*.pem
+
+# Local Configuration (App generates with defaults; contains local machine paths)
 config.json
 
-# Environments
+# Virtual Environments
 .venv/
 venv/
+env/
 
-# Database & Sessions
+# Databases & SQLite Journals
 *.db
 *.db-wal
 *.db-shm
 *.db-journal
 *.sqlite
 *.sqlite3
+
+# Runtime Logs
 *.log
+commitmaster.log
+
+# Private Sessions & Secrets
 .admin_session
 .session_token
 .admin_initial_secret
@@ -28,6 +44,3 @@ venv/
 .commitmaster_accounts.json
 .env
 .env.*
-*.log
-commitmaster.log
-msix_layout/
