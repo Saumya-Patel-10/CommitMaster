@@ -148,8 +148,9 @@ def build_msix_package():
 
     exe_src = os.path.join(DIST_DIR, "CommitMaster.exe")
     if not os.path.exists(exe_src):
-        print(f"[ERROR] '{exe_src}' not found! Run build_exe.py first to compile the binary.")
-        sys.exit(1)
+        print(f"[INFO] '{exe_src}' not found. Compiling CommitMaster.exe first...")
+        from build_exe import build_single
+        build_single("app.py", "CommitMaster", "Public User App", "icon_user.ico", "version_info.txt")
 
     os.makedirs(LAYOUT_DIR, exist_ok=True)
     os.makedirs(DIST_DIR, exist_ok=True)
