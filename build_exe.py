@@ -9,6 +9,7 @@ import os
 import subprocess
 import sys
 import zipfile
+from typing import Optional
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -23,6 +24,7 @@ def build_single(target_script: str, exe_name: str, description: str, icon_file:
         "--name", exe_name,
         "--add-data", f"{APP_DIR}/commitmaster;commitmaster",
         "--add-data", f"{APP_DIR}/assets;assets",
+        "--hidden-import", "admin_app",
         "--hidden-import", "pystray",
         "--hidden-import", "pystray._win32",
         "--hidden-import", "PIL",
@@ -30,11 +32,46 @@ def build_single(target_script: str, exe_name: str, description: str, icon_file:
         "--hidden-import", "PIL.ImageTk",
         "--hidden-import", "PIL.ImageDraw",
         "--hidden-import", "winreg",
-        "--hidden-import", "commitmaster.paths",
-        "--hidden-import", "commitmaster.tray_manager",
-        "--hidden-import", "commitmaster.startup_manager",
-        "--hidden-import", "commitmaster.social_auth",
+        "--hidden-import", "psutil",
+        "--hidden-import", "requests",
+        "--hidden-import", "urllib3",
+        "--hidden-import", "sqlite3",
+        "--hidden-import", "plyer",
+        "--hidden-import", "plyer.platforms.win.notification",
+        "--hidden-import", "commitmaster",
+        "--hidden-import", "commitmaster.account_manager",
+        "--hidden-import", "commitmaster.admin_portal",
+        "--hidden-import", "commitmaster.ai_messages",
+        "--hidden-import", "commitmaster.app_styles",
+        "--hidden-import", "commitmaster.avatar_utils",
+        "--hidden-import", "commitmaster.charts",
+        "--hidden-import", "commitmaster.commit_composer",
+        "--hidden-import", "commitmaster.commit_engine",
+        "--hidden-import", "commitmaster.config",
+        "--hidden-import", "commitmaster.database",
+        "--hidden-import", "commitmaster.file_inspector",
+        "--hidden-import", "commitmaster.flow",
         "--hidden-import", "commitmaster.forgot_password_dialog",
+        "--hidden-import", "commitmaster.github_account_dialog",
+        "--hidden-import", "commitmaster.github_service",
+        "--hidden-import", "commitmaster.ide_selector",
+        "--hidden-import", "commitmaster.issue_view",
+        "--hidden-import", "commitmaster.logger",
+        "--hidden-import", "commitmaster.login_window",
+        "--hidden-import", "commitmaster.navigation",
+        "--hidden-import", "commitmaster.notification_toast",
+        "--hidden-import", "commitmaster.otp_service",
+        "--hidden-import", "commitmaster.paths",
+        "--hidden-import", "commitmaster.pattern_utils",
+        "--hidden-import", "commitmaster.reminder_service",
+        "--hidden-import", "commitmaster.session_monitor",
+        "--hidden-import", "commitmaster.settings_ui",
+        "--hidden-import", "commitmaster.social_auth",
+        "--hidden-import", "commitmaster.startup_manager",
+        "--hidden-import", "commitmaster.tray_manager",
+        "--hidden-import", "commitmaster.ui",
+        "--hidden-import", "commitmaster.user_dashboard",
+        "--hidden-import", "commitmaster.windows_integration",
     ]
 
     if version_file:
