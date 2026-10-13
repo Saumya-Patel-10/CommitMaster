@@ -135,8 +135,12 @@ class ReminderService(threading.Thread):
                     except Exception:
                         pass
                 apps_from_cfg = cfg.get("watched_apps") or []
-                combined = list(dict.fromkeys(db_apps + apps_from_cfg + DEFAULT_WATCHED_IDES))
-                self.watched_apps = combined
+                if db_apps:
+                    self.watched_apps = db_apps
+                elif apps_from_cfg:
+                    self.watched_apps = apps_from_cfg
+                else:
+                    self.watched_apps = list(DEFAULT_WATCHED_IDES)
 
             log.debug(
                 "ReminderService config reloaded: interval=%s (%dh %dm), app_monitor=%s, only_dirty=%s, watched=%d apps",
@@ -260,7 +264,13 @@ class ReminderService(threading.Thread):
 
                     for ide_k, info in closed_ides:
                         self._tracked_ide_sessions.pop(ide_k, None)
-                        log.info("IDE closed: %s (%s). Triggering uncommitted check.", info["name"], ide_k)
+                        started_at = info.get("started_at", 0)
+                        session_duration = (time.time() - started_at) if started_at else 0
+
+                        if not self._should_notify_for_ended_session(info["name"], started_at):
+                            continue
+
+                        log.info("IDE closed: %s (%s, duration: %.1fs). Triggering uncommitted check.", info["name"], ide_k, session_duration)
                         self._handle_ide_closed_trigger(
                             only_dirty=only_dirty,
                             ide_name=info["name"],
@@ -323,6 +333,22 @@ class ReminderService(threading.Thread):
             on_snooze=self.snooze,
             master=self.master,
         )
+
+    def _should_notify_for_ended_session(self, ide_name: str, started_at: float) -> bool:
+        """
+        Debounce accidental launches: if the app was opened and closed within 1-2 minutes (120s),
+        suppress notification because the user likely opened the app on accident.
+        """
+        if not started_at:
+            return True
+        session_duration = max(0.0, time.time() - started_at)
+        if 0 < session_duration <= 120.0:
+            log.info(
+                "IDE %s closed within %.1fs (<= 120s / 2m) — accidental open debounce. Skipping notification.",
+                ide_name, session_duration
+            )
+            return False
+        return True
 
     def _handle_ide_closed_trigger(
         self,
@@ -450,11 +476,21 @@ class ReminderService(threading.Thread):
                             except Exception:
                                 pass
 
+                            start_ts = time.time()
+                            try:
+                                if proc:
+                                    ct = proc.create_time()
+                                    if 0 < ct <= time.time():
+                                        start_ts = ct
+                            except Exception:
+                                pass
+
                             running[name_lower] = {
                                 "exe": name,
                                 "name": disp_name,
                                 "project_path": proj_path,
                                 "project_name": proj_name,
+                                "started_at": start_ts,
                             }
                 except (psutil.NoSuchProcess, psutil.AccessDenied):
                     continue
