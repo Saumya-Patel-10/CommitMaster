@@ -423,6 +423,15 @@ def init_db():
     """)
     cur.execute("CREATE INDEX IF NOT EXISTS idx_server_security_questions_user_id ON user_security_questions(user_id)")
 
+    # Ensure avatar_image exists on users table
+    cur.execute("PRAGMA table_info(users)")
+    u_cols = [c[1] for c in cur.fetchall()]
+    if "avatar_image" not in u_cols:
+        try:
+            cur.execute("ALTER TABLE users ADD COLUMN avatar_image TEXT DEFAULT ''")
+        except Exception:
+            pass
+
     conn.commit()
 
     # Ensure default admin account exists
@@ -1043,7 +1052,7 @@ def user_detail(user_id):
 
     elif request.method == "PUT":
         data = request.get_json(force=True, silent=True) or {}
-        allowed = {"full_name", "email", "bio", "avatar_color"}
+        allowed = {"full_name", "email", "bio", "avatar_color", "avatar_image"}
         if g.current_user.get("role") == "admin":
             allowed.update({"is_active", "role"})
         updates = {k: v for k, v in data.items() if k in allowed}
@@ -1054,6 +1063,31 @@ def user_detail(user_id):
             conn.commit()
         conn.close()
         return jsonify({"ok": True})
+
+@app.route("/api/users/<int:user_id>/avatar", methods=["GET", "POST"])
+@require_auth(allow_self_user_id=True)
+def user_avatar(user_id):
+    conn = get_db()
+    cur = conn.cursor()
+    if request.method == "POST":
+        data = request.get_json(force=True, silent=True) or {}
+        avatar_data = data.get("avatar_image") or data.get("avatar_base64") or ""
+        cur.execute("UPDATE users SET avatar_image = ? WHERE id = ?", (avatar_data, user_id))
+        conn.commit()
+        conn.close()
+        return jsonify({"ok": True, "avatar_saved": bool(avatar_data)})
+    else:
+        cur.execute("SELECT avatar_image, avatar_color, username FROM users WHERE id = ?", (user_id,))
+        row = cur.fetchone()
+        conn.close()
+        if not row:
+            return jsonify({"error": "User not found"}), 404
+        return jsonify({
+            "user_id": user_id,
+            "avatar_image": row["avatar_image"] or "",
+            "avatar_color": row["avatar_color"] or "#3fb950",
+            "username": row["username"],
+        })
 
 @app.route("/api/users/<int:user_id>/password", methods=["POST"])
 @require_auth(allow_self_user_id=True)
