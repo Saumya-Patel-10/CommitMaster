@@ -203,6 +203,23 @@ def apply_windows_theme(window: tk.Misc, title: Optional[str] = None,
     window.after(10, lambda: set_dark_titlebar(window))
 
 
+def is_packaged_app() -> bool:
+    """Check if process is running inside an MSIX / AppX package."""
+    if sys.platform != "win32":
+        return False
+    try:
+        # Check WindowsApps path or AppX package identity
+        exe_path = sys.executable.lower()
+        if "windowsapps" in exe_path:
+            return True
+        length = ctypes.c_uint(0)
+        res = ctypes.windll.kernel32.GetCurrentPackageFullName(ctypes.byref(length), None)
+        # APPMODEL_ERROR_NO_PACKAGE is 15700
+        return res != 15700
+    except Exception:
+        return False
+
+
 def register_windows_app(app_type: str = "user") -> bool:
     """
     Registers CommitMaster into the Windows Shell, Start Menu, and Windows Search:
@@ -213,6 +230,12 @@ def register_windows_app(app_type: str = "user") -> bool:
     """
     if sys.platform != "win32":
         return False
+
+    # In MSIX / Windows Store packages, Windows automatically handles Start Menu tiles
+    # from AppxManifest.xml. Creating a manual .lnk produces duplicate tiles (Store Policy 10.1.1.11).
+    if is_packaged_app():
+        log.info("Running inside MSIX package container; skipping manual Start Menu shortcut creation.")
+        return True
 
     import winreg
     import subprocess
@@ -250,22 +273,25 @@ def register_windows_app(app_type: str = "user") -> bool:
         os.makedirs(start_menu_dir, exist_ok=True)
         lnk_path = os.path.join(start_menu_dir, f"{lnk_title}.lnk")
 
+        def _ps_escape(s: str) -> str:
+            return (s or "").replace("'", "''")
+
         ps_commands = [
             "$ws = New-Object -ComObject WScript.Shell",
-            f"$lnk = $ws.CreateShortcut('{lnk_path.replace(chr(92), '/')}')",
+            f"$lnk = $ws.CreateShortcut('{_ps_escape(lnk_path.replace(chr(92), '/'))}')",
         ]
         if target_exe and os.path.exists(target_exe):
-            ps_commands.append(f"$lnk.TargetPath = '{target_exe.replace(chr(92), '/')}'")
-            ps_commands.append(f"$lnk.WorkingDirectory = '{working_dir.replace(chr(92), '/')}'")
-            ps_commands.append(f"$lnk.IconLocation = '{target_exe.replace(chr(92), '/')},0'")
+            ps_commands.append(f"$lnk.TargetPath = '{_ps_escape(target_exe.replace(chr(92), '/'))}'")
+            ps_commands.append(f"$lnk.WorkingDirectory = '{_ps_escape(working_dir.replace(chr(92), '/'))}'")
+            ps_commands.append(f"$lnk.IconLocation = '{_ps_escape(target_exe.replace(chr(92), '/'))},0'")
         else:
             ps_commands.append("$lnk.TargetPath = 'wscript.exe'")
-            ps_commands.append(f"$lnk.Arguments = '\"{vbs_fallback.replace(chr(92), '/')}\"'")
-            ps_commands.append(f"$lnk.WorkingDirectory = '{working_dir.replace(chr(92), '/')}'")
+            ps_commands.append(f"$lnk.Arguments = '\"{_ps_escape(vbs_fallback.replace(chr(92), '/'))}\"'")
+            ps_commands.append(f"$lnk.WorkingDirectory = '{_ps_escape(working_dir.replace(chr(92), '/'))}'")
             if os.path.exists(ico_path):
-                ps_commands.append(f"$lnk.IconLocation = '{ico_path.replace(chr(92), '/')},0'")
+                ps_commands.append(f"$lnk.IconLocation = '{_ps_escape(ico_path.replace(chr(92), '/'))},0'")
 
-        ps_commands.append(f"$lnk.Description = '{desc}'")
+        ps_commands.append(f"$lnk.Description = '{_ps_escape(desc)}'")
         ps_commands.append("$lnk.Save()")
 
         flags = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
@@ -306,6 +332,11 @@ def register_windows_app(app_type: str = "user") -> bool:
     except Exception as exc:
         log.warning("Could not register Windows app in Start Menu / Search: %s", exc)
         return False
+
+
+def _ps_escape(s: str) -> str:
+    """Escape single quotes for Windows PowerShell commands."""
+    return (s or "").replace("'", "''")
 
 
 def create_desktop_shortcut(target: str = "both") -> tuple[bool, str]:
@@ -397,26 +428,33 @@ def create_desktop_shortcut(target: str = "both") -> tuple[bool, str]:
             "$startMenu = [Environment]::GetFolderPath('Programs')"
         ]
         for s in shortcuts_to_create:
+            s_name = _ps_escape(s['name'])
+            s_target = _ps_escape(s['target'])
+            s_args = _ps_escape(s['args'])
+            s_workdir = _ps_escape(s['workdir'])
+            s_desc = _ps_escape(s['desc'])
+            s_icon = _ps_escape(s['icon'])
+
             # Create on Desktop
-            ps_commands.append(f"$lnk = $ws.CreateShortcut(\"$desktop/{s['name']}.lnk\")")
-            ps_commands.append(f"$lnk.TargetPath = '{s['target']}'")
+            ps_commands.append(f"$lnk = $ws.CreateShortcut(\"$desktop/{s_name}.lnk\")")
+            ps_commands.append(f"$lnk.TargetPath = '{s_target}'")
             if s['args']:
-                ps_commands.append(f"$lnk.Arguments = '{s['args']}'")
-            ps_commands.append(f"$lnk.WorkingDirectory = '{s['workdir']}'")
-            ps_commands.append(f"$lnk.Description = '{s['desc']}'")
+                ps_commands.append(f"$lnk.Arguments = '{s_args}'")
+            ps_commands.append(f"$lnk.WorkingDirectory = '{s_workdir}'")
+            ps_commands.append(f"$lnk.Description = '{s_desc}'")
             if os.path.exists(s["icon"]):
-                ps_commands.append(f"$lnk.IconLocation = '{s['icon']},0'")
+                ps_commands.append(f"$lnk.IconLocation = '{s_icon},0'")
             ps_commands.append("$lnk.Save()")
 
             # Also create in Start Menu for immediate Windows Search indexing
-            ps_commands.append(f"$lnk2 = $ws.CreateShortcut(\"$startMenu/{s['name']}.lnk\")")
-            ps_commands.append(f"$lnk2.TargetPath = '{s['target']}'")
+            ps_commands.append(f"$lnk2 = $ws.CreateShortcut(\"$startMenu/{s_name}.lnk\")")
+            ps_commands.append(f"$lnk2.TargetPath = '{s_target}'")
             if s['args']:
-                ps_commands.append(f"$lnk2.Arguments = '{s['args']}'")
-            ps_commands.append(f"$lnk2.WorkingDirectory = '{s['workdir']}'")
-            ps_commands.append(f"$lnk2.Description = '{s['desc']}'")
+                ps_commands.append(f"$lnk2.Arguments = '{s_args}'")
+            ps_commands.append(f"$lnk2.WorkingDirectory = '{s_workdir}'")
+            ps_commands.append(f"$lnk2.Description = '{s_desc}'")
             if os.path.exists(s["icon"]):
-                ps_commands.append(f"$lnk2.IconLocation = '{s['icon']},0'")
+                ps_commands.append(f"$lnk2.IconLocation = '{s_icon},0'")
             ps_commands.append("$lnk2.Save()")
 
             created_names.append(s["name"])
