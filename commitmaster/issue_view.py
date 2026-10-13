@@ -10,6 +10,14 @@ SEVERITY_STYLE = {
 }
 
 
+CATEGORY_STYLE = {
+    "VIRUS / MALWARE THREAT": ("🦠 VIRUS / MALWARE THREAT", "#ffffff", "#b91c1c"),
+    "HACKER EXPLOIT VECTOR":  ("🔓 HACKER EXPLOIT VECTOR",  "#ffffff", "#7c3aed"),
+    "SECURITY BREACH":        ("🚨 SECURITY BREACH",        "#ffffff", "#c2410c"),
+    "CODE QUALITY & SYNTAX":  ("⚠️ CODE QUALITY",          "#ffffff", "#92400e"),
+}
+
+
 def default_palette() -> Dict[str, str]:
     """Palette built from the live app theme (falls back to a dark theme)."""
     try:
@@ -40,18 +48,27 @@ def _copy_to_clipboard(widget: tk.Widget, text: str, button: Optional[tk.Button]
 def issue_to_text(issue: Dict[str, Any]) -> str:
     lines = [f"[{issue.get('severity', '').upper()}] {issue.get('title') or issue.get('message')} "
              f"- {issue.get('file', '')}:{issue.get('line', 1)}"]
-    for c in issue.get("context") or []:
-        lines.append(f"  {'>' if c['hit'] else ' '} {c['line']:>4} | {c['text']}")
+    if issue.get("category"):
+        lines.append(f"Threat Category: {issue['category']}")
+    if issue.get("reference"):
+        lines.append(f"Reference: {issue['reference']}")
+    if issue.get("context"):
+        for c in issue["context"]:
+            lines.append(f"  {'>' if c['hit'] else ' '} {c['line']:>4} | {c['text']}")
+    elif issue.get("snippet"):
+        lines.append(f"  Snippet: {issue['snippet']}")
     if issue.get("explanation"):
         lines.append(f"Why it matters: {issue['explanation']}")
     if issue.get("fix"):
         lines.append(f"How to fix: {issue['fix']}")
+    if issue.get("hardening"):
+        lines.append(f"Project Hardening:\n{issue['hardening']}")
     return "\n".join(lines)
 
 
 def build_issue_card(parent: tk.Widget, issue: Dict[str, Any], pal: Optional[Dict[str, str]] = None,
                      repo_path: Optional[str] = None, show_file: bool = True, wrap: int = 640) -> tk.Frame:
-    """One issue = header (severity, title, location) + code snippet + why + how to fix."""
+    """One issue = header (category, severity, title, location) + code snippet + threat analysis + remediation + hardening."""
     pal = pal or default_palette()
     sev_label, sev_color = SEVERITY_STYLE.get(issue.get("severity", "warning"), SEVERITY_STYLE["warning"])
     line_no = issue.get("line", 1)
@@ -63,13 +80,21 @@ def build_issue_card(parent: tk.Widget, issue: Dict[str, Any], pal: Optional[Dic
     # Header ----------------------------------------------------------------
     hdr = tk.Frame(inner, bg=pal["bg2"])
     hdr.pack(fill="x")
+
+    # Category badge if available
+    cat = issue.get("category")
+    if cat and cat in CATEGORY_STYLE:
+        c_label, c_fg, c_bg = CATEGORY_STYLE[cat]
+        tk.Label(hdr, text=f" {c_label} ", fg=c_fg, bg=c_bg,
+                 font=("Segoe UI", 8, "bold")).pack(side="left", padx=(0, 6))
+
     tk.Label(hdr, text=f" {sev_label} ", fg="#ffffff", bg=sev_color,
              font=("Segoe UI", 8, "bold")).pack(side="left")
     tk.Label(hdr, text=issue.get("title") or issue.get("message", ""), fg=pal["text"], bg=pal["bg2"],
              font=("Segoe UI", 10, "bold")).pack(side="left", padx=(8, 0))
     if issue.get("reference"):
         tk.Label(hdr, text=issue["reference"], fg=pal["muted"], bg=pal["bg2"],
-                 font=("Segoe UI", 8)).pack(side="right")
+                 font=("Segoe UI", 8, "bold")).pack(side="right")
 
     loc = f"{issue.get('file', '')}:{line_no}" if show_file else f"Line {line_no}"
     tk.Label(inner, text=f"📍 {loc}", fg=pal["text2"], bg=pal["bg2"], font=("Consolas", 9),
@@ -98,24 +123,36 @@ def build_issue_card(parent: tk.Widget, issue: Dict[str, Any], pal: Optional[Dic
                         highlightthickness=1, highlightbackground=pal["border"])
         code.pack(fill="x", pady=(0, 8))
         tk.Label(code, text=issue["snippet"], fg="#ffb4ac", bg=pal["code_bg"], font=("Consolas", 9),
-                 anchor="w", justify="left").pack(fill="x")
+                  anchor="w", justify="left").pack(fill="x")
 
-    # Explanation -----------------------------------------------------------
+    # Explanation / Threat Analysis -----------------------------------------
     if issue.get("explanation"):
-        tk.Label(inner, text="Why this matters", fg=pal["text"], bg=pal["bg2"],
+        tk.Label(inner, text="🔍 Threat Analysis & Impact", fg=pal["text"], bg=pal["bg2"],
                  font=("Segoe UI", 9, "bold"), anchor="w").pack(fill="x")
         tk.Label(inner, text=issue["explanation"], fg=pal["text2"], bg=pal["bg2"], font=("Segoe UI", 9),
                  wraplength=wrap, justify="left", anchor="w").pack(fill="x", pady=(1, 8))
 
-    # Fix -------------------------------------------------------------------
+    # Fix / Remediation -----------------------------------------------------
     if issue.get("fix"):
         fix_box = tk.Frame(inner, bg="#12261a", highlightthickness=1, highlightbackground="#238636")
         fix_box.pack(fill="x")
         fb = tk.Frame(fix_box, bg="#12261a", padx=10, pady=8)
         fb.pack(fill="x")
-        tk.Label(fb, text="💡 How to fix", fg="#56d364", bg="#12261a",
+        tk.Label(fb, text="💡 Step-by-Step Remediation", fg="#56d364", bg="#12261a",
                  font=("Segoe UI", 9, "bold"), anchor="w").pack(fill="x")
-        tk.Label(fb, text=issue["fix"], fg="#c9d1d9", bg="#12261a", font=("Consolas", 9) if "\n" in issue["fix"] and "    " in issue["fix"] else ("Segoe UI", 9),
+        tk.Label(fb, text=issue["fix"], fg="#c9d1d9", bg="#12261a",
+                 font=("Consolas", 9) if "\n" in issue["fix"] and "    " in issue["fix"] else ("Segoe UI", 9),
+                 wraplength=wrap - 20, justify="left", anchor="w").pack(fill="x", pady=(2, 0))
+
+    # Project Hardening Suggestions ----------------------------------------
+    if issue.get("hardening"):
+        h_box = tk.Frame(inner, bg="#0e1f38", highlightthickness=1, highlightbackground="#1d4ed8")
+        h_box.pack(fill="x", pady=(8, 0))
+        hb = tk.Frame(h_box, bg="#0e1f38", padx=10, pady=8)
+        hb.pack(fill="x")
+        tk.Label(hb, text="🛡️ Project Hardening Suggestion (Make Project Stronger)", fg="#60a5fa", bg="#0e1f38",
+                 font=("Segoe UI", 9, "bold"), anchor="w").pack(fill="x")
+        tk.Label(hb, text=issue["hardening"], fg="#e2e8f0", bg="#0e1f38", font=("Segoe UI", 9),
                  wraplength=wrap - 20, justify="left", anchor="w").pack(fill="x", pady=(2, 0))
 
     # Actions ---------------------------------------------------------------
@@ -150,7 +187,7 @@ def build_issues_panel(parent: tk.Widget, issues_by_file: Dict[str, List[Dict[st
                        repo_path: Optional[str] = None, bg: Optional[str] = None) -> Optional[tk.Frame]:
     """
     Compact banner ("N issues in M files") with a 'Show details' toggle that expands into full
-    issue cards (code snippet, why, how to fix).  Returns None when there is nothing to show.
+    issue cards (code snippet, why, how to fix, hardening). Returns None when there is nothing to show.
     """
     if not issues_by_file:
         return None
@@ -162,11 +199,17 @@ def build_issues_panel(parent: tk.Widget, issues_by_file: Dict[str, List[Dict[st
     bar = tk.Frame(wrap, bg="#3d2f00", padx=12, pady=8, highlightthickness=1, highlightbackground="#d29922")
     bar.pack(fill="x")
     parts = []
-    if s["security"]:
+    if s.get("virus_threats"):
+        parts.append(f"🦠 {s['virus_threats']} virus/malware")
+    if s.get("exploit_vectors"):
+        parts.append(f"🔓 {s['exploit_vectors']} exploit vector{'s' if s['exploit_vectors'] != 1 else ''}")
+    if s.get("security_breaches"):
+        parts.append(f"🚨 {s['security_breaches']} breach{'es' if s['security_breaches'] != 1 else ''}")
+    if s.get("security") and not (s.get("virus_threats") or s.get("exploit_vectors") or s.get("security_breaches")):
         parts.append(f"🛡 {s['security']} security")
-    if s["errors"]:
+    if s.get("errors"):
         parts.append(f"❌ {s['errors']} error{'s' if s['errors'] != 1 else ''}")
-    if s["warnings"]:
+    if s.get("warnings"):
         parts.append(f"⚠ {s['warnings']} warning{'s' if s['warnings'] != 1 else ''}")
     tk.Label(bar, text=f"Pre-commit scan: {'  ·  '.join(parts)}  in {len(issues_by_file)} file"
                        f"{'s' if len(issues_by_file) != 1 else ''}",
