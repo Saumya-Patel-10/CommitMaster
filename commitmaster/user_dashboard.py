@@ -131,6 +131,14 @@ class UserDashboard:
         )
         self._tray_manager.start()
 
+        # Background sync user data, preferences, commits, and avatar if cloud server configured
+        if self.user.get("id"):
+            threading.Thread(
+                target=lambda: db.sync_account_from_server(self.user["id"]),
+                daemon=True,
+                name="cloud-account-sync"
+            ).start()
+
         self._nav_to("overview")
 
     # ── Window setup ──────────────────────────────────────────────────────────
@@ -1816,6 +1824,42 @@ class UserDashboard:
             code_search_entry.pack(side="left", padx=6, ipady=2)
             tk.Label(search_box, text="🔍", font=("Segoe UI", 9), fg="#8b949e", bg="#0d1117").pack(side="right", padx=4)
 
+            # ── Diff Color Coordination Guide Banner ───────────────────────
+            legend_bar = tk.Frame(right_pane, bg="#161b22", padx=12, pady=6,
+                                  highlightthickness=1, highlightbackground="#30363d")
+            legend_bar.pack(fill="x")
+
+            tk.Label(legend_bar, text="🎨 COLOR MEANINGS:", font=("Segoe UI", 8, "bold"),
+                     fg="#f0f6fc", bg="#161b22").pack(side="left", padx=(0, 8))
+
+            # Deleted badge (Red)
+            del_b = tk.Frame(legend_bar, bg="#2a1215", padx=6, pady=2,
+                             highlightthickness=1, highlightbackground="#f85149")
+            del_b.pack(side="left", padx=(0, 6))
+            tk.Label(del_b, text="🔴 Deleted (-)", font=("Segoe UI", 8, "bold"),
+                     fg="#f87171", bg="#2a1215").pack()
+
+            # Added badge (Green)
+            add_b = tk.Frame(legend_bar, bg="#132e22", padx=6, pady=2,
+                             highlightthickness=1, highlightbackground="#3fb950")
+            add_b.pack(side="left", padx=(0, 6))
+            tk.Label(add_b, text="🟢 Added (+)", font=("Segoe UI", 8, "bold"),
+                     fg="#4ade80", bg="#132e22").pack()
+
+            # Replaced badge (Yellow/Amber)
+            rep_b = tk.Frame(legend_bar, bg="#2d2206", padx=6, pady=2,
+                             highlightthickness=1, highlightbackground="#d29922")
+            rep_b.pack(side="left", padx=(0, 6))
+            tk.Label(rep_b, text="🟡 Replaced (~ old ➔ new)", font=("Segoe UI", 8, "bold"),
+                     fg="#fbbf24", bg="#2d2206").pack()
+
+            # Location context badge (Blue)
+            loc_b = tk.Frame(legend_bar, bg="#161b22", padx=6, pady=2,
+                             highlightthickness=1, highlightbackground="#388bfd")
+            loc_b.pack(side="left", padx=(0, 6))
+            tk.Label(loc_b, text="🔵 Location Context (@@)", font=("Segoe UI", 8),
+                     fg="#58a6ff", bg="#161b22").pack()
+
             raw_diff = commit_engine.get_commit_file_diff(repo_path, commit_hash, cur_file)
 
             diff_container = tk.Frame(right_pane, bg="#0d1117")
@@ -1895,7 +1939,7 @@ class UserDashboard:
         _render_active_diff()
 
     def _render_split_diff_viewer(self, container, raw_diff: str):
-        """Render side-by-side synchronized diff matching GitHub's split view."""
+        """Render side-by-side synchronized diff with clear deleted, added, and replaced coloring."""
         hunks = commit_engine.parse_diff_to_split_lines(raw_diff)
 
         header_row = tk.Frame(container, bg="#161b22", height=24)
@@ -1939,6 +1983,8 @@ class UserDashboard:
             t.tag_configure("hunk_hdr", background="#161b22", foreground="#58a6ff", font=FONTS["mono_bold"])
             t.tag_configure("delete", background="#2a1215", foreground="#f87171")
             t.tag_configure("add", background="#132e22", foreground="#4ade80")
+            t.tag_configure("replaced_del", background="#2d2206", foreground="#fbbf24")
+            t.tag_configure("replaced_add", background="#262b08", foreground="#a3e635")
             t.tag_configure("context", foreground="#8b949e")
             t.tag_configure("empty", background="#0d1117")
             t.tag_configure("search_match", background="#d97706", foreground="#ffffff")
@@ -1973,22 +2019,27 @@ class UserDashboard:
                     l_no = row.get("left_no", "")
                     l_type = row.get("left_type", "context")
                     l_text = row.get("left_text", "")
-                    if l_type == "empty":
-                        left_text.insert("end", "\n", "empty")
-                    else:
-                        sign = "-" if l_type == "delete" else " "
-                        tag = "delete" if l_type == "delete" else "context"
-                        prefix = f"{l_no.rjust(4)} {sign} "
-                        left_text.insert("end", f"{prefix}{l_text}\n", tag)
 
                     r_no = row.get("right_no", "")
                     r_type = row.get("right_type", "context")
                     r_text = row.get("right_text", "")
+
+                    # Check if this row represents REPLACED code (both deleted and added in parallel)
+                    is_replaced = (l_type == "delete" and r_type == "add")
+
+                    if l_type == "empty":
+                        left_text.insert("end", "\n", "empty")
+                    else:
+                        sign = "~" if is_replaced else ("-" if l_type == "delete" else " ")
+                        tag = "replaced_del" if is_replaced else ("delete" if l_type == "delete" else "context")
+                        prefix = f"{l_no.rjust(4)} {sign} "
+                        left_text.insert("end", f"{prefix}{l_text}\n", tag)
+
                     if r_type == "empty":
                         right_text.insert("end", "\n", "empty")
                     else:
-                        sign = "+" if r_type == "add" else " "
-                        tag = "add" if r_type == "add" else "context"
+                        sign = "~" if is_replaced else ("+" if r_type == "add" else " ")
+                        tag = "replaced_add" if is_replaced else ("add" if r_type == "add" else "context")
                         prefix = f"{r_no.rjust(4)} {sign} "
                         right_text.insert("end", f"{prefix}{r_text}\n", tag)
 
@@ -1996,7 +2047,7 @@ class UserDashboard:
         right_text.config(state="disabled")
 
     def _render_unified_diff_viewer(self, container, raw_diff: str):
-        """Render unified colored diff view."""
+        """Render unified colored diff view with deleted, added, and replaced highlighting."""
         body_frame = tk.Frame(container, bg="#0d1117")
         body_frame.pack(fill="both", expand=True)
 
@@ -2015,20 +2066,48 @@ class UserDashboard:
         u_text.tag_configure("hunk_hdr", background="#161b22", foreground="#58a6ff", font=FONTS["mono_bold"])
         u_text.tag_configure("delete", background="#2a1215", foreground="#f87171")
         u_text.tag_configure("add", background="#132e22", foreground="#4ade80")
+        u_text.tag_configure("replaced_del", background="#2d2206", foreground="#fbbf24")
+        u_text.tag_configure("replaced_add", background="#262b08", foreground="#a3e635")
         u_text.tag_configure("meta", foreground="#8b949e")
         u_text.tag_configure("search_match", background="#d97706", foreground="#ffffff")
 
-        for line in raw_diff.splitlines():
+        # Parse lines and detect replaced blocks (- lines immediately followed by + lines)
+        raw_lines = raw_diff.splitlines()
+        i = 0
+        n = len(raw_lines)
+        while i < n:
+            line = raw_lines[i]
             if line.startswith("@@"):
                 u_text.insert("end", f"{line}\n", "hunk_hdr")
-            elif line.startswith("-"):
-                u_text.insert("end", f"{line}\n", "delete")
-            elif line.startswith("+"):
-                u_text.insert("end", f"{line}\n", "add")
+                i += 1
             elif line.startswith(("diff ", "index ", "--- ", "+++ ")):
                 u_text.insert("end", f"{line}\n", "meta")
+                i += 1
+            elif line.startswith("-"):
+                del_lines = []
+                while i < n and raw_lines[i].startswith("-"):
+                    del_lines.append(raw_lines[i])
+                    i += 1
+                add_lines = []
+                while i < n and raw_lines[i].startswith("+"):
+                    add_lines.append(raw_lines[i])
+                    i += 1
+
+                if add_lines:
+                    # Code Replacement: Previous lines replaced by new lines
+                    for dl in del_lines:
+                        u_text.insert("end", f"~ {dl[1:]}    (REPLACED - PREVIOUS)\n", "replaced_del")
+                    for al in add_lines:
+                        u_text.insert("end", f"~ {al[1:]}    (REPLACED - MODIFIED)\n", "replaced_add")
+                else:
+                    for dl in del_lines:
+                        u_text.insert("end", f"{dl}\n", "delete")
+            elif line.startswith("+"):
+                u_text.insert("end", f"{line}\n", "add")
+                i += 1
             else:
                 u_text.insert("end", f"{line}\n")
+                i += 1
 
         u_text.config(state="disabled")
 
@@ -3474,25 +3553,33 @@ class UserDashboard:
         tb_right = tk.Frame(tb, bg=COLORS["bg_card"])
         tb_right.pack(side="right")
 
-        cfg_model = cfg.get("ai", {}).get("model")
-        cached_model = cfg_model or (ai_messages._MODEL_CACHE["models"][0] if ai_messages._MODEL_CACHE["models"] else None)
-        ai_text = f"⚡ Local AI: {cached_model or 'Ready'}"
+        ai_text, ai_active = ai_messages.get_ai_status_display(cfg)
         ai_lbl = tk.Label(tb_right, text=ai_text, font=FONTS["caption"],
-                          fg=COLORS["accent"] if cached_model else COLORS["warning"],
+                          fg=COLORS["accent"] if ai_active else COLORS["warning"],
                           bg=COLORS["bg_card"])
         ai_lbl.pack(side="left", padx=(0, 10))
 
-        if not cached_model and not cfg_model:
+        provider = ai_messages.get_active_provider(cfg)
+        if provider in ("bionic", "ollama") and not ai_active:
             def _async_detect_gd():
                 m = ai_messages.detect_model(cfg, force=False)
+                local_lbl = "Ollama" if provider == "ollama" else "Local AI"
                 if m:
                     def _update():
                         try:
                             if ai_lbl.winfo_exists():
-                                ai_lbl.config(text=f"⚡ Local AI: {m}", fg=COLORS["accent"])
+                                ai_lbl.config(text=f"⚡ {local_lbl}: {m}", fg=COLORS["accent"])
                         except tk.TclError:
                             pass
                     self.root.after(0, _update)
+                else:
+                    def _update_offline():
+                        try:
+                            if ai_lbl.winfo_exists():
+                                ai_lbl.config(text=f"⚡ {local_lbl}: Offline", fg=COLORS["text_muted"])
+                        except tk.TclError:
+                            pass
+                    self.root.after(0, _update_offline)
             threading.Thread(target=_async_detect_gd, daemon=True).start()
 
         # Quick log file toggle
