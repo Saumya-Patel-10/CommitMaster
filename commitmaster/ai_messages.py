@@ -143,6 +143,39 @@ def resolve_active_model(cfg: dict) -> Optional[str]:
     return cfg.get("ai", {}).get("model") or detect_model(cfg)
 
 
+def get_ai_status_display(cfg: Optional[dict] = None) -> Tuple[str, bool]:
+    """
+    Returns (status_text, is_active) for display in headers & toolbars.
+    Accurately identifies Google Gemini, OpenAI, Claude, or specific local models
+    (such as Gemma4 12b, Qwen 3.8 27B, etc.).
+    """
+    if cfg is None:
+        from commitmaster.config import load_config
+        cfg = load_config()
+    provider = get_active_provider(cfg)
+    if provider == "gemini":
+        m = get_provider_model(cfg, "gemini") or "gemini-1.5-flash"
+        has_key = bool(get_provider_key(cfg, "gemini"))
+        return (f"⚡ Gemini: {m}", has_key)
+    elif provider == "openai":
+        m = get_provider_model(cfg, "openai") or "gpt-4o-mini"
+        has_key = bool(get_provider_key(cfg, "openai"))
+        return (f"⚡ OpenAI: {m}", has_key)
+    elif provider == "claude":
+        m = get_provider_model(cfg, "claude") or "claude-3-5-haiku-20241022"
+        has_key = bool(get_provider_key(cfg, "claude"))
+        return (f"⚡ Claude: {m}", has_key)
+    else:  # local (bionic, lm studio, ollama)
+        local_name = "Ollama" if provider == "ollama" else "Local AI"
+        cfg_model = (cfg.get("ai", {}).get("model") or "").strip()
+        cached = cfg_model if (cfg_model and not cfg_model.startswith("(")) else (
+            _MODEL_CACHE["models"][0] if _MODEL_CACHE["models"] else None
+        )
+        if cached:
+            return (f"⚡ {local_name}: {cached}", True)
+        return (f"⚡ {local_name}: Detecting...", False)
+
+
 def list_models(cfg: dict, force: bool = False) -> List[str]:
     """Return model IDs available in Bionic / LM Studio ([] if unreachable)."""
     base = cfg.get("ai", {}).get("base_url", "http://localhost:1234/v1").rstrip("/")
