@@ -694,13 +694,31 @@ def ask_pre_commit_issues_warning(
         badges_row = tk.Frame(top_frame, bg=C["bg"])
         badges_row.pack(fill="x", pady=(0, 6))
 
+        if summary.get("virus_threats", 0) > 0:
+            tk.Label(
+                badges_row, text=f" 🦠 {summary['virus_threats']} Virus/Malware ",
+                fg="#ffffff", bg="#b91c1c", font=("Segoe UI", 9, "bold"), padx=6, pady=2
+            ).pack(side="left", padx=(0, 8))
+
+        if summary.get("exploit_vectors", 0) > 0:
+            tk.Label(
+                badges_row, text=f" 🔓 {summary['exploit_vectors']} Exploit Vectors ",
+                fg="#ffffff", bg="#7c3aed", font=("Segoe UI", 9, "bold"), padx=6, pady=2
+            ).pack(side="left", padx=(0, 8))
+
+        if summary.get("security_breaches", 0) > 0:
+            tk.Label(
+                badges_row, text=f" 🚨 {summary['security_breaches']} Breaches/Leaks ",
+                fg="#ffffff", bg="#c2410c", font=("Segoe UI", 9, "bold"), padx=6, pady=2
+            ).pack(side="left", padx=(0, 8))
+
         if summary["errors"] > 0:
             tk.Label(
                 badges_row, text=f" ❌ {summary['errors']} Syntax / Critical Errors ",
                 fg="#ffffff", bg="#da3633", font=("Segoe UI", 9, "bold"), padx=6, pady=2
             ).pack(side="left", padx=(0, 8))
 
-        if summary["security"] > 0:
+        if summary["security"] > 0 and not (summary.get("virus_threats") or summary.get("exploit_vectors") or summary.get("security_breaches")):
             tk.Label(
                 badges_row, text=f" 🛡️ {summary['security']} Security / Secret Leaks ",
                 fg="#ffffff", bg="#d29922", font=("Segoe UI", 9, "bold"), padx=6, pady=2
