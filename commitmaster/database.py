@@ -160,14 +160,30 @@ def test_server_connection(url: Optional[str] = None) -> Tuple[bool, str]:
 
 
 def _cache_user_locally(user: Dict, password: Optional[str] = None) -> None:
-    """Cache user in local SQLite database for offline resiliency."""
+    """Cache user in local SQLite database for offline resiliency and cross-device account sync."""
     try:
         conn = get_conn()
         pw_hash = _hash_password(password) if password else user.get("password_hash", "")
+        
+        # Check if user has remote avatar data (Base64) to restore onto this device
+        remote_avatar = user.get("avatar_image", "")
+        local_avatar_path = ""
+        if remote_avatar:
+            if os.path.exists(remote_avatar):
+                local_avatar_path = remote_avatar
+            else:
+                try:
+                    from commitmaster import avatar_utils
+                    restored = avatar_utils.restore_remote_avatar(user["id"], remote_avatar)
+                    if restored:
+                        local_avatar_path = restored
+                except Exception:
+                    pass
+
         conn.execute("DELETE FROM users WHERE id != ? AND LOWER(username) = LOWER(?)", (user["id"], user["username"].strip()))
         conn.execute("""
-            INSERT INTO users (id, username, email, full_name, password_hash, role, avatar_color, is_active)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO users (id, username, email, full_name, password_hash, role, avatar_color, avatar_image, bio, is_active)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 username = excluded.username,
                 email = excluded.email,
@@ -175,17 +191,20 @@ def _cache_user_locally(user: Dict, password: Optional[str] = None) -> None:
                 password_hash = CASE WHEN excluded.password_hash != 'remote_auth' AND excluded.password_hash != '' THEN excluded.password_hash ELSE users.password_hash END,
                 role = excluded.role,
                 avatar_color = excluded.avatar_color,
+                avatar_image = CASE WHEN excluded.avatar_image != '' THEN excluded.avatar_image ELSE users.avatar_image END,
+                bio = excluded.bio,
                 is_active = excluded.is_active
         """, (
             user["id"], user["username"].strip(), user["email"].strip().lower(),
             user.get("full_name", "").strip(), pw_hash or "remote_auth",
             user.get("role", "user"), user.get("avatar_color", "#3fb950"),
+            local_avatar_path, user.get("bio", ""),
             user.get("is_active", 1)
         ))
         conn.execute("INSERT OR IGNORE INTO user_preferences (user_id) VALUES (?)", (user["id"],))
         conn.commit()
-    except Exception:
-        pass
+    except Exception as exc:
+        log.debug("User cache write error: %s", exc)
 
 
 def get_conn() -> sqlite3.Connection:
@@ -1173,7 +1192,14 @@ def authenticate(username_or_email: str, password: str) -> Optional[Dict]:
                         set_active_session_token(tok)
                         _save_local_session(tok, user["id"])
                     _record_daily_session(user["id"])
-                    return _clean_user_dict(user)
+                    # Sync preferences, commit history, and avatar across devices
+                    try:
+                        sync_account_from_server(user["id"])
+                    except Exception:
+                        pass
+                    # Return latest synced user dict from local cache
+                    synced_u = get_user(user["id"])
+                    return _clean_user_dict(dict(synced_u) if synced_u else user)
             elif resp.status_code == 401:
                 record_failed_login(clean_id)
                 return None
@@ -1247,6 +1273,72 @@ def get_user(user_id: int) -> Optional[Dict]:
     cur = conn.execute("SELECT * FROM users WHERE id = ?", (user_id,))
     row = cur.fetchone()
     return _clean_user_dict(dict(row)) if row else None
+
+
+def sync_account_from_server(user_id: int) -> bool:
+    """
+    Sync complete user account details, avatar, preferences, and commit activity
+    from cloud server to local database for seamless cross-device login.
+    """
+    url = get_server_url()
+    if not url:
+        return False
+    try:
+        # 1. Sync User Profile & Avatar
+        resp_u = requests.get(f"{url}/api/users/{user_id}", headers=_get_api_headers(), timeout=8)
+        if resp_u.status_code == 200:
+            u_data = resp_u.json().get("user")
+            if u_data:
+                _cache_user_locally(u_data)
+
+        # 2. Sync Avatar specifically if user has uploaded one
+        try:
+            from commitmaster import avatar_utils
+            avatar_utils.sync_avatar_from_server(user_id)
+        except Exception:
+            pass
+
+        # 3. Sync User Preferences
+        resp_p = requests.get(f"{url}/api/users/{user_id}/preferences", headers=_get_api_headers(), timeout=8)
+        if resp_p.status_code == 200:
+            prefs = resp_p.json().get("preferences")
+            if prefs:
+                conn = get_conn()
+                pref_cols = [
+                    "watched_apps", "projects_dirs", "auto_commit", "skip_sensitive",
+                    "session_end_grace", "ai_base_url", "ai_model", "theme", "notifications",
+                    "accent_color", "font_family", "font_scale", "ui_density", "auto_push",
+                    "ask_before_push", "ai_provider", "openai_model", "claude_model", "gemini_model",
+                    "reminder_interval_enabled", "reminder_interval_hours", "reminder_interval_minutes",
+                    "reminder_app_monitor_enabled", "reminder_only_if_dirty"
+                ]
+                valid_updates = {k: prefs[k] for k in pref_cols if k in prefs and prefs[k] is not None}
+                if valid_updates:
+                    set_str = ", ".join(f"{k} = ?" for k in valid_updates.keys())
+                    conn.execute(f"UPDATE user_preferences SET {set_str} WHERE user_id = ?",
+                                 (*valid_updates.values(), user_id))
+                    conn.commit()
+
+        # 4. Sync Commit Activity Log
+        resp_c = requests.get(f"{url}/api/activity/commits?limit=100", headers=_get_api_headers(), timeout=8)
+        if resp_c.status_code == 200:
+            commits = resp_c.json().get("commits", [])
+            if commits:
+                conn = get_conn()
+                for c in commits:
+                    conn.execute("""
+                        INSERT OR IGNORE INTO commit_activity (user_id, repo_path, repo_name, commit_hash, commit_msg, files_count, status, committed_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    """, (
+                        c.get("user_id", user_id), c.get("repo_path", ""), c.get("repo_name", ""),
+                        c.get("commit_hash", ""), c.get("commit_msg", ""), c.get("files_count", 0),
+                        c.get("status", "committed"), c.get("committed_at", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+                    ))
+                conn.commit()
+        return True
+    except Exception as exc:
+        log.debug("sync_account_from_server error: %s", exc)
+        return False
 
 
 def get_user_by_username_or_email(identifier: str) -> Optional[Dict]:
