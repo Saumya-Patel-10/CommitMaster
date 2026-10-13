@@ -48,18 +48,20 @@ class LoginWindow:
     def _setup_window(self):
         title = "CommitMaster Admin — Sign In" if self.app_type == "admin" else "CommitMaster — Sign In"
         self.root.title(title)
-        self.root.geometry("460x600")
-        self.root.minsize(380, 420)
-        self.root.resizable(True, True)
+        
+        # Professional standing rectangle format (portrait aspect ratio ~ 1:1.46)
+        win_w, win_h = 430, 630
+        self.root.geometry(f"{win_w}x{win_h}")
+        self.root.resizable(False, False)
         self.root.configure(bg=COLORS["bg_darkest"])
 
         # Center on screen
         self.root.update_idletasks()
         sw = self.root.winfo_screenwidth()
         sh = self.root.winfo_screenheight()
-        x = max(0, (sw - 460) // 2)
-        y = max(0, (sh - 600) // 2)
-        self.root.geometry(f"460x600+{x}+{y}")
+        x = max(0, (sw - win_w) // 2)
+        y = max(0, (sh - win_h) // 2)
+        self.root.geometry(f"{win_w}x{win_h}+{x}+{y}")
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
         from commitmaster import windows_integration
         windows_integration.apply_windows_theme(self.root, title, app_type=self.app_type)
@@ -517,8 +519,8 @@ class LoginWindow:
             self._toggle_lbl.config(text="Don't have an account? ")
             self._toggle_btn.config(text="Create one")
 
-            # Adjust window height for compact login with social options
-            self._resize_window(660)
+            # Maintain sleek standing rectangle format
+            self._resize_window(630)
             self._user_entry.focus()
 
         else:  # register
@@ -548,16 +550,16 @@ class LoginWindow:
             self._toggle_lbl.config(text="Already have an account? ")
             self._toggle_btn.config(text="Sign in")
 
-            # Adjust window height for full registration form
-            self._resize_window(880)
+            # Maintain sleek standing rectangle format
+            self._resize_window(630)
             self._name_entry.focus()
 
         # Update scrollregion and reset view to top
         self._update_scrollregion()
         self._canvas.yview_moveto(0)
 
-    def _resize_window(self, target_h: int):
-        w = 460
+    def _resize_window(self, target_h: int = 630):
+        w = 430
         sh = self.root.winfo_screenheight()
         h = min(target_h, max(460, sh - 80))
 
