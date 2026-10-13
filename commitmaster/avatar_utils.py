@@ -48,11 +48,32 @@ def save_avatar_image(user_id: int, source_path: str) -> Tuple[bool, str]:
             resized = cropped.resize((256, 256), Image.Resampling.LANCZOS)
             resized.save(dest_path, format="PNG")
 
+        # Encode image to Base64 for cross-device cloud sync
+        import base64
+        import io
+        buf = io.BytesIO()
+        resized.save(buf, format="PNG")
+        b64_avatar = base64.b64encode(buf.getvalue()).decode("ascii")
+
         # Update database
         from commitmaster import database as db
         conn = db.get_conn()
         conn.execute("UPDATE users SET avatar_image = ? WHERE id = ?", (dest_path, user_id))
         conn.commit()
+
+        # Sync avatar image to cloud server if configured
+        srv_url = db.get_server_url()
+        if srv_url:
+            try:
+                import requests
+                requests.post(
+                    f"{srv_url}/api/users/{user_id}/avatar",
+                    json={"avatar_base64": b64_avatar, "avatar_image": b64_avatar},
+                    headers=db._get_api_headers(),
+                    timeout=8
+                )
+            except Exception:
+                pass
 
         # Update local account manager
         try:
@@ -71,6 +92,75 @@ def save_avatar_image(user_id: int, source_path: str) -> Tuple[bool, str]:
         return True, dest_path
     except Exception as exc:
         return False, f"Failed to save profile picture: {exc}"
+
+
+def restore_remote_avatar(user_id: int, avatar_data: str) -> Optional[str]:
+    """
+    Restore an avatar image from remote Base64 data (or data URI) onto the local filesystem.
+    Saves to assets/avatars/user_{user_id}.png and updates DB + account manager.
+    """
+    if not avatar_data or not isinstance(avatar_data, str):
+        return None
+    try:
+        import base64
+        raw_b64 = avatar_data
+        if "base64," in raw_b64:
+            raw_b64 = raw_b64.split("base64,")[1]
+        raw_b64 = raw_b64.strip()
+        if len(raw_b64) < 20:
+            return None
+
+        img_bytes = base64.b64decode(raw_b64)
+        ensure_avatars_dir()
+        dest_path = os.path.join(AVATARS_DIR, f"user_{user_id}.png")
+        with open(dest_path, "wb") as f:
+            f.write(img_bytes)
+
+        # Update local database
+        from commitmaster import database as db
+        conn = db.get_conn()
+        conn.execute("UPDATE users SET avatar_image = ? WHERE id = ?", (dest_path, user_id))
+        conn.commit()
+
+        # Update account manager
+        try:
+            from commitmaster import account_manager
+            accounts = account_manager.get_saved_accounts()
+            for acc in accounts:
+                if acc.get("id") == user_id:
+                    acc["avatar_image"] = dest_path
+                    account_manager.save_account(acc)
+                    break
+        except Exception:
+            pass
+
+        _invalidate_cache(user_id)
+        return dest_path
+    except Exception:
+        return None
+
+
+def sync_avatar_from_server(user_id: int) -> Optional[str]:
+    """Fetch user's avatar from cloud server and restore it locally."""
+    try:
+        from commitmaster import database as db
+        srv_url = db.get_server_url()
+        if not srv_url:
+            return None
+        import requests
+        resp = requests.get(
+            f"{srv_url}/api/users/{user_id}/avatar",
+            headers=db._get_api_headers(),
+            timeout=8
+        )
+        if resp.status_code == 200:
+            data = resp.json()
+            b64_data = data.get("avatar_image") or data.get("avatar_base64")
+            if b64_data:
+                return restore_remote_avatar(user_id, b64_data)
+    except Exception:
+        pass
+    return None
 
 
 def remove_avatar_image(user_id: int) -> bool:
