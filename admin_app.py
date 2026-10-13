@@ -869,30 +869,32 @@ class AdminApp:
             font=FONTS["heading_sm"], fg=COLORS["accent"], bg=COLORS["bg_card"]
         ).pack(side="left")
 
-        ai_url = cfg.get("ai", {}).get("base_url", "http://localhost:1234/v1")
-        cfg_model = cfg.get("ai", {}).get("model")
-        cached_model = cfg_model or (ai_messages._MODEL_CACHE["models"][0] if ai_messages._MODEL_CACHE["models"] else None)
-        status_text = f"⚡ Local AI: {cached_model or 'Online'} ({ai_url})" if cached_model else f"⚡ Local AI Server: {ai_url}"
+        ai_text, ai_active = ai_messages.get_ai_status_display(cfg)
         ai_status_lbl = tk.Label(
-            hdr_row, text=status_text, font=FONTS["caption"],
-            fg=COLORS["accent"] if cached_model else COLORS["text_muted"], bg=COLORS["bg_card"]
+            hdr_row, text=ai_text, font=FONTS["caption"],
+            fg=COLORS["accent"] if ai_active else COLORS["text_muted"], bg=COLORS["bg_card"]
         )
         ai_status_lbl.pack(side="right")
 
-        if not cached_model and not cfg_model:
+        provider = ai_messages.get_active_provider(cfg)
+        if provider in ("bionic", "ollama") and not ai_active:
             def _async_detect():
                 m = ai_messages.detect_model(cfg, force=False)
+                local_lbl = "Ollama" if provider == "ollama" else "Local AI"
                 if m:
                     def _update():
                         try:
                             if ai_status_lbl.winfo_exists():
                                 ai_status_lbl.config(
-                                    text=f"⚡ Local AI: {m} ({ai_url})",
+                                    text=f"⚡ {local_lbl}: {m}",
                                     fg=COLORS["accent"]
                                 )
                         except tk.TclError:
                             pass
                     try:
+                        self.root.after(0, _update)
+                    except (tk.TclError, RuntimeError):
+                        pass
                         self.root.after(0, _update)
                     except (tk.TclError, RuntimeError):
                         pass
@@ -1165,13 +1167,17 @@ class AdminApp:
             return
         hdr = tk.Frame(p, bg=COLORS["bg_medium"])
         hdr.pack(fill="x")
-        for col, w in [("Repository", 18), ("Commit Message", 48),
-                       ("Files", 8), ("Status", 12), ("Date", 16)]:
+        for col, w in [("Repository", 16), ("Commit Message", 42),
+                       ("Files", 6), ("Status", 10), ("Date", 14)]:
             tk.Label(hdr, text=col, font=FONTS["label_bold"],
                      fg=COLORS["text_secondary"], bg=COLORS["bg_medium"],
                      width=w, anchor="w", padx=8, pady=6).pack(side="left")
+        tk.Label(hdr, text="Actions", font=FONTS["label_bold"],
+                 fg=COLORS["text_secondary"], bg=COLORS["bg_medium"],
+                 width=14, anchor="w", padx=8, pady=6).pack(side="right")
+
         for entry in activity:
-            row = tk.Frame(p, bg=COLORS["bg_card"])
+            row = tk.Frame(p, bg=COLORS["bg_card"], cursor="hand2")
             row.pack(fill="x")
             tk.Frame(p, height=1, bg=COLORS["border"]).pack(fill="x")
             status_color = {
@@ -1180,15 +1186,142 @@ class AdminApp:
                 "failed":    COLORS["error"],
             }.get(entry.get("status", "committed"), COLORS["text_secondary"])
             for text, w, fc in [
-                (entry["repo_name"][:18], 18, COLORS["accent"]),
-                (entry["commit_msg"][:48], 48, COLORS["text_primary"]),
-                (str(entry.get("files_count", 0)), 8, COLORS["text_secondary"]),
-                (entry.get("status", "committed"), 12, status_color),
-                (entry["committed_at"][:16], 16, COLORS["text_muted"]),
+                (entry["repo_name"][:16], 16, COLORS["accent"]),
+                (entry["commit_msg"][:42], 42, COLORS["text_primary"]),
+                (str(entry.get("files_count", 0)), 6, COLORS["text_secondary"]),
+                (entry.get("status", "committed"), 10, status_color),
+                (entry["committed_at"][:14], 14, COLORS["text_muted"]),
             ]:
-                tk.Label(row, text=text, font=FONTS["body_sm"],
-                         fg=fc, bg=COLORS["bg_card"],
-                         width=w, anchor="w", padx=8, pady=8).pack(side="left")
+                lbl = tk.Label(row, text=text, font=FONTS["body_sm"],
+                               fg=fc, bg=COLORS["bg_card"],
+                               width=w, anchor="w", padx=8, pady=8)
+                lbl.pack(side="left")
+                lbl.bind("<Button-1>", lambda e, ent=entry: self._show_commit_diff_modal(ent))
+
+            diff_btn = tk.Button(
+                row, text="👁 View Diff →", font=("Segoe UI", 8, "bold"),
+                fg=COLORS["accent"], bg=COLORS["bg_medium"], relief="flat", bd=0,
+                cursor="hand2", padx=8, pady=3,
+                command=lambda ent=entry: self._show_commit_diff_modal(ent)
+            )
+            diff_btn.pack(side="right", padx=8, pady=6)
+            self._add_hover(diff_btn, COLORS["bg_card_hover"], COLORS["bg_medium"])
+
+            def _r_enter(e, r=row):
+                r.config(bg=COLORS["bg_card_hover"])
+            def _r_leave(e, r=row):
+                r.config(bg=COLORS["bg_card"])
+            row.bind("<Enter>", _r_enter)
+            row.bind("<Leave>", _r_leave)
+            row.bind("<Button-1>", lambda e, ent=entry: self._show_commit_diff_modal(ent))
+
+    def _show_commit_diff_modal(self, entry: dict):
+        """Open a dedicated modal displaying commit diff with full color coordination legend."""
+        dlg = tk.Toplevel(self.root)
+        c_hash = entry.get("commit_hash") or ""
+        short_h = c_hash[:7] if c_hash else "HEAD"
+        r_path = entry.get("repo_path") or ""
+        dlg.title(f"Commitmaster — Diff View [{short_h}] {entry.get('commit_msg', '')[:30]}")
+        dlg.geometry("900x650")
+        dlg.configure(bg="#0d1117")
+        dlg.transient(self.root)
+
+        top_f = tk.Frame(dlg, bg="#161b22", padx=16, pady=12, highlightthickness=1, highlightbackground="#30363d")
+        top_f.pack(fill="x")
+        tk.Label(top_f, text=f"Commit: {entry.get('commit_msg', '')}", font=("Segoe UI", 12, "bold"),
+                 fg="#f0f6fc", bg="#161b22").pack(anchor="w")
+        tk.Label(top_f, text=f"📁 {entry.get('repo_name')}  •  Hash: {c_hash or 'N/A'}  •  {entry.get('committed_at')}",
+                 font=FONTS["caption"], fg="#8b949e", bg="#161b22").pack(anchor="w", pady=(2, 0))
+
+        # ── Color Coordination Legend Banner ───────────────────
+        legend_bar = tk.Frame(dlg, bg="#161b22", padx=14, pady=6, highlightthickness=1, highlightbackground="#30363d")
+        legend_bar.pack(fill="x")
+
+        tk.Label(legend_bar, text="COLOR MEANINGS:", font=("Segoe UI", 8, "bold"),
+                 fg="#8b949e", bg="#161b22").pack(side="left", padx=(0, 8))
+
+        del_b = tk.Frame(legend_bar, bg="#2a1215", padx=6, pady=2, highlightthickness=1, highlightbackground="#f85149")
+        del_b.pack(side="left", padx=(0, 6))
+        tk.Label(del_b, text="🔴 Deleted (-)", font=("Segoe UI", 8, "bold"), fg="#f87171", bg="#2a1215").pack()
+
+        add_b = tk.Frame(legend_bar, bg="#132e22", padx=6, pady=2, highlightthickness=1, highlightbackground="#3fb950")
+        add_b.pack(side="left", padx=(0, 6))
+        tk.Label(add_b, text="🟢 Added (+)", font=("Segoe UI", 8, "bold"), fg="#4ade80", bg="#132e22").pack()
+
+        rep_b = tk.Frame(legend_bar, bg="#2d2206", padx=6, pady=2, highlightthickness=1, highlightbackground="#d29922")
+        rep_b.pack(side="left", padx=(0, 6))
+        tk.Label(rep_b, text="🟡 Replaced (~ old ➔ new)", font=("Segoe UI", 8, "bold"), fg="#fbbf24", bg="#2d2206").pack()
+
+        loc_b = tk.Frame(legend_bar, bg="#161b22", padx=6, pady=2, highlightthickness=1, highlightbackground="#388bfd")
+        loc_b.pack(side="left", padx=(0, 6))
+        tk.Label(loc_b, text="🔵 Context (@@)", font=("Segoe UI", 8), fg="#58a6ff", bg="#161b22").pack()
+
+        # Text diff viewer
+        body_f = tk.Frame(dlg, bg="#0d1117")
+        body_f.pack(fill="both", expand=True, padx=10, pady=10)
+
+        sb = tk.Scrollbar(body_f, orient="vertical")
+        sb.pack(side="right", fill="y")
+        diff_txt = tk.Text(body_f, bg="#0d1117", fg="#c9d1d9", font=FONTS["mono"],
+                           wrap="none", relief="flat", bd=0, padx=10, pady=6, yscrollcommand=sb.set)
+        diff_txt.pack(side="left", fill="both", expand=True)
+        sb.config(command=diff_txt.yview)
+
+        diff_txt.tag_configure("hunk_hdr", background="#161b22", foreground="#58a6ff", font=FONTS["mono_bold"])
+        diff_txt.tag_configure("delete", background="#2a1215", foreground="#f87171")
+        diff_txt.tag_configure("add", background="#132e22", foreground="#4ade80")
+        diff_txt.tag_configure("replaced_del", background="#2d2206", foreground="#fbbf24")
+        diff_txt.tag_configure("replaced_add", background="#262b08", foreground="#a3e635")
+        diff_txt.tag_configure("meta", foreground="#8b949e")
+
+        raw_diff = ""
+        if r_path and os.path.isdir(r_path) and commit_engine.is_git_repo(r_path) and c_hash:
+            try:
+                res = commit_engine._run_git(["show", c_hash, "--format="], cwd=r_path)
+                if res.returncode == 0:
+                    raw_diff = res.stdout
+            except Exception:
+                pass
+
+        if not raw_diff:
+            diff_txt.insert("end", f"Commit Message: {entry.get('commit_msg')}\n\nRepository: {r_path}\nFiles changed: {entry.get('files_count', 0)}\nStatus: {entry.get('status', 'committed')}\nDate: {entry.get('committed_at')}\n\n(Local repository folder not currently linked or commit diff was pruned.)\n", "meta")
+        else:
+            raw_lines = raw_diff.splitlines()
+            i = 0
+            n = len(raw_lines)
+            while i < n:
+                line = raw_lines[i]
+                if line.startswith("@@"):
+                    diff_txt.insert("end", f"{line}\n", "hunk_hdr")
+                    i += 1
+                elif line.startswith(("diff ", "index ", "--- ", "+++ ")):
+                    diff_txt.insert("end", f"{line}\n", "meta")
+                    i += 1
+                elif line.startswith("-"):
+                    del_lines = []
+                    while i < n and raw_lines[i].startswith("-"):
+                        del_lines.append(raw_lines[i])
+                        i += 1
+                    add_lines = []
+                    while i < n and raw_lines[i].startswith("+"):
+                        add_lines.append(raw_lines[i])
+                        i += 1
+                    if add_lines:
+                        for dl in del_lines:
+                            diff_txt.insert("end", f"~ {dl[1:]}    (REPLACED - PREVIOUS)\n", "replaced_del")
+                        for al in add_lines:
+                            diff_txt.insert("end", f"~ {al[1:]}    (REPLACED - MODIFIED)\n", "replaced_add")
+                    else:
+                        for dl in del_lines:
+                            diff_txt.insert("end", f"{dl}\n", "delete")
+                elif line.startswith("+"):
+                    diff_txt.insert("end", f"{line}\n", "add")
+                    i += 1
+                else:
+                    diff_txt.insert("end", f"{line}\n")
+                    i += 1
+
+        diff_txt.config(state="disabled")
 
     # ── GitHub Accounts Page ──────────────────────────────────────────────────
 
@@ -1556,26 +1689,37 @@ class AdminApp:
         tb_right = tk.Frame(tb, bg=COLORS["bg_card"])
         tb_right.pack(side="right")
 
-        cfg_model = cfg.get("ai", {}).get("model")
-        cached_model = cfg_model or (ai_messages._MODEL_CACHE["models"][0] if ai_messages._MODEL_CACHE["models"] else None)
-        ai_text = f"⚡ Local AI: {cached_model or 'Ready'}"
+        ai_text, ai_active = ai_messages.get_ai_status_display(cfg)
         ai_lbl = tk.Label(tb_right, text=ai_text, font=FONTS["caption"],
-                          fg=COLORS["accent"] if cached_model else COLORS["warning"],
+                          fg=COLORS["accent"] if ai_active else COLORS["warning"],
                           bg=COLORS["bg_card"])
         ai_lbl.pack(side="left", padx=(0, 10))
 
-        if not cached_model and not cfg_model:
+        provider = ai_messages.get_active_provider(cfg)
+        if provider in ("bionic", "ollama") and not ai_active:
             def _async_detect_gd():
                 m = ai_messages.detect_model(cfg, force=False)
+                local_lbl = "Ollama" if provider == "ollama" else "Local AI"
                 if m:
                     def _update():
                         try:
                             if ai_lbl.winfo_exists():
-                                ai_lbl.config(text=f"⚡ Local AI: {m}", fg=COLORS["accent"])
+                                ai_lbl.config(text=f"⚡ {local_lbl}: {m}", fg=COLORS["accent"])
                         except tk.TclError:
                             pass
                     try:
                         self.root.after(0, _update)
+                    except (tk.TclError, RuntimeError):
+                        pass
+                else:
+                    def _update_offline():
+                        try:
+                            if ai_lbl.winfo_exists():
+                                ai_lbl.config(text=f"⚡ {local_lbl}: Offline", fg=COLORS["text_muted"])
+                        except tk.TclError:
+                            pass
+                    try:
+                        self.root.after(0, _update_offline)
                     except (tk.TclError, RuntimeError):
                         pass
             threading.Thread(target=_async_detect_gd, daemon=True).start()
