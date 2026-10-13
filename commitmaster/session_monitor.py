@@ -88,6 +88,7 @@ class SessionMonitor(threading.Thread):
                     self.state = ACTIVE
                     self._dirty_repos = set()
                     self._last_scan = 0.0
+                    self._session_started_at = now
 
                 elif self.state == ACTIVE:
                     if not active:
@@ -104,9 +105,12 @@ class SessionMonitor(threading.Thread):
                         self.state = ACTIVE
                         ended_at = 0.0
                     elif now - ended_at >= grace:
+                        session_duration = now - getattr(self, "_session_started_at", now)
                         repos = sorted(self._dirty_repos | set(self._scan_dirty_repos(cfg)))
-                        log.info("Session ended — %d dirty repo(s) detected.", len(repos))
-                        if rem_cfg.get("app_monitor_enabled", True):
+                        log.info("Session ended (duration: %.1fs) — %d dirty repo(s) detected.", session_duration, len(repos))
+                        
+                        # Accidental launch debounce: if closed within 1-2 minutes (120s), do not notify
+                        if session_duration > 120 and rem_cfg.get("app_monitor_enabled", True):
                             try:
                                 from commitmaster.notification_toast import show_toast
                                 show_toast(
@@ -118,6 +122,9 @@ class SessionMonitor(threading.Thread):
                                 )
                             except Exception as exc:
                                 log.debug("Toast dispatch failed: %s", exc)
+                        elif session_duration <= 120:
+                            log.info("Coding session ended within %.1fs (<= 120s / 2m) — accidental open debounce. Skipping notification.", session_duration)
+
                         self.events.put(("session_end", repos))
                         self.state = IDLE
                         ended_at = 0.0
