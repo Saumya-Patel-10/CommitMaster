@@ -1319,10 +1319,10 @@ def sync_account_from_server(user_id: int) -> bool:
                                  (*valid_updates.values(), user_id))
                     conn.commit()
 
-        # 4. Sync Commit Activity Log
-        resp_c = requests.get(f"{url}/api/activity/commits?limit=100", headers=_get_api_headers(), timeout=8)
+        # 4. Sync Commit Activity Log & Usage
+        resp_c = requests.get(f"{url}/api/activity/commits?user_id={user_id}&limit=500", headers=_get_api_headers(), timeout=8)
         if resp_c.status_code == 200:
-            commits = resp_c.json().get("commits", [])
+            commits = resp_c.json().get("activity") or resp_c.json().get("commits") or []
             if commits:
                 conn = get_conn()
                 for c in commits:
@@ -1334,7 +1334,86 @@ def sync_account_from_server(user_id: int) -> bool:
                         c.get("commit_hash", ""), c.get("commit_msg", ""), c.get("files_count", 0),
                         c.get("status", "committed"), c.get("committed_at", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
                     ))
+                    # Also record app usage dates so active days in overview match
+                    c_date = (c.get("committed_at") or "")[:10]
+                    if c_date and c.get("status") == "committed":
+                        conn.execute("""
+                            INSERT INTO app_usage (user_id, date, sessions, commits_made)
+                            VALUES (?, ?, 1, 1)
+                            ON CONFLICT(user_id, date) DO UPDATE SET commits_made = commits_made + 1
+                        """, (c.get("user_id", user_id), c_date))
                 conn.commit()
+
+        # 5. Sync Watched Repositories
+        try:
+            resp_w = requests.get(f"{url}/api/users/{user_id}/watched-repos", headers=_get_api_headers(), timeout=8)
+            if resp_w.status_code == 200:
+                repos = resp_w.json().get("watched_repos", [])
+                if repos:
+                    conn = get_conn()
+                    for r in repos:
+                        conn.execute("""
+                            INSERT INTO watched_repositories (
+                                user_id, repo_name, repo_full_name, clone_url, ssh_url,
+                                default_branch, local_path, is_private, description, is_active_watch
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            ON CONFLICT(user_id, repo_full_name) DO UPDATE SET
+                                repo_name = excluded.repo_name,
+                                clone_url = excluded.clone_url,
+                                ssh_url = excluded.ssh_url,
+                                default_branch = excluded.default_branch,
+                                is_private = excluded.is_private,
+                                description = excluded.description,
+                                local_path = CASE WHEN excluded.local_path != '' THEN excluded.local_path ELSE watched_repositories.local_path END,
+                                is_active_watch = excluded.is_active_watch
+                        """, (
+                            user_id, r.get("repo_name", ""), r.get("repo_full_name", ""),
+                            r.get("clone_url", ""), r.get("ssh_url", ""), r.get("default_branch", "main"),
+                            r.get("local_path", ""), 1 if r.get("is_private") else 0,
+                            r.get("description", ""), int(r.get("is_active_watch", 1))
+                        ))
+                    conn.commit()
+        except Exception:
+            pass
+
+        # 6. If user is an admin, also sync system-wide commits and security events
+        try:
+            u_chk = get_user(user_id)
+            if u_chk and u_chk.get("role") == "admin":
+                resp_all = requests.get(f"{url}/api/activity/commits?limit=500", headers=_get_api_headers(), timeout=8)
+                if resp_all.status_code == 200:
+                    all_c = resp_all.json().get("activity") or resp_all.json().get("commits") or []
+                    if all_c:
+                        conn = get_conn()
+                        for c in all_c:
+                            conn.execute("""
+                                INSERT OR IGNORE INTO commit_activity (user_id, repo_path, repo_name, commit_hash, commit_msg, files_count, status, committed_at)
+                                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                            """, (
+                                c.get("user_id"), c.get("repo_path", ""), c.get("repo_name", ""),
+                                c.get("commit_hash", ""), c.get("commit_msg", ""), c.get("files_count", 0),
+                                c.get("status", "committed"), c.get("committed_at", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+                            ))
+                        conn.commit()
+
+                resp_sec = requests.get(f"{url}/api/events/security?limit=50", headers=_get_api_headers(), timeout=8)
+                if resp_sec.status_code == 200:
+                    evs = resp_sec.json().get("events") or []
+                    if evs:
+                        conn = get_conn()
+                        for ev in evs:
+                            conn.execute("""
+                                INSERT OR IGNORE INTO app_events (id, user_id, kind, repo_name, files, errors, security, warnings, detail, created_at)
+                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            """, (
+                                ev.get("id"), ev.get("user_id"), ev.get("kind", "scan"), ev.get("repo_name", ""),
+                                ev.get("files", 0), ev.get("errors", 0), ev.get("security", 0), ev.get("warnings", 0),
+                                ev.get("detail", ""), ev.get("created_at")
+                            ))
+                        conn.commit()
+        except Exception:
+            pass
+
         return True
     except Exception as exc:
         log.debug("sync_account_from_server error: %s", exc)
@@ -1537,6 +1616,103 @@ def hard_delete_user(user_id: int) -> bool:
     conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
     conn.commit()
     return True
+
+
+def bulk_update_users_active(user_ids: List[int], is_active: int, exclude_user_id: Optional[int] = None) -> int:
+    """
+    Bulk update active status (enable/disable) for multiple users.
+    Protects admin accounts and optionally exclude_user_id.
+    """
+    if not user_ids:
+        return 0
+    clean_ids = []
+    for uid in user_ids:
+        try:
+            u_int = int(uid)
+            if exclude_user_id and u_int == exclude_user_id:
+                continue
+            clean_ids.append(u_int)
+        except (ValueError, TypeError):
+            continue
+
+    if not clean_ids:
+        return 0
+
+    url = get_server_url()
+    if url:
+        try:
+            requests.post(
+                f"{url}/api/admin/users/bulk-status",
+                json={"user_ids": clean_ids, "is_active": 1 if is_active else 0},
+                headers=_get_api_headers(),
+                timeout=10
+            )
+        except Exception:
+            pass
+
+    conn = get_conn()
+    cur = conn.cursor()
+    updated = 0
+    for uid in clean_ids:
+        cur.execute("SELECT username FROM users WHERE id = ?", (uid,))
+        r = cur.fetchone()
+        if not r:
+            continue
+        if is_admin_username(r["username"]) and not is_active:
+            continue  # cannot disable protected admin
+        cur.execute("UPDATE users SET is_active = ? WHERE id = ?", (1 if is_active else 0, uid))
+        updated += 1
+    conn.commit()
+    return updated
+
+
+def bulk_delete_users(user_ids: List[int], hard: bool = True, exclude_user_id: Optional[int] = None) -> int:
+    """
+    Bulk delete multiple users.
+    Protects admin accounts and optionally exclude_user_id.
+    """
+    if not user_ids:
+        return 0
+    clean_ids = []
+    for uid in user_ids:
+        try:
+            u_int = int(uid)
+            if exclude_user_id and u_int == exclude_user_id:
+                continue
+            clean_ids.append(u_int)
+        except (ValueError, TypeError):
+            continue
+
+    if not clean_ids:
+        return 0
+
+    url = get_server_url()
+    if url:
+        try:
+            requests.post(
+                f"{url}/api/admin/users/bulk-delete",
+                json={"user_ids": clean_ids, "hard": hard},
+                headers=_get_api_headers(),
+                timeout=10
+            )
+        except Exception:
+            pass
+
+    conn = get_conn()
+    cur = conn.cursor()
+    deleted = 0
+    for uid in clean_ids:
+        cur.execute("SELECT username FROM users WHERE id = ?", (uid,))
+        r = cur.fetchone()
+        if not r or is_admin_username(r["username"]):
+            continue
+        if hard:
+            cur.execute("DELETE FROM users WHERE id = ?", (uid,))
+        else:
+            cur.execute("UPDATE users SET is_active = 0 WHERE id = ?", (uid,))
+        deleted += 1
+    conn.commit()
+    return deleted
 
 
 # ── Preferences ────────────────────────────────────────────────────────────────
@@ -2356,7 +2532,27 @@ def add_or_update_watched_repo(
         1 if is_private else 0, description or "", is_active_watch,
     ))
     conn.commit()
-    return cur.lastrowid
+    last_id = cur.lastrowid
+
+    url = get_server_url()
+    if url:
+        try:
+            requests.post(f"{url}/api/users/{user_id}/watched-repos", json={
+                "github_account_id": github_account_id,
+                "repo_name": repo_name,
+                "repo_full_name": repo_full_name,
+                "clone_url": clone_url,
+                "ssh_url": ssh_url,
+                "default_branch": default_branch,
+                "local_path": local_path,
+                "is_private": 1 if is_private else 0,
+                "description": description or "",
+                "is_active_watch": is_active_watch
+            }, headers=_get_api_headers(), timeout=6)
+        except Exception:
+            pass
+
+    return last_id
 
 
 def toggle_watched_repo(repo_id: int, user_id: int, is_active: Optional[bool] = None) -> bool:
@@ -2393,6 +2589,13 @@ def set_watched_repo_local_path(repo_id: int, user_id: int, local_path: str) -> 
 
 def delete_watched_repo(repo_id: int, user_id: int) -> bool:
     """Remove a repository from the user's watched list."""
+    url = get_server_url()
+    if url:
+        try:
+            requests.delete(f"{url}/api/users/{user_id}/watched-repos/{repo_id}", headers=_get_api_headers(), timeout=6)
+        except Exception:
+            pass
+
     conn = get_conn()
     conn.execute("DELETE FROM watched_repositories WHERE id = ? AND user_id = ?", (repo_id, user_id))
     conn.commit()
