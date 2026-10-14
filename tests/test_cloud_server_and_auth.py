@@ -286,5 +286,115 @@ class TestCloudServerAndAuth(unittest.TestCase):
         })
         self.assertEqual(blocked_reset.status_code, 429)
 
+    def test_07_bulk_user_management_and_history_sync(self):
+        """Test multi-user bulk toggle/delete and cross-device history & watched repos sync."""
+        import requests
+        ts = int(time.time() * 1000)
+
+        # 1. Admin login to get admin authorization headers
+        from server import DEFAULT_ADMIN_USER, DEFAULT_ADMIN_PASS
+        admin_login = requests.post(f"{self.server_url}/api/auth/login", json={
+            "username_or_email": DEFAULT_ADMIN_USER,
+            "password": DEFAULT_ADMIN_PASS
+        })
+        self.assertEqual(admin_login.status_code, 200)
+        admin_token = admin_login.json()["token"]
+        admin_headers = {"Authorization": f"Bearer {admin_token}", "Content-Type": "application/json"}
+
+        # 2. Register 3 test users
+        created_ids = []
+        for i in range(3):
+            reg = requests.post(f"{self.server_url}/api/auth/register", json={
+                "username": f"bulk_user_{i}_{ts}",
+                "email": f"bulk_{i}_{ts}@example.com",
+                "full_name": f"Bulk User {i}",
+                "password": "Password123!"
+            })
+            self.assertEqual(reg.status_code, 201)
+            created_ids.append(reg.json()["user"]["id"])
+
+        self.assertEqual(len(created_ids), 3)
+
+        # 3. Test Bulk Disable
+        resp_dis = requests.post(f"{self.server_url}/api/admin/users/bulk-status", json={
+            "user_ids": created_ids[:2],
+            "is_active": 0
+        }, headers=admin_headers)
+        self.assertEqual(resp_dis.status_code, 200)
+        self.assertEqual(resp_dis.json().get("updated"), 2)
+
+        # Verify disabled users are inactive
+        for uid in created_ids[:2]:
+            u_chk = requests.get(f"{self.server_url}/api/users/{uid}", headers=admin_headers).json()["user"]
+            self.assertEqual(u_chk["is_active"], 0)
+
+        # 4. Test Bulk Enable
+        resp_en = requests.post(f"{self.server_url}/api/admin/users/bulk-status", json={
+            "user_ids": created_ids[:2],
+            "is_active": 1
+        }, headers=admin_headers)
+        self.assertEqual(resp_en.status_code, 200)
+        self.assertEqual(resp_en.json().get("updated"), 2)
+
+        for uid in created_ids[:2]:
+            u_chk = requests.get(f"{self.server_url}/api/users/{uid}", headers=admin_headers).json()["user"]
+            self.assertEqual(u_chk["is_active"], 1)
+
+        # 5. Test Bulk Delete (delete first 2, leave 3rd)
+        resp_del = requests.post(f"{self.server_url}/api/admin/users/bulk-delete", json={
+            "user_ids": created_ids[:2],
+            "hard": True
+        }, headers=admin_headers)
+        self.assertEqual(resp_del.status_code, 200)
+        self.assertEqual(resp_del.json().get("deleted"), 2)
+
+        # Deleted users should be 404
+        for uid in created_ids[:2]:
+            self.assertEqual(requests.get(f"{self.server_url}/api/users/{uid}", headers=admin_headers).status_code, 404)
+        # 3rd user remains
+        self.assertEqual(requests.get(f"{self.server_url}/api/users/{created_ids[2]}", headers=admin_headers).status_code, 200)
+
+        # 6. Test Watched Repos Sync & Cross-Device History
+        uid3 = created_ids[2]
+        # User 3 posts a watched repo
+        add_repo_resp = requests.post(f"{self.server_url}/api/users/{uid3}/watched-repos", json={
+            "repo_name": "enterprise-backend",
+            "repo_full_name": "org/enterprise-backend",
+            "clone_url": "https://github.com/org/enterprise-backend.git",
+            "default_branch": "main",
+            "is_active_watch": 1
+        }, headers=admin_headers)
+        self.assertEqual(add_repo_resp.status_code, 200)
+
+        # User 3 posts a commit to cloud server
+        commit_resp = requests.post(f"{self.server_url}/api/activity/commits", json={
+            "user_id": uid3,
+            "repo_name": "enterprise-backend",
+            "repo_path": "C:/Projects/enterprise-backend",
+            "commit_hash": "a1b2c3d4e5f6",
+            "commit_msg": "feat: enterprise multi-tenant sync",
+            "files_count": 5,
+            "status": "committed"
+        }, headers=admin_headers)
+        self.assertEqual(commit_resp.status_code, 200)
+
+        # Now test db.sync_account_from_server(uid3) pulls both watched repo and commit into local db
+        os.environ["COMMITMASTER_SERVER_URL"] = self.server_url
+        db.set_active_session_token(admin_token)
+        try:
+            sync_ok = db.sync_account_from_server(uid3)
+            self.assertTrue(sync_ok)
+
+            # Check local database has the watched repo
+            local_repos = db.get_watched_repos(uid3)
+            self.assertTrue(any(r["repo_name"] == "enterprise-backend" for r in local_repos))
+
+            # Check local database has the commit activity
+            local_commits = db.get_activity_log(uid3)
+            self.assertTrue(any(c["commit_hash"] == "a1b2c3d4e5f6" for c in local_commits))
+        finally:
+            del os.environ["COMMITMASTER_SERVER_URL"]
+
+
 if __name__ == "__main__":
     unittest.main()
