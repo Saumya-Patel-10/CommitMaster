@@ -158,6 +158,11 @@ class AdminApp:
         self._wr_search_var: tk.StringVar = tk.StringVar()
         self._wr_filter_mode: str = "all"
 
+        # Multi-select User Management state
+        self._selected_users: set = set()
+        self._user_check_vars: dict = {}
+        self._select_all_var: tk.BooleanVar = tk.BooleanVar(value=False)
+
         self._setup_window()
         self._build_layout()
 
@@ -171,7 +176,32 @@ class AdminApp:
         )
         self._reminder_service.start()
 
+        # Cross-device cloud sync (profile, avatar, preferences, watched repos, commits & events)
+        if self.user.get("id"):
+            threading.Thread(
+                target=self._run_background_sync,
+                daemon=True,
+                name="admin-cloud-sync"
+            ).start()
+
         self._nav_to("overview")
+
+    def _run_background_sync(self):
+        try:
+            ok = db.sync_account_from_server(self.user["id"])
+            if ok:
+                self.root.after(300, self._on_sync_finished)
+        except Exception:
+            pass
+
+    def _on_sync_finished(self):
+        try:
+            # Refresh if user is on an activity-dependent page
+            active = getattr(self, "_active_key", "")
+            if active in ("overview", "commits", "watched_repos", "activity", "charts"):
+                self._nav_to(active, record=False)
+        except Exception:
+            pass
 
     # ── Window & Lifecycle ───────────────────────────────────────────────────
 
@@ -3124,7 +3154,7 @@ class AdminApp:
         )
 
         sf = tk.Frame(p, bg=COLORS["bg_dark"])
-        sf.pack(fill="x", pady=(0, 10))
+        sf.pack(fill="x", pady=(0, 8))
         tk.Label(sf, text="🔍", font=FONTS["body_md"],
                  fg=COLORS["text_muted"], bg=COLORS["bg_dark"]).pack(side="left")
         self._user_search = tk.StringVar()
@@ -3135,9 +3165,65 @@ class AdminApp:
                  highlightbackground=COLORS["border"],
                  width=30).pack(side="left", padx=8, ipady=6)
 
+        # Dynamic Sticky Bulk Actions Toolbar
+        self._bulk_bar = tk.Frame(p, bg=COLORS["bg_medium"], highlightthickness=1,
+                                  highlightbackground=COLORS["border"], padx=12, pady=7)
+        self._bulk_bar.pack(fill="x", pady=(0, 10))
+
+        self._bulk_count_lbl = tk.Label(
+            self._bulk_bar, text="Select users below for bulk operations",
+            font=FONTS["body_sm"], fg=COLORS["text_muted"], bg=COLORS["bg_medium"]
+        )
+        self._bulk_count_lbl.pack(side="left", padx=(4, 12))
+
+        self._btn_select_all = tk.Button(
+            self._bulk_bar, text="☑ Select All", font=FONTS["caption"],
+            fg=COLORS["text_primary"], bg=COLORS["bg_card"], activebackground=COLORS["bg_card_hover"],
+            relief="flat", bd=0, cursor="hand2", padx=8, pady=4, command=self._select_all_users
+        )
+        self._btn_select_all.pack(side="left", padx=(0, 6))
+
+        self._btn_clear_sel = tk.Button(
+            self._bulk_bar, text="☒ Deselect All", font=FONTS["caption"],
+            fg=COLORS["text_muted"], bg=COLORS["bg_card"], activebackground=COLORS["bg_card_hover"],
+            relief="flat", bd=0, cursor="hand2", padx=8, pady=4, command=self._deselect_all_users
+        )
+        self._btn_clear_sel.pack(side="left", padx=(0, 14))
+
+        # Bulk Actions
+        self._btn_bulk_disable = tk.Button(
+            self._bulk_bar, text="🔒 Disable Selected", font=FONTS["caption"],
+            fg=COLORS["text_muted"], bg=COLORS["bg_dark"], state="disabled",
+            relief="flat", bd=0, padx=10, pady=4, command=self._bulk_disable_users
+        )
+        self._btn_bulk_disable.pack(side="left", padx=(0, 6))
+
+        self._btn_bulk_enable = tk.Button(
+            self._bulk_bar, text="🔓 Enable Selected", font=FONTS["caption"],
+            fg=COLORS["text_muted"], bg=COLORS["bg_dark"], state="disabled",
+            relief="flat", bd=0, padx=10, pady=4, command=self._bulk_enable_users
+        )
+        self._btn_bulk_enable.pack(side="left", padx=(0, 6))
+
+        self._btn_bulk_delete = tk.Button(
+            self._bulk_bar, text="🗑 Delete Selected", font=FONTS["caption"],
+            fg=COLORS["text_muted"], bg=COLORS["bg_dark"], state="disabled",
+            relief="flat", bd=0, padx=10, pady=4, command=self._bulk_delete_users
+        )
+        self._btn_bulk_delete.pack(side="left", padx=(0, 6))
+
+        # Table Header with Master Select Checkbox
         hdr = tk.Frame(p, bg=COLORS["bg_medium"])
         hdr.pack(fill="x")
-        for col, w in [("User", 30), ("Email", 28), ("Role", 10),
+
+        master_chk = tk.Checkbutton(
+            hdr, variable=self._select_all_var, bg=COLORS["bg_medium"],
+            activebackground=COLORS["bg_medium"], selectcolor=COLORS["bg_dark"],
+            command=self._toggle_master_checkbox
+        )
+        master_chk.pack(side="left", padx=(10, 4))
+
+        for col, w in [("User", 28), ("Email", 26), ("Role", 10),
                        ("Status", 10), ("Commits", 10), ("Actions", 22)]:
             tk.Label(hdr, text=col, font=FONTS["label_bold"],
                      fg=COLORS["text_secondary"], bg=COLORS["bg_medium"],
@@ -3152,12 +3238,140 @@ class AdminApp:
         container = self._users_list_frame
         for w in container.winfo_children():
             w.destroy()
+        self._user_check_vars.clear()
+        self._visible_user_ids = []
+
         query = self._user_search.get().lower() if hasattr(self, "_user_search") else ""
         for user in db.get_all_users():
             if query and not any(query in str(user.get(f, "")).lower()
                                  for f in ["username", "email", "full_name"]):
                 continue
+            self._visible_user_ids.append(user["id"])
             self._user_row(container, user)
+
+        self._update_bulk_bar_state()
+
+    def _toggle_user_selection(self, user_id: int):
+        if user_id in self._selected_users:
+            self._selected_users.remove(user_id)
+        else:
+            self._selected_users.add(user_id)
+        self._update_bulk_bar_state()
+
+    def _select_all_users(self):
+        for uid in getattr(self, "_visible_user_ids", []):
+            if uid != self.user["id"]:
+                self._selected_users.add(uid)
+                if uid in self._user_check_vars:
+                    self._user_check_vars[uid].set(True)
+        self._select_all_var.set(True)
+        self._update_bulk_bar_state()
+
+    def _deselect_all_users(self):
+        self._selected_users.clear()
+        for var in self._user_check_vars.values():
+            var.set(False)
+        self._select_all_var.set(False)
+        self._update_bulk_bar_state()
+
+    def _toggle_master_checkbox(self):
+        if self._select_all_var.get():
+            self._select_all_users()
+        else:
+            self._deselect_all_users()
+
+    def _update_bulk_bar_state(self):
+        count = len(self._selected_users)
+        if not hasattr(self, "_bulk_bar") or not self._bulk_bar.winfo_exists():
+            return
+        if count == 0:
+            self._bulk_count_lbl.config(
+                text="Select users below for bulk operations",
+                fg=COLORS["text_muted"], font=FONTS["body_sm"]
+            )
+            self._btn_bulk_disable.config(
+                state="disabled", text="🔒 Disable Selected",
+                bg=COLORS["bg_dark"], fg=COLORS["text_muted"], cursor="arrow"
+            )
+            self._btn_bulk_enable.config(
+                state="disabled", text="🔓 Enable Selected",
+                bg=COLORS["bg_dark"], fg=COLORS["text_muted"], cursor="arrow"
+            )
+            self._btn_bulk_delete.config(
+                state="disabled", text="🗑 Delete Selected",
+                bg=COLORS["bg_dark"], fg=COLORS["text_muted"], cursor="arrow"
+            )
+            self._select_all_var.set(False)
+        else:
+            self._bulk_count_lbl.config(
+                text=f"☑ {count} user{'s' if count != 1 else ''} selected",
+                fg=COLORS["accent"], font=FONTS["label_bold"]
+            )
+            self._btn_bulk_disable.config(
+                state="normal", text=f"🔒 Disable ({count})",
+                bg="#3b2b10", fg="#f0b232", activebackground="#4d3815",
+                activeforeground="#ffffff", cursor="hand2"
+            )
+            self._btn_bulk_enable.config(
+                state="normal", text=f"🔓 Enable ({count})",
+                bg="#10331f", fg="#48c774", activebackground="#16462b",
+                activeforeground="#ffffff", cursor="hand2"
+            )
+            self._btn_bulk_delete.config(
+                state="normal", text=f"🗑 Delete ({count})",
+                bg="#3a1010", fg="#ff6b6b", activebackground="#521515",
+                activeforeground="#ffffff", cursor="hand2"
+            )
+            all_vis = [uid for uid in getattr(self, "_visible_user_ids", []) if uid != self.user["id"] and not db.is_admin_username(str(uid))]
+            if all_vis and all(uid in self._selected_users for uid in all_vis):
+                self._select_all_var.set(True)
+            else:
+                self._select_all_var.set(False)
+
+    def _bulk_disable_users(self):
+        count = len(self._selected_users)
+        if count == 0:
+            return
+        if messagebox.askyesno(
+            "Confirm Bulk Disable",
+            f"Are you sure you want to disable {count} selected user account(s)?\n\n"
+            "Disabled users cannot log into CommitMaster until re-enabled.",
+            parent=self.root
+        ):
+            updated = db.bulk_update_users_active(list(self._selected_users), 0, exclude_user_id=self.user["id"])
+            self._selected_users.clear()
+            messagebox.showinfo("Bulk Disable Completed", f"Successfully disabled {updated} user account(s).", parent=self.root)
+            self._refresh_users_list()
+
+    def _bulk_enable_users(self):
+        count = len(self._selected_users)
+        if count == 0:
+            return
+        if messagebox.askyesno(
+            "Confirm Bulk Enable",
+            f"Are you sure you want to enable {count} selected user account(s)?",
+            parent=self.root
+        ):
+            updated = db.bulk_update_users_active(list(self._selected_users), 1, exclude_user_id=self.user["id"])
+            self._selected_users.clear()
+            messagebox.showinfo("Bulk Enable Completed", f"Successfully enabled {updated} user account(s).", parent=self.root)
+            self._refresh_users_list()
+
+    def _bulk_delete_users(self):
+        count = len(self._selected_users)
+        if count == 0:
+            return
+        if messagebox.askyesno(
+            "⚠️ Confirm Bulk Delete",
+            f"PERMANENT BULK DELETE\n\n"
+            f"Are you sure you want to permanently delete {count} selected user account(s) and all associated data?\n\n"
+            "This action CANNOT be undone.",
+            parent=self.root
+        ):
+            deleted = db.bulk_delete_users(list(self._selected_users), hard=True, exclude_user_id=self.user["id"])
+            self._selected_users.clear()
+            messagebox.showinfo("Bulk Delete Completed", f"Successfully deleted {deleted} user account(s).", parent=self.root)
+            self._refresh_users_list()
 
     def _user_row(self, parent, user: Dict):
         row = tk.Frame(parent, bg=COLORS["bg_card"])
@@ -3166,13 +3380,28 @@ class AdminApp:
         row.bind("<Enter>", lambda e: row.config(bg=COLORS["bg_card_hover"]))
         row.bind("<Leave>", lambda e: row.config(bg=COLORS["bg_card"]))
 
+        # Selection Checkbox column
+        is_self = (user["id"] == self.user["id"])
+        is_protected_admin = db.is_admin_username(user.get("username"))
+        if not is_self and not is_protected_admin:
+            var = tk.BooleanVar(value=user["id"] in self._selected_users)
+            self._user_check_vars[user["id"]] = var
+            chk = tk.Checkbutton(
+                row, variable=var, bg=COLORS["bg_card"],
+                activebackground=COLORS["bg_card_hover"], selectcolor=COLORS["bg_dark"],
+                command=lambda uid=user["id"]: self._toggle_user_selection(uid)
+            )
+            chk.pack(side="left", padx=(10, 4))
+        else:
+            tk.Label(row, text="  ", bg=COLORS["bg_card"], width=2).pack(side="left", padx=(10, 4))
+
         color = user.get("avatar_color", AVATAR_COLORS[0])
         name = user.get("full_name") or user["username"]
         initials = (name.split()[0][0] + name.split()[-1][0]
                     if len(name.split()) >= 2 else name[:2]).upper()
         tk.Label(row, text=initials, bg=color, fg="white",
                  font=("Segoe UI", 9, "bold"), width=3,
-                 padx=4, pady=4).pack(side="left", padx=(8, 0), pady=6)
+                 padx=4, pady=4).pack(side="left", padx=(4, 0), pady=6)
 
         nf = tk.Frame(row, bg=COLORS["bg_card"], width=180)
         nf.pack(side="left", padx=8, pady=6)
@@ -3207,7 +3436,7 @@ class AdminApp:
                       fg=COLORS["text_primary"], bg=COLORS["bg_medium"],
                       relief="flat", bd=0, cursor="hand2",
                       padx=8, pady=3, command=cmd).pack(side="left", padx=2)
-        if user["id"] != self.user["id"]:
+        if user["id"] != self.user["id"] and not is_protected_admin:
             ttxt = "🔒 Disable" if user["is_active"] else "🔓 Enable"
             tk.Button(af, text=ttxt, font=FONTS["label"],
                       fg=COLORS["text_primary"], bg=COLORS["bg_medium"],
