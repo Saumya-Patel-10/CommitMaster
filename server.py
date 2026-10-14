@@ -1174,6 +1174,61 @@ def user_preferences(user_id):
         conn.close()
         return jsonify({"ok": True})
 
+# ── User Watched Repositories ─────────────────────────────────────────────────
+@app.route("/api/users/<int:user_id>/watched-repos", methods=["GET", "POST"])
+@require_auth(allow_self_user_id=True)
+def user_watched_repos(user_id):
+    conn = get_db()
+    cur = conn.cursor()
+    if request.method == "GET":
+        cur.execute("""
+            SELECT * FROM watched_repositories WHERE user_id = ? ORDER BY repo_name ASC
+        """, (user_id,))
+        rows = [dict(r) for r in cur.fetchall()]
+        conn.close()
+        return jsonify({"watched_repos": rows})
+    elif request.method == "POST":
+        data = request.get_json(force=True, silent=True) or {}
+        repo_name = (data.get("repo_name") or "").strip()
+        repo_full_name = (data.get("repo_full_name") or "").strip() or repo_name
+        if not repo_name:
+            conn.close()
+            return jsonify({"error": "repo_name required"}), 400
+        cur.execute("""
+            INSERT INTO watched_repositories (
+                user_id, github_account_id, repo_name, repo_full_name,
+                clone_url, ssh_url, default_branch, local_path,
+                is_private, description, is_active_watch
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(user_id, repo_full_name) DO UPDATE SET
+                github_account_id = COALESCE(excluded.github_account_id, watched_repositories.github_account_id),
+                repo_name = excluded.repo_name,
+                clone_url = excluded.clone_url,
+                ssh_url = excluded.ssh_url,
+                default_branch = excluded.default_branch,
+                is_private = excluded.is_private,
+                description = excluded.description,
+                local_path = CASE WHEN excluded.local_path != '' THEN excluded.local_path ELSE watched_repositories.local_path END,
+                is_active_watch = excluded.is_active_watch
+        """, (
+            user_id, data.get("github_account_id"), repo_name, repo_full_name,
+            data.get("clone_url", ""), data.get("ssh_url", ""), data.get("default_branch", "main"),
+            data.get("local_path", ""), 1 if data.get("is_private") else 0,
+            data.get("description", ""), int(data.get("is_active_watch", 1))
+        ))
+        conn.commit()
+        conn.close()
+        return jsonify({"ok": True})
+
+@app.route("/api/users/<int:user_id>/watched-repos/<int:repo_id>", methods=["DELETE"])
+@require_auth(allow_self_user_id=True)
+def delete_user_watched_repo(user_id, repo_id):
+    conn = get_db()
+    conn.execute("DELETE FROM watched_repositories WHERE id = ? AND user_id = ?", (repo_id, user_id))
+    conn.commit()
+    conn.close()
+    return jsonify({"ok": True})
+
 # ── Commit Activity & Logs ────────────────────────────────────────────────────
 @app.route("/api/activity/commits", methods=["GET", "POST"])
 @require_auth(allow_self_user_id=False)
@@ -1450,6 +1505,71 @@ def admin_user_ops(user_id):
         conn.commit()
         conn.close()
         return jsonify({"ok": True})
+
+@app.route("/api/admin/users/bulk-status", methods=["POST"])
+@require_auth(admin_only=True)
+def admin_bulk_user_status():
+    data = request.get_json(force=True, silent=True) or {}
+    raw_ids = data.get("user_ids", [])
+    is_active = 1 if data.get("is_active", 1) else 0
+    if not isinstance(raw_ids, list) or not raw_ids:
+        return jsonify({"error": "user_ids list required"}), 400
+
+    conn = get_db()
+    cur = conn.cursor()
+    updated_count = 0
+    for uid in raw_ids:
+        try:
+            uid_int = int(uid)
+        except (ValueError, TypeError):
+            continue
+        # Protect caller and default admin from being disabled
+        if uid_int == g.current_user["id"]:
+            continue
+        cur.execute("SELECT username FROM users WHERE id = ?", (uid_int,))
+        row = cur.fetchone()
+        if not row:
+            continue
+        if row["username"] == DEFAULT_ADMIN_USER and is_active == 0:
+            continue
+        cur.execute("UPDATE users SET is_active = ? WHERE id = ?", (is_active, uid_int))
+        updated_count += 1
+    conn.commit()
+    conn.close()
+    return jsonify({"ok": True, "updated": updated_count})
+
+@app.route("/api/admin/users/bulk-delete", methods=["POST"])
+@require_auth(admin_only=True)
+def admin_bulk_user_delete():
+    data = request.get_json(force=True, silent=True) or {}
+    raw_ids = data.get("user_ids", [])
+    hard = bool(data.get("hard", True))
+    if not isinstance(raw_ids, list) or not raw_ids:
+        return jsonify({"error": "user_ids list required"}), 400
+
+    conn = get_db()
+    cur = conn.cursor()
+    deleted_count = 0
+    for uid in raw_ids:
+        try:
+            uid_int = int(uid)
+        except (ValueError, TypeError):
+            continue
+        # Protect caller and default admin from deletion
+        if uid_int == g.current_user["id"]:
+            continue
+        cur.execute("SELECT username FROM users WHERE id = ?", (uid_int,))
+        row = cur.fetchone()
+        if not row or row["username"] == DEFAULT_ADMIN_USER:
+            continue
+        if hard:
+            cur.execute("DELETE FROM users WHERE id = ?", (uid_int,))
+        else:
+            cur.execute("UPDATE users SET is_active = 0 WHERE id = ?", (uid_int,))
+        deleted_count += 1
+    conn.commit()
+    conn.close()
+    return jsonify({"ok": True, "deleted": deleted_count})
 
 @app.route("/api/admin/stats", methods=["GET"])
 @require_auth(admin_only=True)
