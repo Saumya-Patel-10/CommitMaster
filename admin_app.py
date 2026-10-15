@@ -21,6 +21,9 @@ APP_DIR = os.path.dirname(os.path.abspath(__file__))
 if APP_DIR not in sys.path:
     sys.path.insert(0, APP_DIR)
 
+from commitmaster import edition as _edition
+_edition.set_admin_edition()  # this module only ships in the private admin build
+
 from commitmaster import database as db
 from commitmaster import avatar_utils
 from commitmaster import pattern_utils
@@ -79,11 +82,11 @@ def _clear_token() -> None:
 
 def launch_admin_app():
     """
-    CommitMaster is now unified into a single application (app.py).
-    Delegates directly to app.launch_app() so existing shortcuts continue working seamlessly.
+    Private administrator app. Reuses the shared sign-in/session loop from app.py,
+    but in admin mode: only the designated admin account is admitted.
     """
     import app
-    app.launch_app()
+    app.run_session_loop(admin_edition=True)
 
 
 
