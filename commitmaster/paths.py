@@ -72,7 +72,9 @@ def get_data_dir() -> str:
     os.makedirs(local_commitmaster_dir, exist_ok=True)
     local_db = os.path.join(local_commitmaster_dir, "commitmaster.db")
     # If local_db doesn't exist but workspace has it, copy it over!
-    if not os.path.exists(local_db) and os.path.exists(workspace_db):
+    # (Developer convenience only: never for packaged builds, which must start clean
+    # with no inherited database, accounts or session tokens.)
+    if (not getattr(sys, "frozen", False)) and not os.path.exists(local_db) and os.path.exists(workspace_db):
         try:
             shutil.copy2(workspace_db, local_db)
             for fname in [".commitmaster_accounts.json", ".session_token", ".admin_session", "config.json"]:
