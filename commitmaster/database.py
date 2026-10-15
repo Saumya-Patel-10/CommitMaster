@@ -53,9 +53,10 @@ def get_active_session_token() -> str:
         except Exception:
             pass
 
-    # Check .admin_session
+    # Check .admin_session (private admin edition only)
+    from commitmaster import edition as _edition
     admin_tok_file = paths.get_admin_token_path()
-    if os.path.exists(admin_tok_file):
+    if _edition.is_admin_edition() and os.path.exists(admin_tok_file):
         try:
             import json
             with open(admin_tok_file, "r", encoding="utf-8") as f:
@@ -709,19 +710,44 @@ def _clean_user_dict(user: Optional[Dict]) -> Optional[Dict]:
 
 
 
-DEFAULT_ADMIN_USERNAME = "saumya.patel@Admin_#"
-
-
 def get_admin_username() -> str:
-    """Return the designated admin username, defaults to 'saumya.patel@Admin_#'."""
-    return get_system_setting("admin_username", DEFAULT_ADMIN_USERNAME) or DEFAULT_ADMIN_USERNAME
+    """
+    Return the designated administrator username, or "" if none is configured.
+
+    No administrator identity is hard-coded. It is resolved ONLY in the private
+    admin edition, from (in order): the 'admin_username' system setting, the
+    COMMITMASTER_ADMIN_USERNAME / ADMIN_USERNAME environment variable, or the
+    account that already holds the admin role in the local database.
+    The public user edition always returns "" (nobody is an administrator).
+    """
+    from commitmaster import edition
+    if not edition.is_admin_edition():
+        return ""
+    configured = (get_system_setting("admin_username", "") or "").strip()
+    if configured:
+        return configured
+    env_name = (os.getenv("COMMITMASTER_ADMIN_USERNAME") or os.getenv("ADMIN_USERNAME") or "").strip()
+    if env_name:
+        return env_name
+    try:
+        row = get_conn().execute(
+            "SELECT username FROM users WHERE role = 'admin' ORDER BY id LIMIT 1"
+        ).fetchone()
+        if row and row["username"]:
+            return row["username"]
+    except Exception:
+        pass
+    return ""
 
 
 def is_admin_username(username: Optional[str]) -> bool:
     """Check if the provided username is the designated admin username."""
     if not username:
         return False
-    return username.strip().lower() == get_admin_username().strip().lower()
+    admin_name = get_admin_username().strip().lower()
+    if not admin_name:
+        return False
+    return username.strip().lower() == admin_name
 
 
 def set_admin_username(new_username: str, admin_user_id: Optional[int] = None) -> Tuple[bool, str]:
@@ -1038,8 +1064,18 @@ def _get_admin_initial_password() -> str:
 
 
 def _ensure_default_admin(conn: sqlite3.Connection) -> None:
-    """Ensure there is one and only one admin account matching get_admin_username()."""
+    """
+    Admin edition only: keep exactly one admin account matching get_admin_username().
+    The public user edition never creates, promotes or demotes any account.
+    An admin account is only auto-created when the owner explicitly provides
+    ADMIN_USERNAME (+ ADMIN_EMAIL / ADMIN_PASSWORD) via environment variables.
+    """
+    from commitmaster import edition
+    if not edition.is_admin_edition():
+        return
     admin_uname = get_admin_username()
+    if not admin_uname:
+        return
     cur = conn.cursor()
     # Remove any generic admin user
     cur.execute("DELETE FROM users WHERE username = 'admin'")
@@ -1054,7 +1090,10 @@ def _ensure_default_admin(conn: sqlite3.Connection) -> None:
         cur.execute("""
             INSERT INTO users (username, email, full_name, password_hash, role, avatar_color, is_verified)
             VALUES (?, ?, ?, ?, 'admin', '#3fb950', 1)
-        """, (admin_uname, "saumya.a.patel@gmail.com", "Saumya Patel", pw_hash))
+        """, (admin_uname,
+              os.getenv("ADMIN_EMAIL", "").strip() or f"{admin_uname}@local.invalid",
+              os.getenv("ADMIN_FULL_NAME", "").strip() or "Administrator",
+              pw_hash))
         admin_id = cur.lastrowid
         cur.execute("INSERT OR IGNORE INTO user_preferences (user_id) VALUES (?)", (admin_id,))
     else:
@@ -2143,9 +2182,20 @@ def _save_local_session(token: str, user_id: int):
 
 def create_session_token(user_id: int) -> str:
     """Create a session token for a user (for auto-login)."""
+    # Only reuse the active token if it actually belongs to THIS user. Reusing another
+    # user's token would let one account inherit another account's session.
     active_tok = get_active_session_token()
     if active_tok:
-        return active_tok
+        try:
+            owner = get_conn().execute(
+                "SELECT user_id FROM sessions WHERE token = ? AND expires_at > datetime('now')",
+                (active_tok,)
+            ).fetchone()
+            if owner and int(owner["user_id"]) == int(user_id):
+                return active_tok
+        except Exception:
+            pass
+        set_active_session_token("")
 
     url = get_server_url()
     if url:
