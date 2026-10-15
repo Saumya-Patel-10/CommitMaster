@@ -54,8 +54,16 @@ DEFAULTS: Dict[str, Any] = {
     "sensitive_patterns": [".env", ".pem", ".key", "secret", "credential", ".p12", "id_rsa"],
     "github_desktop_path": "",         # auto-detected if empty
     "server_url": "",                  # Central Cloud Server URL (e.g. https://your-server.onrender.com or empty for local)
+    # First-run AI setup wizard state (see commitmaster/ai_setup.py + setup_wizard.py)
+    "setup_completed": False,
+    "ai_setup": {},
     # AI Provider configuration: Bionic/LM Studio, OpenAI, Claude, Gemini, Ollama
     "ai": {
+        "ai_mode": "",                # "" (unset) | "local" | "api" | "both"
+        "fallback_provider": "",      # cloud provider used when local AI is down in "both" mode
+        "local_runtime": "",          # "ollama" | "lmstudio"
+        "local_host": "localhost",
+        "local_port": 0,              # 0 = runtime default (Ollama 11434, LM Studio 1234)
         "provider": "bionic",         # "bionic" | "openai" | "claude" | "gemini" | "ollama"
         "base_url": "http://localhost:1234/v1",
         "model": "",                  # blank = auto-detect or provider default
