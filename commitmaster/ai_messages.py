@@ -707,7 +707,51 @@ def _call_local(cfg: dict, model: str = "", system: str = "", user: str = "", ma
     return _extract_json_object(raw)
 
 
+def _fallback_cfg(cfg: dict) -> Optional[dict]:
+    """
+    'Both' mode (set by the first-run setup): when the local model is the active provider
+    and it is unavailable, retry with the user's configured cloud API provider.
+    Returns a config copy targeting the cloud provider, or None if not applicable.
+    """
+    ai = cfg.get("ai", {}) if isinstance(cfg, dict) else {}
+    if ai.get("ai_mode") != "both":
+        return None
+    if get_active_provider(cfg) not in ("bionic", "ollama"):
+        return None
+    fb = (ai.get("fallback_provider") or "").strip().lower()
+    if fb not in ("openai", "claude", "gemini") or not get_provider_key(cfg, fb):
+        return None
+    new_ai = dict(ai)
+    new_ai["provider"] = fb
+    new_ai["model"] = ""  # use the cloud provider's own default model
+    out = dict(cfg)
+    out["ai"] = new_ai
+    return out
+
+
 def _chat_json(cfg: dict, model: str, system: str, user: str, max_tokens: int) -> dict:
+    try:
+        return _chat_json_primary(cfg, model, system, user, max_tokens)
+    except Exception as exc:
+        fb = _fallback_cfg(cfg)
+        if fb is None:
+            raise
+        log.info("Local AI failed (%s) — falling back to cloud API.", exc)
+        return _chat_json_primary(fb, "", system, user, max_tokens)
+
+
+def _chat_json_array(cfg: dict, model: str, system: str, user: str, max_tokens: int) -> list:
+    try:
+        return _chat_json_array_primary(cfg, model, system, user, max_tokens)
+    except Exception as exc:
+        fb = _fallback_cfg(cfg)
+        if fb is None:
+            raise
+        log.info("Local AI failed (%s) — falling back to cloud API.", exc)
+        return _chat_json_array_primary(fb, "", system, user, max_tokens)
+
+
+def _chat_json_primary(cfg: dict, model: str, system: str, user: str, max_tokens: int) -> dict:
     provider = get_active_provider(cfg)
     timeout = cfg.get("ai", {}).get("timeout_seconds", 60)
     if provider == "openai":
@@ -719,7 +763,7 @@ def _chat_json(cfg: dict, model: str, system: str, user: str, max_tokens: int) -
     return _call_local(cfg, model, system, user, max_tokens, timeout)
 
 
-def _chat_json_array(cfg: dict, model: str, system: str, user: str, max_tokens: int) -> list:
+def _chat_json_array_primary(cfg: dict, model: str, system: str, user: str, max_tokens: int) -> list:
     provider = get_active_provider(cfg)
     timeout = cfg.get("ai", {}).get("timeout_seconds", 60)
     raw = ""
