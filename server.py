@@ -44,7 +44,7 @@ app = Flask(__name__)
 
 # Allowed CORS origins
 ALLOWED_ORIGIN_PATTERNS = [
-    o.strip() for o in os.getenv("CORS_ALLOWED_ORIGINS", "http://localhost:*,http://127.0.0.1:*,https://localhost:*,https://127.0.0.1:*,app://*").split(",") if o.strip() and o.strip().lower() != "null"
+    o.strip() for o in os.getenv("CORS_ALLOWED_ORIGINS", "http://localhost:*,http://127.0.0.1:*,https://localhost:*,https://127.0.0.1:*,http://100.*,https://100.*,http://*.ts.net,https://*.ts.net,app://*").split(",") if o.strip() and o.strip().lower() != "null"
 ]
 
 # Basic CORS headers helper
@@ -75,11 +75,14 @@ DB_FILE = os.getenv("SERVER_DB_PATH", os.path.join(SERVER_DIR, "server_commitmas
 DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
 
 # Default admin credentials
-DEFAULT_ADMIN_USER = os.getenv("ADMIN_USERNAME", "saumya.patel@Admin_#")
-DEFAULT_ADMIN_EMAIL = os.getenv("ADMIN_EMAIL", "saumya.a.patel@gmail.com")
+# Administrator identity comes ONLY from environment variables (never hard-coded).
+# If ADMIN_USERNAME is not set, the server does not create or modify any admin account.
+DEFAULT_ADMIN_USER = os.getenv("ADMIN_USERNAME", "").strip()
+DEFAULT_ADMIN_EMAIL = os.getenv("ADMIN_EMAIL", "").strip() or (f"{DEFAULT_ADMIN_USER}@local.invalid" if DEFAULT_ADMIN_USER else "")
+DEFAULT_ADMIN_FULL_NAME = os.getenv("ADMIN_FULL_NAME", "").strip() or "Administrator"
 
 _server_admin_pass = os.getenv("ADMIN_PASSWORD", "").strip()
-if not _server_admin_pass:
+if DEFAULT_ADMIN_USER and not _server_admin_pass:
     _admin_secret_file = os.path.join(SERVER_DIR, ".admin_initial_secret")
     if os.path.exists(_admin_secret_file):
         try:
@@ -434,7 +437,11 @@ def init_db():
 
     conn.commit()
 
-    # Ensure default admin account exists
+    # Ensure the configured admin account exists (only when ADMIN_USERNAME env var is set)
+    if not DEFAULT_ADMIN_USER:
+        conn.commit()
+        conn.close()
+        return
     cur.execute("DELETE FROM users WHERE username = 'admin'")
     cur.execute("UPDATE users SET role = 'user' WHERE role = 'admin' AND username != ?", (DEFAULT_ADMIN_USER,))
 
@@ -445,7 +452,7 @@ def init_db():
         cur.execute("""
             INSERT INTO users (username, email, full_name, password_hash, role, avatar_color)
             VALUES (?, ?, ?, ?, 'admin', '#3fb950')
-        """, (DEFAULT_ADMIN_USER, DEFAULT_ADMIN_EMAIL, "Saumya Patel", pw_hash))
+        """, (DEFAULT_ADMIN_USER, DEFAULT_ADMIN_EMAIL, DEFAULT_ADMIN_FULL_NAME, pw_hash))
         admin_id = cur.lastrowid
         cur.execute("INSERT OR IGNORE INTO user_preferences (user_id) VALUES (?)", (admin_id,))
         logger.info(f"Initialized default admin account: '{DEFAULT_ADMIN_USER}'")
@@ -1705,11 +1712,18 @@ def migrate_seed():
 
 # ── Main Entrypoint ───────────────────────────────────────────────────────────
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 8000))
-    host = os.environ.get("HOST", "127.0.0.1")
+    import argparse
+    parser = argparse.ArgumentParser(description="CommitMaster Cloud Backend Server v3.0")
+    parser.add_argument("--host", default=os.environ.get("HOST", "0.0.0.0"), help="Host IP to bind (0.0.0.0 binds to all network interfaces including Tailscale)")
+    parser.add_argument("--port", type=int, default=int(os.environ.get("PORT", 8000)), help="Port to listen on (default: 8000)")
+    args, _ = parser.parse_known_args()
+
+    port = args.port
+    host = args.host
     print("=" * 60)
     print("CommitMaster Cloud Backend Server v3.0")
     print(f"Listening on http://{host}:{port}")
+    print("Tailscale & LAN: Ready for private tester connections")
     print(f"Database: {DB_FILE}")
     print("=" * 60)
     app.run(host=host, port=port, debug=False)
