@@ -6,6 +6,7 @@ Build CommitMaster as standalone Windows .exe applications using PyInstaller:
 Can be launched directly or by double-clicking 'Build_All_Packages.bat'.
 """
 import os
+import shutil
 import subprocess
 import sys
 import zipfile
@@ -14,17 +15,39 @@ from typing import Optional
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 
 
+def _stage_public_assets() -> str:
+    """Copy assets for the public build, excluding per-user avatars (private data)."""
+    dest = os.path.join(APP_DIR, "build", "public_assets")
+    if os.path.exists(dest):
+        shutil.rmtree(dest)
+    shutil.copytree(os.path.join(APP_DIR, "assets"), dest,
+                    ignore=shutil.ignore_patterns("avatars"))
+    return dest
+
+
 def build_single(target_script: str, exe_name: str, description: str, icon_file: str = "icon_user.ico", version_file: Optional[str] = None) -> str:
     print(f"\n[{description}] Compiling {exe_name}...")
+    is_admin_build = target_script == "admin_app.py"
+    assets_src = os.path.join(APP_DIR, "assets") if is_admin_build else _stage_public_assets()
     cmd = [
         sys.executable, "-m", "PyInstaller",
         "--clean",
         "--onefile",
         "--noconsole",
         "--name", exe_name,
-        "--add-data", f"{APP_DIR}/commitmaster;commitmaster",
-        "--add-data", f"{APP_DIR}/assets;assets",
-        "--hidden-import", "admin_app",
+        "--add-data", f"{assets_src};assets",
+    ]
+    if is_admin_build:
+        cmd += ["--hidden-import", "admin_app",
+                "--hidden-import", "commitmaster.admin_portal"]
+    else:
+        # The public/Store build must contain NO admin console code at all.
+        cmd += ["--exclude-module", "admin_app",
+                "--exclude-module", "commitmaster.admin_portal"]
+    cmd += [
+        "--hidden-import", "commitmaster.edition",
+        "--hidden-import", "commitmaster.ai_setup",
+        "--hidden-import", "commitmaster.setup_wizard",
         "--hidden-import", "pystray",
         "--hidden-import", "pystray._win32",
         "--hidden-import", "PIL",
@@ -40,7 +63,6 @@ def build_single(target_script: str, exe_name: str, description: str, icon_file:
         "--hidden-import", "plyer.platforms.win.notification",
         "--hidden-import", "commitmaster",
         "--hidden-import", "commitmaster.account_manager",
-        "--hidden-import", "commitmaster.admin_portal",
         "--hidden-import", "commitmaster.ai_messages",
         "--hidden-import", "commitmaster.app_styles",
         "--hidden-import", "commitmaster.avatar_utils",
