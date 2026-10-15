@@ -1,6 +1,6 @@
 """
 Test suite verifying:
-1. One and only one admin account: saumya.patel@Admin_#
+1. One and only one admin account: test.admin@Admin_#
 2. Scroll functionality in AdminPortal and AdminApp
 3. Two distinct logos and Windows taskbar icons for User and Admin apps
 """
@@ -24,18 +24,18 @@ from admin_app import AdminApp
 class TestAdminScrollAndLogos(unittest.TestCase):
 
     def test_01_single_admin_account_enforced(self):
-        """Verify that saumya.patel@Admin_# is the one and only admin account."""
+        """Verify that test.admin@Admin_# is the one and only admin account."""
         db.init_db()
 
         # Check commitmaster.db
-        conn = sqlite3.connect("commitmaster.db")
+        conn = sqlite3.connect(db.DB_PATH)
         cur = conn.cursor()
         cur.execute("SELECT id, username, role FROM users WHERE role = 'admin'")
         admins = cur.fetchall()
         conn.close()
 
         self.assertEqual(len(admins), 1, f"Expected exactly 1 admin, found: {admins}")
-        self.assertEqual(admins[0][1], "saumya.patel@Admin_#")
+        self.assertEqual(admins[0][1], "test.admin@Admin_#")
 
         # Test protection: cannot delete or demote Saumya
         saumya_id = admins[0][0]
@@ -82,7 +82,7 @@ class TestAdminScrollAndLogos(unittest.TestCase):
     def test_03_admin_portal_scroll_works(self):
         """Verify AdminPortal calculates proper scrollregion and can scroll."""
         portal = AdminPortal(
-            admin_user={"id": 1, "username": "saumya.patel@Admin_#", "email": "saumya.a.patel@gmail.com", "role": "admin"},
+            admin_user={"id": 1, "username": "test.admin@Admin_#", "email": "test.admin@example.com", "role": "admin"},
             on_close=lambda: None
         )
         portal.root.withdraw()
@@ -106,8 +106,8 @@ class TestAdminScrollAndLogos(unittest.TestCase):
         """Verify AdminApp calculates proper scrollregion and can scroll."""
         app = AdminApp({
             "id": 1,
-            "username": "saumya.patel@Admin_#",
-            "email": "saumya.a.patel@gmail.com",
+            "username": "test.admin@Admin_#",
+            "email": "test.admin@example.com",
             "role": "admin"
         })
         app.root.withdraw()
