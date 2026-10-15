@@ -128,7 +128,9 @@ class LoginWindow:
         self._tagline.pack(pady=(2, 10))
 
         # ── Saved Accounts quick switcher (if any accounts saved) ───────────
-        self._build_saved_accounts_ui(outer)
+        self._saved_holder = tk.Frame(outer, bg=COLORS["bg_darkest"])
+        self._saved_holder.pack(fill="x")
+        self._build_saved_accounts_ui(self._saved_holder)
 
         # ── Card ──────────────────────────────────────────────────────────────
         card = tk.Frame(outer, bg=COLORS["bg_card"], relief="flat", bd=0,
@@ -321,6 +323,14 @@ class LoginWindow:
         self._srv_cfg_btn.pack(side="left")
         self._srv_cfg_btn.bind("<Button-1>", lambda e: self._open_server_settings_dialog())
 
+        if self.app_type != "admin":
+            tk.Label(srv_f, text=" • ", font=FONTS["caption"], fg=COLORS["border"],
+                     bg=COLORS["bg_darkest"]).pack(side="left")
+            ai_btn = tk.Label(srv_f, text="🤖 AI Setup", font=("Segoe UI", 9, "underline"),
+                              fg=COLORS["info"], bg=COLORS["bg_darkest"], cursor="hand2")
+            ai_btn.pack(side="left")
+            ai_btn.bind("<Button-1>", lambda e: self._open_ai_setup())
+
         self._update_server_badge()
 
         # Set initial mode
@@ -417,8 +427,12 @@ class LoginWindow:
 
     def _build_saved_accounts_ui(self, parent):
         """Display quick-switch buttons for accounts already saved on this PC."""
+        for child in parent.winfo_children():
+            child.destroy()
+
         accounts = account_manager.get_saved_accounts()
         if not accounts:
+            self._update_scrollregion()
             return
 
         saved_box = tk.Frame(parent, bg=COLORS["bg_card"], padx=14, pady=10,
@@ -427,8 +441,12 @@ class LoginWindow:
 
         hdr_row = tk.Frame(saved_box, bg=COLORS["bg_card"])
         hdr_row.pack(fill="x", pady=(0, 6))
-        tk.Label(hdr_row, text="👥 Switch / Sign in to Saved Account:", font=FONTS["label_bold"],
+        tk.Label(hdr_row, text="👥 Quick Sign In (this device):", font=FONTS["label_bold"],
                  fg=COLORS["text_secondary"], bg=COLORS["bg_card"]).pack(side="left")
+        clear_all = tk.Label(hdr_row, text="Remove all", font=("Segoe UI", 9, "underline"),
+                             fg=COLORS["danger"], bg=COLORS["bg_card"], cursor="hand2")
+        clear_all.pack(side="right")
+        clear_all.bind("<Button-1>", lambda e: self._remove_all_saved_accounts())
 
         for acc in accounts[:4]:
             row = tk.Frame(saved_box, bg=COLORS["bg_card"], pady=3)
@@ -445,16 +463,65 @@ class LoginWindow:
                      fg=COLORS["text_primary"], bg=COLORS["bg_card"]).pack(side="left")
 
             def _do_quick_login(target=acc):
+                # Only sign in instantly if the stored session is still valid;
+                # otherwise ask for the password.
+                token = target.get("token", "")
+                valid = None
+                try:
+                    valid = db.validate_session_token(token) if token else None
+                except Exception:
+                    valid = None
+                if not valid or valid.get("id") != target.get("id"):
+                    self._set_mode("login")
+                    self._user_entry.delete(0, "end")
+                    self._user_entry.insert(0, target.get("username", ""))
+                    self._pass_entry.delete(0, "end")
+                    self._pass_entry.focus()
+                    self._err_label.config(text="Session expired. Please enter your password.",
+                                           fg=COLORS["error"])
+                    return
                 switched = account_manager.switch_account(target["id"])
                 if switched:
-                    self.root.destroy()
+                    self.authenticated_user = switched
+                    self._on_close()
                     self.on_success(switched)
+
+            rm = tk.Button(row, text="✕", font=("Segoe UI", 9),
+                           bg=COLORS["bg_card"], fg=COLORS["text_muted"],
+                           activebackground=COLORS["bg_card_hover"], activeforeground=COLORS["danger"],
+                           relief="flat", bd=0, cursor="hand2", padx=4, pady=0,
+                           command=lambda t=acc: self._remove_saved_account(t))
+            rm.pack(side="right", padx=(4, 0))
 
             btn = tk.Button(row, text="Sign In", font=("Segoe UI", 8, "bold"),
                             bg=COLORS["accent"], fg="white", relief="flat", bd=0,
                             cursor="hand2", padx=8, pady=1, command=_do_quick_login)
             btn.pack(side="right")
             self._add_hover(btn, COLORS["accent_hover"], COLORS["accent"])
+
+    def _remove_saved_account(self, acc: dict):
+        from tkinter import messagebox
+        name = acc.get("username") or "this account"
+        if messagebox.askyesno("Remove saved account",
+                               f"Remove '{name}' from quick sign-in on this device?\n\n"
+                               "Your account is not deleted; you can still sign in with your password.",
+                               parent=self.root):
+            account_manager.remove_saved_account(acc["id"])
+            self._build_saved_accounts_ui(self._saved_holder)
+
+    def _remove_all_saved_accounts(self):
+        from tkinter import messagebox
+        if messagebox.askyesno("Remove all saved accounts",
+                               "Remove ALL accounts from quick sign-in on this device?\n\n"
+                               "Your accounts are not deleted; you can still sign in with your password.",
+                               parent=self.root):
+            account_manager.remove_all_saved_accounts()
+            self._build_saved_accounts_ui(self._saved_holder)
+
+    def _open_ai_setup(self):
+        """Re-run the AI setup wizard (Local AI / API key / Both)."""
+        from commitmaster.setup_wizard import SetupWizard
+        SetupWizard(parent=self.root).run()
 
     def _open_github_auth(self):
         """Open GitHub authentication and account creation dialog."""
