@@ -348,6 +348,11 @@ def create_desktop_shortcut(target: str = "both") -> tuple[bool, str]:
     if sys.platform != "win32":
         return False, "Shortcuts can only be created on Windows."
 
+    # The public user edition never creates an administrator shortcut.
+    from commitmaster import edition as _edition
+    if not _edition.is_admin_edition():
+        target = "user"
+
     import subprocess
     app_dir = APP_DIR.replace("\\", "/")
     user_icon = os.path.join(APP_DIR, "icon_user.ico").replace("\\", "/")
