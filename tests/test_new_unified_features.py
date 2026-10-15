@@ -72,7 +72,7 @@ class TestUnifiedFeatures(unittest.TestCase):
         Verify that an Admin can create another account (even with the same email),
         but that other account is strictly a 'user' role with NO admin access.
         """
-        admin = db.get_user_by_username_or_email("saumya.patel@Admin_#")
+        admin = db.get_user_by_username_or_email("test.admin@Admin_#")
         self.assertIsNotNone(admin)
         self.assertEqual(admin["role"], "admin")
         admin_email = admin.get("email") or "saumya.patel@admin.com"
@@ -101,7 +101,7 @@ class TestUnifiedFeatures(unittest.TestCase):
         auto-recovery on login within 30 days, and rejection of admin deletion.
         """
         # Primary admin account cannot be soft-deleted
-        admin = db.get_user_by_username_or_email("saumya.patel@Admin_#")
+        admin = db.get_user_by_username_or_email("test.admin@Admin_#")
         ok_admin_del, msg = db.soft_delete_user(admin["id"])
         self.assertFalse(ok_admin_del)
         self.assertIn("cannot be deleted", msg)
@@ -230,13 +230,13 @@ class TestUnifiedFeatures(unittest.TestCase):
     # 6. Exclusive Admin Username Routing Tests
     # ──────────────────────────────────────────────────────────────────────────
     def test_default_admin_username_exclusivity(self):
-        """Test that only 'saumya.patel@Admin_#' is recognized as admin by default."""
-        self.assertTrue(db.is_admin_username("saumya.patel@Admin_#"))
+        """Test that only 'test.admin@Admin_#' is recognized as admin by default."""
+        self.assertTrue(db.is_admin_username("test.admin@Admin_#"))
         self.assertFalse(db.is_admin_username("other_user"))
         self.assertFalse(db.is_admin_username("admin"))
 
         # Check default admin user exists in database
-        default_admin = db.get_user_by_username_or_email("saumya.patel@Admin_#")
+        default_admin = db.get_user_by_username_or_email("test.admin@Admin_#")
         self.assertIsNotNone(default_admin)
         self.assertEqual(default_admin["role"], "admin")
 
@@ -245,7 +245,7 @@ class TestUnifiedFeatures(unittest.TestCase):
         Test that changing admin username in settings transfers admin exclusivity
         and locks the old username out of the Admin Portal.
         """
-        default_admin = db.get_user_by_username_or_email("saumya.patel@Admin_#")
+        default_admin = db.get_user_by_username_or_email("test.admin@Admin_#")
         admin_id = default_admin["id"]
 
         new_admin = "saumya.lead@custom_admin"
@@ -254,7 +254,7 @@ class TestUnifiedFeatures(unittest.TestCase):
 
         # The new username must now be the ONLY admin username
         self.assertTrue(db.is_admin_username(new_admin))
-        self.assertFalse(db.is_admin_username("saumya.patel@Admin_#"))
+        self.assertFalse(db.is_admin_username("test.admin@Admin_#"))
 
         # Verify DB records
         updated_admin = db.get_user(admin_id)
