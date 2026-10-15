@@ -406,7 +406,8 @@ class ReminderService(threading.Thread):
         """Instantly show a test notification so the user can verify its appearance."""
         dirty_repos = self._scan_user_dirty_repos()
         if not dirty_repos:
-            dirty_repos = [r"c:\Data\Saumya\Projects\CommitMaster"]
+            import os as _os
+            dirty_repos = [_os.path.join(_os.path.expanduser("~"), "SampleProject")]
 
         msg = self._format_dirty_repo_msg(dirty_repos)
         show_toast(
