@@ -7,11 +7,13 @@ services:
     envVars:
       - key: PYTHON_VERSION
         value: 3.11.9
+      # Administrator identity is NEVER stored in source control.
+      # Enter these values privately in the Render dashboard.
       - key: ADMIN_USERNAME
-        value: saumya.patel
-      - key: ADMIN_PASSWORD
-        generateValue: true
+        sync: false
       - key: ADMIN_EMAIL
-        value: saumya.a.patel@gmail.com
+        sync: false
+      - key: ADMIN_PASSWORD
+        sync: false
       - key: ADMIN_MIGRATION_SECRET
-        value: commitmaster-secret-seed-2026
+        sync: false
