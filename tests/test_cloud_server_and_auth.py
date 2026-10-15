@@ -21,6 +21,7 @@ class TestCloudServerAndAuth(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
+        db.init_db()
         # Start server in background thread on a test port
         cls.test_port = 8765
         cls.server_url = f"http://127.0.0.1:{cls.test_port}"
@@ -38,10 +39,11 @@ class TestCloudServerAndAuth(unittest.TestCase):
         self.assertIsNone(conflict)
 
         # Existing user
-        conflict_u = db.check_user_exists("saumya.patel@Admin_#", "other@example.com")
+        admin_uname = db.get_admin_username()
+        conflict_u = db.check_user_exists(admin_uname, "other@example.com")
         self.assertEqual(conflict_u, "username")
 
-        conflict_e = db.check_user_exists("other_name", "saumya.a.patel@gmail.com")
+        conflict_e = db.check_user_exists("other_name", "test.admin@example.com")
         self.assertEqual(conflict_e, "email")
 
     def test_02_server_health(self):
