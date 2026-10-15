@@ -1699,10 +1699,10 @@ class _UserDialog:
             if key == "username" and is_edit:
                 e.config(state="disabled")
 
-        # Role (strictly locked: only saumya.patel@Admin_# is admin)
+        # Role (strictly locked: only the designated administrator is admin)
         rf = tk.Frame(pad, bg=COLORS["bg_dark"])
         rf.pack(fill="x", pady=(0, 10))
-        is_saumya = is_edit and self.user.get("username") == "saumya.patel@Admin_#"
+        is_saumya = is_edit and db.is_admin_username(self.user.get("username"))
         if is_saumya:
             self._role_var = tk.StringVar(value="admin")
             tk.Label(rf, text="Role: Administrator", font=FONTS["label_bold"],
@@ -1713,7 +1713,7 @@ class _UserDialog:
             self._role_var = tk.StringVar(value="user")
             tk.Label(rf, text="Role: Standard User", font=FONTS["label_bold"],
                      fg=COLORS["accent"], bg=COLORS["bg_dark"]).pack(anchor="w")
-            tk.Label(rf, text="Account role locked to User (only saumya.patel@Admin_# holds Admin rights)",
+            tk.Label(rf, text="Account role locked to User (only the primary administrator holds Admin rights)",
                      font=FONTS["caption"], fg=COLORS["text_muted"], bg=COLORS["bg_dark"]).pack(anchor="w")
 
         # Buttons
