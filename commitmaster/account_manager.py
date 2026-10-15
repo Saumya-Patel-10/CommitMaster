@@ -98,7 +98,8 @@ def get_default_account() -> Optional[Dict[str, Any]]:
       1. Explicitly active account (active_user_id).
       2. Account marked as is_default: True.
       3. First saved account in local accounts list.
-      4. Database designated admin account (DEFAULT_ADMIN_USERNAME).
+    There is deliberately NO fallback to any administrator/database account:
+    a fresh install must always prompt for sign in or account creation.
     """
     active = get_active_account()
     if active:
@@ -112,14 +113,6 @@ def get_default_account() -> Optional[Dict[str, Any]]:
 
     if accounts:
         return accounts[0]
-
-    try:
-        admin_uname = db.get_admin_username()
-        db_user = db.get_user_by_username_or_email(admin_uname)
-        if db_user:
-            return dict(db_user)
-    except Exception:
-        pass
 
     return None
 
@@ -223,12 +216,14 @@ def save_account(*args, **kwargs) -> None:
                 json.dump({"token": tok}, f)
         except Exception:
             pass
-        try:
-            admin_tok = paths.get_admin_token_path()
-            with open(admin_tok, "w", encoding="utf-8") as f:
-                json.dump({"token": tok}, f)
-        except Exception:
-            pass
+        from commitmaster import edition
+        if edition.is_admin_edition():
+            try:
+                admin_tok = paths.get_admin_token_path()
+                with open(admin_tok, "w", encoding="utf-8") as f:
+                    json.dump({"token": tok}, f)
+            except Exception:
+                pass
         db.set_active_session_token(tok)
     log.info("Saved account %s (id=%s) as active.", acc_entry.get("username"), str(uid))
 
@@ -236,17 +231,41 @@ def save_account(*args, **kwargs) -> None:
 def remove_saved_account(user_id_or_username: Any) -> None:
     """Remove a saved account from the device by ID or username."""
     data = _read_data()
+    was_active = False
     if isinstance(user_id_or_username, int):
         accounts = [a for a in data.get("accounts", []) if a["id"] != user_id_or_username]
-        removed_id = user_id_or_username
     else:
         accounts = [a for a in data.get("accounts", []) if a.get("username", "").lower() != str(user_id_or_username).lower()]
-        removed_id = None
     data["accounts"] = accounts
-    if data.get("active_user_id") == removed_id or (removed_id is None and not any(a["id"] == data.get("active_user_id") for a in accounts)):
-        data["active_user_id"] = accounts[0]["id"] if accounts else None
+    # If the active account was removed, do NOT silently activate another one.
+    if not any(a["id"] == data.get("active_user_id") for a in accounts):
+        was_active = data.get("active_user_id") is not None
+        data["active_user_id"] = None
     _write_data(data)
+    if was_active:
+        _wipe_session_files()
     log.info("Removed account %s from saved accounts.", str(user_id_or_username))
+
+
+def _wipe_session_files() -> None:
+    """Delete persisted session token files so nothing auto-signs-in."""
+    for path in (_TOKEN_FILE, paths.get_admin_token_path()):
+        try:
+            if os.path.exists(path):
+                os.remove(path)
+        except Exception:
+            pass
+    try:
+        db.set_active_session_token("")
+    except Exception:
+        pass
+
+
+def remove_all_saved_accounts() -> None:
+    """Forget every saved account (quick sign-in entry) on this device."""
+    _write_data({"active_user_id": None, "accounts": []})
+    _wipe_session_files()
+    log.info("Removed all saved accounts from this device.")
 
 
 def switch_account(user_id_or_username: Any) -> Optional[Dict[str, Any]]:
@@ -290,11 +309,7 @@ def clear_active_account() -> None:
     data = _read_data()
     data["active_user_id"] = None
     _write_data(data)
-    try:
-        if os.path.exists(_TOKEN_FILE):
-            os.remove(_TOKEN_FILE)
-    except Exception:
-        pass
+    _wipe_session_files()
 
 
 # ── Interactive Account Switcher Dialog ───────────────────────────────────────
