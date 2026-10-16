@@ -40,15 +40,23 @@ class SetupWizard:
         self.root = tk.Toplevel(parent) if parent is not None else tk.Tk()
         self.root.title("CommitMaster — AI Setup")
         self.root.configure(bg=COLORS["bg_darkest"])
-        self.root.resizable(False, False)
-        w, h = 600, 640
+        self.root.resizable(True, True)
+        self.root.minsize(620, 580)
+        self.root.option_add("*Button.cursor", "hand2")
+        self.root.option_add("*Radiobutton.cursor", "hand2")
+        self.root.option_add("*Entry.cursor", "xterm")
+
+        w, h = 680, 720
         sw, sh = self.root.winfo_screenwidth(), self.root.winfo_screenheight()
-        h = min(h, sh - 80)
+        h = min(h, max(580, sh - 60))
         self.root.geometry(f"{w}x{h}+{max(0, (sw - w) // 2)}+{max(0, (sh - h) // 2)}")
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
         if parent is not None:
             self.root.transient(parent)
             self.root.grab_set()
+
+        from commitmaster import windows_integration
+        windows_integration.apply_windows_theme(self.root, "CommitMaster — AI Setup", app_type="user")
 
         # Wizard state
         self.mode = tk.StringVar(value="local")
@@ -65,8 +73,46 @@ class SetupWizard:
         self._result: Dict = {}
         self._page = ""
 
-        self._container = tk.Frame(self.root, bg=COLORS["bg_darkest"], padx=28, pady=22)
-        self._container.pack(fill="both", expand=True)
+        # 1. Pinned Footer Bar (Packed FIRST with side="bottom" so it CAN NEVER shrink or get pushed off)
+        self._footer_bar = tk.Frame(self.root, bg=COLORS["bg_card"], padx=24, pady=16,
+                                    highlightthickness=1, highlightbackground=COLORS["border"])
+        self._footer_bar.pack(side="bottom", fill="x")
+
+        # 2. Scrollable Content Area for any screen size / DPI scaling
+        self._outer = tk.Frame(self.root, bg=COLORS["bg_darkest"])
+        self._outer.pack(side="top", fill="both", expand=True)
+
+        self._canvas = tk.Canvas(self._outer, bg=COLORS["bg_darkest"], highlightthickness=0)
+        self._sb = tk.Scrollbar(self._outer, orient="vertical", command=self._canvas.yview)
+        self._canvas.configure(yscrollcommand=self._sb.set)
+
+        self._canvas.pack(side="left", fill="both", expand=True)
+        self._container = tk.Frame(self._canvas, bg=COLORS["bg_darkest"], padx=28, pady=22)
+        self._canvas_win = self._canvas.create_window((0, 0), window=self._container, anchor="nw")
+
+        def _on_cont_configure(e=None):
+            bbox = self._canvas.bbox("all")
+            if bbox:
+                self._canvas.configure(scrollregion=bbox)
+                if (bbox[3] - bbox[1]) > self._canvas.winfo_height() and self._canvas.winfo_height() > 50:
+                    self._sb.pack(side="right", fill="y")
+                else:
+                    self._sb.pack_forget()
+
+        def _on_canvas_configure(e):
+            self._canvas.itemconfig(self._canvas_win, width=e.width)
+
+        self._container.bind("<Configure>", _on_cont_configure)
+        self._canvas.bind("<Configure>", _on_canvas_configure)
+
+        def _on_mw(e):
+            try:
+                self._canvas.yview_scroll(int(-e.delta / 120) * 2, "units")
+            except Exception:
+                pass
+        self._canvas.bind_all("<MouseWheel>", _on_mw)
+
+        self._err = None
         self._show("mode")
 
     # ── Navigation ────────────────────────────────────────────────────────────
@@ -95,11 +141,15 @@ class SetupWizard:
     def _clear(self):
         for c in self._container.winfo_children():
             c.destroy()
+        for c in self._footer_bar.winfo_children():
+            c.destroy()
 
     def _show(self, page: str):
         self._page = page
         self._clear()
         getattr(self, f"_page_{page}")()
+        self.root.update_idletasks()
+        self._canvas.yview_moveto(0)
 
     # ── Shared widgets ────────────────────────────────────────────────────────
 
@@ -110,28 +160,40 @@ class SetupWizard:
         tk.Label(self._container, text=title, font=FONTS["heading_md"],
                  fg=COLORS["text_primary"], bg=COLORS["bg_darkest"]).pack(anchor="w", pady=(2, 2))
         tk.Label(self._container, text=subtitle, font=FONTS["body_sm"], fg=COLORS["text_secondary"],
-                 bg=COLORS["bg_darkest"], wraplength=540, justify="left").pack(anchor="w", pady=(0, 14))
+                 bg=COLORS["bg_darkest"], wraplength=580, justify="left").pack(anchor="w", pady=(0, 14))
 
     def _footer(self, next_text="Next  ›", back=True, skip=False, next_cmd=None):
-        bar = tk.Frame(self._container, bg=COLORS["bg_darkest"])
-        bar.pack(side="bottom", fill="x", pady=(14, 0))
-        self._next_btn = tk.Button(bar, text=next_text, font=FONTS["heading_sm"], bg=COLORS["accent"],
+        for c in self._footer_bar.winfo_children():
+            c.destroy()
+
+        top_row = tk.Frame(self._footer_bar, bg=COLORS["bg_card"])
+        top_row.pack(fill="x", pady=(0, 4))
+        self._err = tk.Label(top_row, text="", font=FONTS["body_sm"], fg=COLORS["error"],
+                             bg=COLORS["bg_card"], wraplength=580, justify="left")
+        self._err.pack(anchor="w")
+
+        btn_row = tk.Frame(self._footer_bar, bg=COLORS["bg_card"])
+        btn_row.pack(fill="x")
+
+        # Next / Confirm button (Prominent, spacious, never squashed)
+        self._next_btn = tk.Button(btn_row, text=next_text, font=FONTS["heading_sm"], bg=COLORS["accent"],
                                    fg="#ffffff", activebackground=COLORS["accent_hover"],
                                    activeforeground="#ffffff", relief="flat", bd=0, cursor="hand2",
-                                   padx=18, pady=7, command=next_cmd or self._next)
+                                   padx=22, pady=9, command=next_cmd or self._next)
         self._next_btn.pack(side="right")
+
+        # Back button (Prominent, spacious, never squashed)
         if back:
-            tk.Button(bar, text="‹  Back", font=FONTS["body_sm"], bg=COLORS["bg_card"],
-                      fg=COLORS["text_primary"], relief="flat", bd=0, cursor="hand2",
-                      padx=14, pady=7, command=self._back).pack(side="right", padx=(0, 8))
+            tk.Button(btn_row, text="‹  Back", font=FONTS["label_bold"], bg=COLORS["bg_medium"],
+                      fg=COLORS["text_primary"], activebackground=COLORS["bg_card_hover"],
+                      activeforeground=COLORS["text_primary"], relief="flat", bd=0, cursor="hand2",
+                      padx=18, pady=9, command=self._back).pack(side="right", padx=(0, 10))
+
         if skip:
-            lbl = tk.Label(bar, text="Skip for now", font=("Segoe UI", 9, "underline"),
-                           fg=COLORS["text_muted"], bg=COLORS["bg_darkest"], cursor="hand2")
+            lbl = tk.Label(btn_row, text="Skip for now", font=("Segoe UI", 9, "underline"),
+                           fg=COLORS["text_muted"], bg=COLORS["bg_card"], cursor="hand2")
             lbl.pack(side="left")
             lbl.bind("<Button-1>", lambda e: self._skip())
-        self._err = tk.Label(self._container, text="", font=FONTS["body_sm"], fg=COLORS["error"],
-                             bg=COLORS["bg_darkest"], wraplength=540, justify="left")
-        self._err.pack(side="bottom", anchor="w")
 
     def _option_card(self, parent, variable, value, title, desc, badge: str = "", state="normal"):
         card = tk.Frame(parent, bg=COLORS["bg_card"], highlightthickness=1,
