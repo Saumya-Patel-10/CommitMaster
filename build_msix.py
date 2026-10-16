@@ -224,10 +224,113 @@ def build_msix_package():
     print("\n" + "=" * 65)
     print(f"[SUCCESS] MSIX package compiled successfully!")
     print(f"Location: {OUTPUT_MSIX}")
+
+    # 6. Digitally Sign MSIX for local sideloading / testing
+    identity = load_store_identity()
+    publisher_dn = identity.get("publisher_name", "CN=7522A476-A1F1-4D1A-80FA-BEFE0A4BF5F8")
+    sign_msix_package(OUTPUT_MSIX, publisher_dn)
+
     print("=" * 65)
-    print("Ready for upload to Microsoft Partner Center Store submission.")
+    print("Ready for upload to Microsoft Partner Center Store submission,")
+    print("OR direct installation via Install_Test_Certificate.bat!")
     return True
+
+
+TEST_CERT_PFX = os.path.join(DIST_DIR, "CommitMaster-TestCert.pfx")
+TEST_CERT_CER = os.path.join(DIST_DIR, "CommitMaster-TestCert.cer")
+TEST_CERT_PWD = "CommitMaster2026!"
+
+
+def ensure_test_certificate(publisher_dn: str) -> bool:
+    """Ensure a matching self-signed code-signing certificate exists for local testing/sideloading."""
+    os.makedirs(DIST_DIR, exist_ok=True)
+    signtool = find_windows_kit_tool("signtool.exe")
+
+    # If cert exists and signtool can sign with it, keep it
+    if os.path.exists(TEST_CERT_PFX) and signtool:
+        test_cmd = [signtool, "verify", "/pa", OUTPUT_MSIX]
+
+    # Generate fresh certificate via temporary PowerShell script file
+    ps_file = os.path.join(APP_DIR, "_gen_cert.ps1")
+    escaped_pfx = TEST_CERT_PFX.replace("\\", "\\\\")
+    escaped_cer = TEST_CERT_CER.replace("\\", "\\\\")
+    script = f"""$subject = '{publisher_dn}'
+$pfxPath = '{escaped_pfx}'
+$cerPath = '{escaped_cer}'
+$pwd = ConvertTo-SecureString -String '{TEST_CERT_PWD}' -Force -AsPlainText
+
+$cert = New-SelfSignedCertificate -Type Custom -Subject $subject `
+    -KeyUsage DigitalSignature `
+    -FriendlyName 'CommitMaster Development Certificate' `
+    -CertStoreLocation 'Cert:\\CurrentUser\\My' `
+    -TextExtension @('2.5.29.37={{text}}1.3.6.1.5.5.7.3.3')
+
+Export-PfxCertificate -Cert $cert -FilePath $pfxPath -Password $pwd -Force | Out-Null
+Export-Certificate -Cert $cert -FilePath $cerPath -Force | Out-Null
+"""
+    try:
+        with open(ps_file, "w", encoding="utf-8") as f:
+            f.write(script)
+        res = subprocess.run(
+            ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", ps_file],
+            capture_output=True,
+            text=True,
+        )
+        if os.path.exists(ps_file):
+            try:
+                os.remove(ps_file)
+            except Exception:
+                pass
+        if res.returncode == 0 and os.path.exists(TEST_CERT_PFX) and os.path.exists(TEST_CERT_CER):
+            print(f"[CERT] Development Code Signing Certificate active: {TEST_CERT_PFX}")
+            return True
+        else:
+            print(f"[WARN] Failed to generate test cert via PowerShell: {res.stderr}")
+            return False
+    except Exception as e:
+        if os.path.exists(ps_file):
+            try:
+                os.remove(ps_file)
+            except Exception:
+                pass
+        print(f"[WARN] Error creating certificate: {e}")
+        return False
+
+
+def sign_msix_package(msix_path: str, publisher_dn: str) -> bool:
+    """Digitally sign MSIX package for local testing and sideloading."""
+    signtool = find_windows_kit_tool("signtool.exe")
+    if not signtool:
+        print("[WARN] 'signtool.exe' not found. MSIX remains unsigned (still 100% valid for Microsoft Store).")
+        return False
+
+    ensure_test_certificate(publisher_dn)
+    if not os.path.exists(TEST_CERT_PFX):
+        print("[WARN] Test PFX certificate not available for signing.")
+        return False
+
+    print(f"[SIGN] Signing MSIX with {TEST_CERT_PFX}...")
+    cmd = [
+        signtool,
+        "sign",
+        "/fd",
+        "SHA256",
+        "/a",
+        "/f",
+        TEST_CERT_PFX,
+        "/p",
+        TEST_CERT_PWD,
+        msix_path,
+    ]
+    res = subprocess.run(cmd, capture_output=True, text=True)
+    if res.returncode == 0:
+        print("[SUCCESS] CommitMaster.msix is digitally signed and ready for sideloading!")
+        return True
+    else:
+        print(f"[WARN] signtool sign returned warning/error: {res.stderr or res.stdout}")
+        return False
 
 
 if __name__ == "__main__":
     build_msix_package()
+
