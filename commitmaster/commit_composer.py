@@ -283,12 +283,35 @@ class CommitComposer(tk.Frame):
                      font=FONTS["body_sm"], fg=COLORS["text_muted"], bg=COLORS["bg_card"],
                      pady=18).pack(anchor="w")
         elif self._mode() == "individual":
+            max_show = getattr(self, "_max_display_count", 6)
+            display_sel = sel[:max_show]
             tk.Label(self.body, text=f"{len(sel)} file{'s' if len(sel) != 1 else ''} selected - each gets its own "
                                      "commit with its own Summary and Description.",
                      font=FONTS["caption"], fg=COLORS["text_secondary"], bg=COLORS["bg_card"]).pack(anchor="w",
                                                                                                     pady=(0, 6))
-            for path in sel:
+            for path in display_sel:
                 self._file_block(path)
+
+            if len(sel) > max_show:
+                rem_row = tk.Frame(self.body, bg=COLORS["bg_card"], pady=6)
+                rem_row.pack(fill="x")
+                tk.Label(rem_row, text=f"+ {len(sel) - max_show} more files selected.",
+                         font=FONTS["caption"], fg=COLORS["text_muted"], bg=COLORS["bg_card"]).pack(side="left", padx=(0, 10))
+
+                def _show_more():
+                    self._max_display_count = max_show + 10
+                    self.render_body(harvest=True)
+
+                def _show_all():
+                    self._max_display_count = len(sel)
+                    self.render_body(harvest=True)
+
+                tk.Button(rem_row, text="Show next 10 ▾", font=FONTS["caption"],
+                          fg=COLORS["accent"], bg=COLORS["bg_medium"], relief="flat", bd=0,
+                          cursor="hand2", padx=8, pady=3, command=_show_more).pack(side="left", padx=(0, 6))
+                tk.Button(rem_row, text=f"Show all ({len(sel)}) ▾", font=FONTS["caption"],
+                          fg=COLORS["text_primary"], bg=COLORS["bg_medium"], relief="flat", bd=0,
+                          cursor="hand2", padx=8, pady=3, command=_show_all).pack(side="left")
         else:
             tk.Label(self.body, text=f"All {len(sel)} selected file{'s' if len(sel) != 1 else ''} go into one commit.",
                      font=FONTS["caption"], fg=COLORS["text_secondary"], bg=COLORS["bg_card"]).pack(anchor="w",
