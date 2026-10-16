@@ -199,9 +199,9 @@ class AdminApp:
 
     def _on_sync_finished(self):
         try:
-            # Refresh if user is on an activity-dependent page
+            # Refresh if user is on an activity-dependent page (exclude overview to preserve scanner state)
             active = getattr(self, "_active_key", "")
-            if active in ("overview", "commits", "watched_repos", "activity", "charts"):
+            if active in ("commits", "watched_repos", "activity", "charts"):
                 self._nav_to(active, record=False)
         except Exception:
             pass
@@ -211,12 +211,19 @@ class AdminApp:
     def _setup_window(self):
         name = self.user.get("full_name") or self.user["username"]
         self.root.title(f"CommitMaster — Admin Workspace  ({name})")
+        self.root.resizable(True, True)
         self.root.minsize(1000, 640)
         self.root.configure(bg=COLORS["bg_darkest"])
+        self.root.option_add("*Button.cursor", "hand2")
+        self.root.option_add("*Checkbutton.cursor", "hand2")
+        self.root.option_add("*Radiobutton.cursor", "hand2")
+        self.root.option_add("*Entry.cursor", "xterm")
+        self.root.option_add("*Text.cursor", "xterm")
         self.root.update_idletasks()
-        w, h = 1200, 760
         sw = self.root.winfo_screenwidth()
         sh = self.root.winfo_screenheight()
+        w = min(1280, max(1000, sw - 60))
+        h = min(800, max(640, sh - 80))
         self.root.geometry(f"{w}x{h}+{(sw - w)//2}+{(sh - h)//2}")
         from commitmaster import windows_integration
         windows_integration.apply_windows_theme(self.root, f"CommitMaster Admin — Workspace  ({name})", app_type="admin")
@@ -272,8 +279,8 @@ class AdminApp:
     # ── Layout skeleton ───────────────────────────────────────────────────────
 
     def _build_layout(self):
-        # Sidebar (wider to fit two sections)
-        self._sidebar = tk.Frame(self.root, bg=COLORS["bg_sidebar"], width=240)
+        # Sidebar (wider to fit two sections and prevent header truncation)
+        self._sidebar = tk.Frame(self.root, bg=COLORS["bg_sidebar"], width=260)
         self._sidebar.pack(side="left", fill="y")
         self._sidebar.pack_propagate(False)
 
@@ -350,7 +357,7 @@ class AdminApp:
         pat = get_active_customization().get("pattern", "dot_matrix")
         try:
             sb_banner = pattern_utils.generate_sidebar_header_banner(
-                240, 72, COLORS["bg_sidebar"], COLORS["accent"], pat
+                260, 72, COLORS["bg_sidebar"], COLORS["accent"], pat
             )
             self._sb_banner_img = sb_banner
             sb_bg_lbl = tk.Label(logo_f, image=sb_banner, bg=COLORS["bg_sidebar"], bd=0)
@@ -362,13 +369,13 @@ class AdminApp:
         logo_img = windows_integration.get_logo_photo(26, app_type="admin")
         if logo_img:
             self._sidebar_logo_img = logo_img
-            tk.Label(logo_f, image=logo_img, bg=COLORS["bg_sidebar"]).pack(side="left", padx=(14, 6), pady=18)
-            tk.Label(logo_f, text="CommitMaster Admin", font=FONTS["heading_sm"],
+            tk.Label(logo_f, image=logo_img, bg=COLORS["bg_sidebar"]).pack(side="left", padx=(12, 6), pady=18)
+            tk.Label(logo_f, text="CommitMaster", font=FONTS["heading_sm"],
                      fg=COLORS["text_primary"], bg=COLORS["bg_sidebar"]).pack(side="left", pady=18)
         else:
-            tk.Label(logo_f, text="⬡ CommitMaster Admin",
+            tk.Label(logo_f, text="⬡ CommitMaster",
                      font=FONTS["heading_sm"], fg=COLORS["accent"],
-                     bg=COLORS["bg_sidebar"]).pack(side="left", padx=14, pady=18)
+                     bg=COLORS["bg_sidebar"]).pack(side="left", padx=12, pady=18)
         # Admin badge
         tk.Label(logo_f, text=" ADMIN ", font=("Segoe UI", 8, "bold"),
                  fg=COLORS["bg_darkest"], bg=COLORS["admin"]).pack(
@@ -875,7 +882,14 @@ class AdminApp:
 
         # My 30-day chart
         self._section_hdr(p, "MY ACTIVITY — LAST 30 DAYS", (0, 8))
-        charts.user_activity_chart(p, self.user["id"], days=30, height=210).pack(fill="x", pady=(0, 8))
+        charts.user_activity_chart(p, self.user["id"], days=30, height=210).pack(fill="x", pady=(0, 6))
+
+        tk.Button(
+            p, text="📈 Open Full Capitalio Velocity & Analytics Dashboard →",
+            font=FONTS["label_bold"], fg="white", bg=COLORS["accent"],
+            relief="flat", bd=0, cursor="hand2", padx=16, pady=8,
+            command=lambda: self._go("charts")
+        ).pack(anchor="w", pady=(0, 14))
 
         # Recent commits
         self._section_hdr(p, "MY RECENT COMMITS", (8, 8))
@@ -1029,12 +1043,18 @@ class AdminApp:
         account_lbl = tk.Label(sel_bar, text="", font=FONTS["caption"], bg=COLORS["bg_card"])
         account_lbl.pack(side="left")
 
-        # ── Renderer for Changes & AI Preview ─────────────────────────────────
+        # ── Asynchronous Scanner Renderer ─────────────────────────────────
+        scan_token = [0]
+
         def render_scanner_content():
+            scan_token[0] += 1
+            curr_token = scan_token[0]
+
             for w in content_container.winfo_children():
                 w.destroy()
 
-            if not self._gd_selected_repo or not os.path.isdir(self._gd_selected_repo):
+            repo = self._gd_selected_repo
+            if not repo or not os.path.isdir(repo):
                 empty_box = tk.Frame(content_container, bg=COLORS["bg_medium"], padx=16, pady=20)
                 empty_box.pack(fill="x")
                 tk.Label(empty_box, text="📂 No Local Repository Selected",
@@ -1049,121 +1069,151 @@ class AdminApp:
                 account_lbl.config(text="")
                 return
 
-            branch = commit_engine.current_branch(self._gd_selected_repo)
-            branch_lbl.config(text=f"🌿 {branch}", fg=COLORS["accent"])
-            acc = db.get_repo_account(self.user["id"], self._gd_selected_repo)
-            if acc:
-                account_lbl.config(text=f"🐙 @{acc['github_username']}", fg=COLORS["info"])
-            else:
-                account_lbl.config(text="🐙 Default Git Push", fg=COLORS["text_muted"])
-
-            # Scan for uncommitted changes
-            changes = commit_engine.uncommitted_changes(self._gd_selected_repo)
-            commit_composer.sync_selection(self, changes, cfg.get("sensitive_patterns", []))
-
-            if not changes:
-                clean_f = tk.Frame(content_container, bg=COLORS["bg_card"], padx=14, pady=16,
-                                   highlightthickness=1, highlightbackground=COLORS["border"])
-                clean_f.pack(fill="x")
-                tk.Label(clean_f, text=f"✔ Working Tree Clean ({commit_engine.repo_name(self._gd_selected_repo)})",
-                         font=FONTS["label_bold"], fg=COLORS["success"], bg=COLORS["bg_card"]).pack(anchor="w")
-                tk.Label(clean_f,
-                         text="No uncommitted changes detected. All files are up to date and clean.\n"
-                              "Make edits to any file in your project, then click '⚡ Scan for Changes Now' to generate comments and push.",
-                         font=FONTS["body_sm"], fg=COLORS["text_secondary"], bg=COLORS["bg_card"]).pack(anchor="w", pady=(4, 8))
-                btn_row = tk.Frame(clean_f, bg=COLORS["bg_card"])
-                btn_row.pack(anchor="w")
-                tk.Button(btn_row, text="🔄 Check Again", font=FONTS["caption"],
-                          fg=COLORS["text_primary"], bg=COLORS["bg_medium"], relief="flat", bd=0, padx=10, pady=4,
-                          command=render_scanner_content).pack(side="left", padx=(0, 8))
-                tk.Button(btn_row, text="🖥️ Open in Git Desktop", font=FONTS["caption"],
-                          fg=COLORS["accent"], bg=COLORS["bg_medium"], relief="flat", bd=0, padx=10, pady=4,
-                          command=lambda: self._nav_to("git_desktop")).pack(side="left")
-                return
-
-            # ── Uncommitted Changes Display ───────────────────────────────────
-            chg_hdr = tk.Frame(content_container, bg=COLORS["bg_card"])
-            chg_hdr.pack(fill="x", pady=(4, 6))
-
+            # Immediate non-blocking loading placeholder
+            loading_f = tk.Frame(content_container, bg=COLORS["bg_card"], padx=14, pady=16)
+            loading_f.pack(fill="x")
             tk.Label(
-                chg_hdr, text=f"Detected Changes ({len(changes)} files in {commit_engine.repo_name(self._gd_selected_repo)}):",
-                font=FONTS["label_bold"], fg=COLORS["text_primary"], bg=COLORS["bg_card"]
-            ).pack(side="left")
+                loading_f, text="⚡ Scanning repository changes and inspecting files...",
+                font=FONTS["body_sm"], fg=COLORS["accent"], bg=COLORS["bg_card"]
+            ).pack(anchor="w")
 
-            def toggle_all():
-                vars_ = [self._gd_staged_vars[p] for _, p in changes if p in self._gd_staged_vars]
-                target = not all(v.get() for v in vars_)
-                for v in vars_:
-                    v.set(target)
+            def _bg_scan():
+                try:
+                    branch = commit_engine.current_branch(repo)
+                    acc = db.get_repo_account(self.user["id"], repo)
+                    changes = commit_engine.uncommitted_changes(repo)
+                    inspect_targets = [p for _, p in changes[:35]]
+                    detected_issues = file_inspector.inspect_files(repo, inspect_targets)
+                except Exception as exc:
+                    log.error("Scanner background worker error: %s", exc)
+                    branch = "main"
+                    acc = None
+                    changes = []
+                    detected_issues = {}
 
-            tgl_btn = tk.Button(chg_hdr, text="Toggle All", font=FONTS["caption"],
-                                fg=COLORS["accent"], bg=COLORS["bg_card"], relief="flat", bd=0,
-                                cursor="hand2", command=toggle_all)
-            tgl_btn.pack(side="right")
+                def _apply():
+                    if scan_token[0] != curr_token or not content_container.winfo_exists():
+                        return
+                    for w in content_container.winfo_children():
+                        w.destroy()
 
-            # Pre-commit inspection on all pending changes (code snippets + fix advice on demand)
-            detected_issues = file_inspector.inspect_files(self._gd_selected_repo, [p for _, p in changes])
-            issues_panel = issue_view.build_issues_panel(content_container, detected_issues, self._gd_selected_repo)
-            if issues_panel is not None:
-                issues_panel.pack(fill="x", pady=(0, 8))
-
-            # File list (scrolls when long)
-            list_h = min(len(changes), 8) * 28 + 12
-            files_box = tk.Frame(content_container, bg=COLORS["bg_input"],
-                                 highlightthickness=1, highlightbackground=COLORS["border"])
-            files_box.pack(fill="x", pady=(0, 10))
-            files_cv = tk.Canvas(files_box, bg=COLORS["bg_input"], highlightthickness=0, height=list_h)
-            files_sb = tk.Scrollbar(files_box, orient="vertical", command=files_cv.yview)
-            files_in = tk.Frame(files_cv, bg=COLORS["bg_input"], padx=8, pady=6)
-            files_win = files_cv.create_window((0, 0), window=files_in, anchor="nw")
-            files_in.bind("<Configure>", lambda e: files_cv.configure(scrollregion=files_cv.bbox("all")))
-            files_cv.bind("<Configure>", lambda e: files_cv.itemconfig(files_win, width=e.width))
-            files_cv.configure(yscrollcommand=files_sb.set)
-            if len(changes) > 8:
-                files_sb.pack(side="right", fill="y")
-            files_cv.pack(side="left", fill="both", expand=True)
-
-            status_colors = {"M": ("Modified", "#f0883e"), "A": ("Added", "#3fb950"), "D": ("Deleted", "#f85149"), "??": ("Untracked", "#58a6ff")}
-            for st, path in changes:
-                row = tk.Frame(files_in, bg=COLORS["bg_input"])
-                row.pack(fill="x", pady=1)
-                var = self._gd_staged_vars[path]
-                cb = tk.Checkbutton(row, variable=var, bg=COLORS["bg_input"], selectcolor=COLORS["bg_card"],
-                                    activebackground=COLORS["bg_input"])
-                cb.pack(side="left")
-
-                label_txt, color_hex = status_colors.get(st, (st, "#8b949e"))
-                tk.Label(row, text=f"[{st}]", font=FONTS["mono_sm"], fg=color_hex, bg=COLORS["bg_input"]).pack(side="left", padx=(0, 6))
-                tk.Label(row, text=path, font=FONTS["body_sm"], fg=COLORS["text_primary"], bg=COLORS["bg_input"]).pack(side="left")
-
-                if path in detected_issues:
-                    top_iss = detected_issues[path][0]
-                    sev = top_iss.get("severity")
-                    l_no = top_iss.get("line", 1)
-                    n_more = len(detected_issues[path])
-                    if sev == "error":
-                        b_text, b_bg = f"❌ Error (L{l_no})", "#da3633"
-                    elif sev == "security":
-                        b_text, b_bg = f"🛡️ Security (L{l_no})", "#d29922"
+                    branch_lbl.config(text=f"🌿 {branch}", fg=COLORS["accent"])
+                    if acc:
+                        account_lbl.config(text=f"🐙 @{acc['github_username']}", fg=COLORS["info"])
                     else:
-                        b_text, b_bg = f"⚠️ Warning (L{l_no})", "#9e6a03"
-                    if n_more > 1:
-                        b_text += f" +{n_more - 1}"
-                    tk.Label(row, text=f" {b_text} ", font=FONTS["caption"], fg="#ffffff", bg=b_bg).pack(side="left", padx=(8, 0))
+                        account_lbl.config(text="🐙 Default Git Push", fg=COLORS["text_muted"])
 
-            # ── Commit composer: Summary + Description, one commit per file by default ──
-            composer_box = tk.Frame(content_container, bg=COLORS["bg_card"], padx=14, pady=12,
-                                    highlightthickness=1, highlightbackground=COLORS["accent"])
-            composer_box.pack(fill="x", pady=(0, 10))
-            commit_composer.CommitComposer(
-                composer_box, self, cfg, on_done=render_scanner_content
-            ).pack(fill="x")
-            tk.Button(
-                composer_box, text="🖥️ Open full diff in Git Desktop", font=FONTS["label"],
-                fg=COLORS["text_secondary"], bg=COLORS["bg_card"], activebackground=COLORS["bg_medium"],
-                activeforeground=COLORS["text_primary"], relief="flat", bd=0, cursor="hand2", padx=10, pady=6,
-                command=lambda: self._nav_to("git_desktop")
-            ).pack(anchor="w", pady=(6, 0))
+                    commit_composer.sync_selection(self, changes, cfg.get("sensitive_patterns", []))
+
+                    if not changes:
+                        clean_f = tk.Frame(content_container, bg=COLORS["bg_card"], padx=14, pady=16,
+                                           highlightthickness=1, highlightbackground=COLORS["border"])
+                        clean_f.pack(fill="x")
+                        tk.Label(clean_f, text=f"✔ Working Tree Clean ({commit_engine.repo_name(repo)})",
+                                 font=FONTS["label_bold"], fg=COLORS["success"], bg=COLORS["bg_card"]).pack(anchor="w")
+                        tk.Label(clean_f,
+                                 text="No uncommitted changes detected. All files are up to date and clean.\n"
+                                      "Make edits to any file in your project, then click '⚡ Scan for Changes Now' to generate comments and push.",
+                                 font=FONTS["body_sm"], fg=COLORS["text_secondary"], bg=COLORS["bg_card"]).pack(anchor="w", pady=(4, 8))
+                        btn_row = tk.Frame(clean_f, bg=COLORS["bg_card"])
+                        btn_row.pack(anchor="w")
+                        tk.Button(btn_row, text="🔄 Check Again", font=FONTS["caption"],
+                                  fg=COLORS["text_primary"], bg=COLORS["bg_medium"], relief="flat", bd=0, padx=10, pady=4,
+                                  command=render_scanner_content).pack(side="left", padx=(0, 8))
+                        tk.Button(btn_row, text="🖥️ Open in Git Desktop", font=FONTS["caption"],
+                                  fg=COLORS["accent"], bg=COLORS["bg_medium"], relief="flat", bd=0, padx=10, pady=4,
+                                  command=lambda: self._nav_to("git_desktop")).pack(side="left")
+                        return
+
+                    # ── Uncommitted Changes Display ───────────────────────────────────
+                    chg_hdr = tk.Frame(content_container, bg=COLORS["bg_card"])
+                    chg_hdr.pack(fill="x", pady=(4, 6))
+
+                    tk.Label(
+                        chg_hdr, text=f"Detected Changes ({len(changes)} files in {commit_engine.repo_name(repo)}):",
+                        font=FONTS["label_bold"], fg=COLORS["text_primary"], bg=COLORS["bg_card"]
+                    ).pack(side="left")
+
+                    def toggle_all():
+                        vars_ = [self._gd_staged_vars[p] for _, p in changes if p in self._gd_staged_vars]
+                        target = not all(v.get() for v in vars_)
+                        for v in vars_:
+                            v.set(target)
+
+                    tgl_btn = tk.Button(chg_hdr, text="Toggle All", font=FONTS["caption"],
+                                        fg=COLORS["accent"], bg=COLORS["bg_card"], relief="flat", bd=0,
+                                        cursor="hand2", command=toggle_all)
+                    tgl_btn.pack(side="right")
+
+                    # Pre-commit inspection panel on pending changes
+                    issues_panel = issue_view.build_issues_panel(content_container, detected_issues, repo)
+                    if issues_panel is not None:
+                        issues_panel.pack(fill="x", pady=(0, 8))
+
+                    # File list (capped scrollable container)
+                    list_h = min(len(changes), 8) * 28 + 12
+                    files_box = tk.Frame(content_container, bg=COLORS["bg_input"],
+                                         highlightthickness=1, highlightbackground=COLORS["border"])
+                    files_box.pack(fill="x", pady=(0, 10))
+                    files_cv = tk.Canvas(files_box, bg=COLORS["bg_input"], highlightthickness=0, height=list_h)
+                    files_sb = tk.Scrollbar(files_box, orient="vertical", command=files_cv.yview)
+                    files_in = tk.Frame(files_cv, bg=COLORS["bg_input"], padx=8, pady=6)
+                    files_win = files_cv.create_window((0, 0), window=files_in, anchor="nw")
+                    files_in.bind("<Configure>", lambda e: files_cv.configure(scrollregion=files_cv.bbox("all")))
+                    files_cv.bind("<Configure>", lambda e: files_cv.itemconfig(files_win, width=e.width))
+                    files_cv.configure(yscrollcommand=files_sb.set)
+                    if len(changes) > 8:
+                        files_sb.pack(side="right", fill="y")
+                    files_cv.pack(side="left", fill="both", expand=True)
+
+                    status_colors = {"M": ("Modified", "#f0883e"), "A": ("Added", "#3fb950"), "D": ("Deleted", "#f85149"), "??": ("Untracked", "#58a6ff")}
+                    for st, path in changes:
+                        row = tk.Frame(files_in, bg=COLORS["bg_input"])
+                        row.pack(fill="x", pady=1)
+                        var = self._gd_staged_vars[path]
+                        cb = tk.Checkbutton(row, variable=var, bg=COLORS["bg_input"], selectcolor=COLORS["bg_card"],
+                                            activebackground=COLORS["bg_input"])
+                        cb.pack(side="left")
+
+                        label_txt, color_hex = status_colors.get(st, (st, "#8b949e"))
+                        tk.Label(row, text=f"[{st}]", font=FONTS["mono_sm"], fg=color_hex, bg=COLORS["bg_input"]).pack(side="left", padx=(0, 6))
+                        tk.Label(row, text=path, font=FONTS["body_sm"], fg=COLORS["text_primary"], bg=COLORS["bg_input"]).pack(side="left")
+
+                        if path in detected_issues:
+                            top_iss = detected_issues[path][0]
+                            sev = top_iss.get("severity")
+                            l_no = top_iss.get("line", 1)
+                            n_more = len(detected_issues[path])
+                            if sev == "error":
+                                b_text, b_bg = f"❌ Error (L{l_no})", "#da3633"
+                            elif sev == "security":
+                                b_text, b_bg = f"🛡️ Security (L{l_no})", "#d29922"
+                            else:
+                                b_text, b_bg = f"⚠️ Warning (L{l_no})", "#9e6a03"
+                            if n_more > 1:
+                                b_text += f" +{n_more - 1}"
+                            tk.Label(row, text=f" {b_text} ", font=FONTS["caption"], fg="#ffffff", bg=b_bg).pack(side="left", padx=(8, 0))
+
+                    # ── Commit composer: Summary + Description ──
+                    composer_box = tk.Frame(content_container, bg=COLORS["bg_card"], padx=14, pady=12,
+                                            highlightthickness=1, highlightbackground=COLORS["accent"])
+                    composer_box.pack(fill="x", pady=(0, 10))
+                    commit_composer.CommitComposer(
+                        composer_box, self, cfg, on_done=render_scanner_content
+                    ).pack(fill="x")
+                    tk.Button(
+                        composer_box, text="🖥️ Open full diff in Git Desktop", font=FONTS["label"],
+                        fg=COLORS["text_secondary"], bg=COLORS["bg_card"], activebackground=COLORS["bg_medium"],
+                        activeforeground=COLORS["text_primary"], relief="flat", bd=0, cursor="hand2", padx=10, pady=6,
+                        command=lambda: self._nav_to("git_desktop")
+                    ).pack(anchor="w", pady=(6, 0))
+
+                try:
+                    self.root.after(0, _apply)
+                except Exception:
+                    pass
+
+            threading.Thread(target=_bg_scan, daemon=True, name="admin-scanner-worker").start()
 
         render_scanner_content()
 
@@ -3221,8 +3271,9 @@ class AdminApp:
 
         master_chk = tk.Checkbutton(
             hdr, variable=self._select_all_var, bg=COLORS["bg_medium"],
-            activebackground=COLORS["bg_medium"], selectcolor=COLORS["bg_dark"],
-            command=self._toggle_master_checkbox
+            activebackground=COLORS["bg_medium"], selectcolor=COLORS["accent"],
+            fg=COLORS["text_primary"], activeforeground=COLORS["accent"],
+            cursor="hand2", command=self._toggle_master_checkbox
         )
         master_chk.pack(side="left", padx=(10, 4))
 
@@ -3235,6 +3286,7 @@ class AdminApp:
         self._users_list_frame = tk.Frame(p, bg=COLORS["bg_dark"])
         self._users_list_frame.pack(fill="x")
         self._users_page_ref = p
+        self._user_row_widgets = {}
         self._refresh_users_list(p)
 
     def _refresh_users_list(self, p=None):
@@ -3242,6 +3294,7 @@ class AdminApp:
         for w in container.winfo_children():
             w.destroy()
         self._user_check_vars.clear()
+        self._user_row_widgets = {}
         self._visible_user_ids = []
 
         query = self._user_search.get().lower() if hasattr(self, "_user_search") else ""
@@ -3254,19 +3307,60 @@ class AdminApp:
 
         self._update_bulk_bar_state()
 
+    def _update_row_appearance(self, user_id: int):
+        data = getattr(self, "_user_row_widgets", {}).get(user_id)
+        if not data:
+            return
+        is_sel = user_id in self._selected_users
+        bg_col = "#153326" if is_sel else COLORS["bg_card"]
+        try:
+            data["row"].config(bg=bg_col)
+        except Exception:
+            pass
+        for w in data.get("sub_widgets", []):
+            try:
+                w.config(bg=bg_col)
+            except Exception:
+                pass
+
+    def _on_row_hover(self, user_id: int, entering: bool):
+        data = getattr(self, "_user_row_widgets", {}).get(user_id)
+        if not data:
+            return
+        is_sel = user_id in self._selected_users
+        if entering:
+            hover_bg = "#1d4433" if is_sel else COLORS["bg_card_hover"]
+        else:
+            hover_bg = "#153326" if is_sel else COLORS["bg_card"]
+        try:
+            data["row"].config(bg=hover_bg)
+        except Exception:
+            pass
+        for w in data.get("sub_widgets", []):
+            try:
+                w.config(bg=hover_bg)
+            except Exception:
+                pass
+
     def _toggle_user_selection(self, user_id: int):
         if user_id in self._selected_users:
             self._selected_users.remove(user_id)
+            if user_id in self._user_check_vars:
+                self._user_check_vars[user_id].set(False)
         else:
             self._selected_users.add(user_id)
+            if user_id in self._user_check_vars:
+                self._user_check_vars[user_id].set(True)
+        self._update_row_appearance(user_id)
         self._update_bulk_bar_state()
 
     def _select_all_users(self):
         for uid in getattr(self, "_visible_user_ids", []):
-            if uid != self.user["id"]:
+            if uid != self.user["id"] and not db.is_admin_username(str(uid)):
                 self._selected_users.add(uid)
                 if uid in self._user_check_vars:
                     self._user_check_vars[uid].set(True)
+                self._update_row_appearance(uid)
         self._select_all_var.set(True)
         self._update_bulk_bar_state()
 
@@ -3274,6 +3368,8 @@ class AdminApp:
         self._selected_users.clear()
         for var in self._user_check_vars.values():
             var.set(False)
+        for uid in getattr(self, "_visible_user_ids", []):
+            self._update_row_appearance(uid)
         self._select_all_var.set(False)
         self._update_bulk_bar_state()
 
@@ -3311,18 +3407,18 @@ class AdminApp:
                 fg=COLORS["accent"], font=FONTS["label_bold"]
             )
             self._btn_bulk_disable.config(
-                state="normal", text=f"🔒 Disable ({count})",
-                bg="#3b2b10", fg="#f0b232", activebackground="#4d3815",
+                state="normal", text=f"🔒 Disable Selected ({count})",
+                bg="#d97706", fg="#ffffff", activebackground="#b45309",
                 activeforeground="#ffffff", cursor="hand2"
             )
             self._btn_bulk_enable.config(
-                state="normal", text=f"🔓 Enable ({count})",
-                bg="#10331f", fg="#48c774", activebackground="#16462b",
+                state="normal", text=f"🔓 Enable Selected ({count})",
+                bg="#059669", fg="#ffffff", activebackground="#047857",
                 activeforeground="#ffffff", cursor="hand2"
             )
             self._btn_bulk_delete.config(
-                state="normal", text=f"🗑 Delete ({count})",
-                bg="#3a1010", fg="#ff6b6b", activebackground="#521515",
+                state="normal", text=f"🗑 Delete Selected ({count})",
+                bg="#dc2626", fg="#ffffff", activebackground="#b91c1c",
                 activeforeground="#ffffff", cursor="hand2"
             )
             all_vis = [uid for uid in getattr(self, "_visible_user_ids", []) if uid != self.user["id"] and not db.is_admin_username(str(uid))]
@@ -3342,6 +3438,10 @@ class AdminApp:
             parent=self.root
         ):
             updated = db.bulk_update_users_active(list(self._selected_users), 0, exclude_user_id=self.user["id"])
+            try:
+                db.log_activity(self.user["id"], "bulk_disable_users", f"Bulk disabled {updated} users")
+            except Exception:
+                pass
             self._selected_users.clear()
             messagebox.showinfo("Bulk Disable Completed", f"Successfully disabled {updated} user account(s).", parent=self.root)
             self._refresh_users_list()
@@ -3356,6 +3456,10 @@ class AdminApp:
             parent=self.root
         ):
             updated = db.bulk_update_users_active(list(self._selected_users), 1, exclude_user_id=self.user["id"])
+            try:
+                db.log_activity(self.user["id"], "bulk_enable_users", f"Bulk enabled {updated} users")
+            except Exception:
+                pass
             self._selected_users.clear()
             messagebox.showinfo("Bulk Enable Completed", f"Successfully enabled {updated} user account(s).", parent=self.root)
             self._refresh_users_list()
@@ -3372,66 +3476,116 @@ class AdminApp:
             parent=self.root
         ):
             deleted = db.bulk_delete_users(list(self._selected_users), hard=True, exclude_user_id=self.user["id"])
+            try:
+                db.log_activity(self.user["id"], "bulk_delete_users", f"Bulk permanently deleted {deleted} users")
+            except Exception:
+                pass
             self._selected_users.clear()
             messagebox.showinfo("Bulk Delete Completed", f"Successfully deleted {deleted} user account(s).", parent=self.root)
             self._refresh_users_list()
 
     def _user_row(self, parent, user: Dict):
-        row = tk.Frame(parent, bg=COLORS["bg_card"])
+        uid = user["id"]
+        is_sel = uid in self._selected_users
+        bg_col = "#153326" if is_sel else COLORS["bg_card"]
+
+        row = tk.Frame(parent, bg=bg_col, cursor="hand2")
         row.pack(fill="x")
-        tk.Frame(parent, height=1, bg=COLORS["border"]).pack(fill="x")
-        row.bind("<Enter>", lambda e: row.config(bg=COLORS["bg_card_hover"]))
-        row.bind("<Leave>", lambda e: row.config(bg=COLORS["bg_card"]))
+        sep = tk.Frame(parent, height=1, bg=COLORS["border"])
+        sep.pack(fill="x")
+
+        sub_widgets = []
+
+        is_self = (uid == self.user["id"])
+        is_protected_admin = db.is_admin_username(user.get("username"))
 
         # Selection Checkbox column
-        is_self = (user["id"] == self.user["id"])
-        is_protected_admin = db.is_admin_username(user.get("username"))
         if not is_self and not is_protected_admin:
-            var = tk.BooleanVar(value=user["id"] in self._selected_users)
-            self._user_check_vars[user["id"]] = var
+            var = tk.BooleanVar(value=is_sel)
+            self._user_check_vars[uid] = var
             chk = tk.Checkbutton(
-                row, variable=var, bg=COLORS["bg_card"],
-                activebackground=COLORS["bg_card_hover"], selectcolor=COLORS["bg_dark"],
-                command=lambda uid=user["id"]: self._toggle_user_selection(uid)
+                row, variable=var, bg=bg_col,
+                activebackground=COLORS["bg_card_hover"], selectcolor=COLORS["accent"],
+                fg="#ffffff", activeforeground="#ffffff", cursor="hand2",
+                command=lambda u_id=uid: self._toggle_user_selection(u_id)
             )
             chk.pack(side="left", padx=(10, 4))
+            sub_widgets.append(chk)
         else:
-            tk.Label(row, text="  ", bg=COLORS["bg_card"], width=2).pack(side="left", padx=(10, 4))
+            ph = tk.Label(row, text="  ", bg=bg_col, width=2)
+            ph.pack(side="left", padx=(10, 4))
+            sub_widgets.append(ph)
 
         color = user.get("avatar_color", AVATAR_COLORS[0])
         name = user.get("full_name") or user["username"]
         initials = (name.split()[0][0] + name.split()[-1][0]
                     if len(name.split()) >= 2 else name[:2]).upper()
-        tk.Label(row, text=initials, bg=color, fg="white",
-                 font=("Segoe UI", 9, "bold"), width=3,
-                 padx=4, pady=4).pack(side="left", padx=(4, 0), pady=6)
+        av = tk.Label(row, text=initials, bg=color, fg="white",
+                      font=("Segoe UI", 9, "bold"), width=3,
+                      padx=4, pady=4, cursor="hand2")
+        av.pack(side="left", padx=(4, 0), pady=6)
 
-        nf = tk.Frame(row, bg=COLORS["bg_card"], width=180)
+        nf = tk.Frame(row, bg=bg_col, width=180, cursor="hand2")
         nf.pack(side="left", padx=8, pady=6)
         nf.pack_propagate(False)
-        tk.Label(nf, text=name, font=FONTS["label_bold"],
-                 fg=COLORS["text_primary"], bg=COLORS["bg_card"],
-                 anchor="w").pack(anchor="w")
-        tk.Label(nf, text=f"@{user['username']}", font=FONTS["caption"],
-                 fg=COLORS["text_muted"], bg=COLORS["bg_card"],
-                 anchor="w").pack(anchor="w")
+        sub_widgets.append(nf)
 
-        tk.Label(row, text=user.get("email", ""), font=FONTS["body_sm"],
-                 fg=COLORS["text_secondary"], bg=COLORS["bg_card"],
-                 width=26, anchor="w").pack(side="left", padx=4)
+        name_lbl = tk.Label(nf, text=name, font=FONTS["label_bold"],
+                            fg=COLORS["text_primary"], bg=bg_col,
+                            anchor="w", cursor="hand2")
+        name_lbl.pack(anchor="w")
+        sub_widgets.append(name_lbl)
+
+        uname_lbl = tk.Label(nf, text=f"@{user['username']}", font=FONTS["caption"],
+                             fg=COLORS["text_muted"], bg=bg_col,
+                             anchor="w", cursor="hand2")
+        uname_lbl.pack(anchor="w")
+        sub_widgets.append(uname_lbl)
+
+        email_lbl = tk.Label(row, text=user.get("email", ""), font=FONTS["body_sm"],
+                             fg=COLORS["text_secondary"], bg=bg_col,
+                             width=26, anchor="w", cursor="hand2")
+        email_lbl.pack(side="left", padx=4)
+        sub_widgets.append(email_lbl)
+
         rc = COLORS["admin"] if user["role"] == "admin" else COLORS["info"]
-        tk.Label(row, text=user["role"].capitalize(), font=FONTS["label"],
-                 fg=rc, bg=COLORS["bg_card"], width=10).pack(side="left")
-        sc = COLORS["success"] if user["is_active"] else COLORS["error"]
-        tk.Label(row, text="● Active" if user["is_active"] else "● Disabled",
-                 font=FONTS["label"], fg=sc, bg=COLORS["bg_card"],
-                 width=10).pack(side="left")
-        tk.Label(row, text=str(user.get("total_commits", 0)),
-                 font=FONTS["body_sm"], fg=COLORS["text_primary"],
-                 bg=COLORS["bg_card"], width=10).pack(side="left")
+        role_lbl = tk.Label(row, text=user["role"].capitalize(), font=FONTS["label"],
+                            fg=rc, bg=bg_col, width=10, cursor="hand2")
+        role_lbl.pack(side="left")
+        sub_widgets.append(role_lbl)
 
-        af = tk.Frame(row, bg=COLORS["bg_card"])
+        sc = COLORS["success"] if user["is_active"] else COLORS["error"]
+        status_lbl = tk.Label(row, text="● Active" if user["is_active"] else "● Disabled",
+                              font=FONTS["label"], fg=sc, bg=bg_col,
+                              width=10, cursor="hand2")
+        status_lbl.pack(side="left")
+        sub_widgets.append(status_lbl)
+
+        commits_lbl = tk.Label(row, text=str(user.get("total_commits", 0)),
+                               font=FONTS["body_sm"], fg=COLORS["text_primary"],
+                               bg=bg_col, width=10, cursor="hand2")
+        commits_lbl.pack(side="left")
+        sub_widgets.append(commits_lbl)
+
+        # Store widget mapping for fast, flicker-free background toggles
+        self._user_row_widgets[uid] = {
+            "row": row,
+            "sub_widgets": sub_widgets,
+        }
+
+        # Bind row click to toggle selection (if not self/protected)
+        if not is_self and not is_protected_admin:
+            for clickable in [row, av, nf, name_lbl, uname_lbl, email_lbl, role_lbl, status_lbl, commits_lbl]:
+                clickable.bind("<Button-1>", lambda e, u_id=uid: self._toggle_user_selection(u_id))
+
+        # Hover effects
+        row.bind("<Enter>", lambda e, u_id=uid: self._on_row_hover(u_id, True))
+        row.bind("<Leave>", lambda e, u_id=uid: self._on_row_hover(u_id, False))
+
+        af = tk.Frame(row, bg=bg_col)
         af.pack(side="left", padx=8)
+        sub_widgets.append(af)
+
         for text, cmd in [
             ("✏ Edit",   lambda u=user: self._edit_user(u)),
         ]:
@@ -3439,7 +3593,7 @@ class AdminApp:
                       fg=COLORS["text_primary"], bg=COLORS["bg_medium"],
                       relief="flat", bd=0, cursor="hand2",
                       padx=8, pady=3, command=cmd).pack(side="left", padx=2)
-        if user["id"] != self.user["id"] and not is_protected_admin:
+        if not is_self and not is_protected_admin:
             ttxt = "🔒 Disable" if user["is_active"] else "🔓 Enable"
             tk.Button(af, text=ttxt, font=FONTS["label"],
                       fg=COLORS["text_primary"], bg=COLORS["bg_medium"],
