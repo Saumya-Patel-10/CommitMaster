@@ -49,22 +49,45 @@ class LoginWindow:
         title = "CommitMaster Admin — Sign In" if self.app_type == "admin" else "CommitMaster — Sign In"
         self.root.title(title)
         
-        # Professional standing rectangle format (portrait aspect ratio ~ 1:1.46)
-        win_w, win_h = 430, 630
-        self.root.geometry(f"{win_w}x{win_h}")
-        self.root.resizable(False, False)
+        # Expanded, spacious interface so all fields and options are visible without excessive scrolling
+        win_w, win_h = 580, 760
         self.root.configure(bg=COLORS["bg_darkest"])
+        self.root.resizable(True, True)
+        self.root.minsize(480, 560)
+        self.root.option_add("*Button.cursor", "hand2")
+        self.root.option_add("*Checkbutton.cursor", "hand2")
+        self.root.option_add("*Radiobutton.cursor", "hand2")
+        self.root.option_add("*Entry.cursor", "xterm")
 
         # Center on screen
         self.root.update_idletasks()
         sw = self.root.winfo_screenwidth()
         sh = self.root.winfo_screenheight()
+        win_h = min(win_h, max(560, sh - 70))
         x = max(0, (sw - win_w) // 2)
         y = max(0, (sh - win_h) // 2)
         self.root.geometry(f"{win_w}x{win_h}+{x}+{y}")
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
         from commitmaster import windows_integration
         windows_integration.apply_windows_theme(self.root, title, app_type=self.app_type)
+        self._ensure_maximize_and_resizable()
+
+    def _ensure_maximize_and_resizable(self):
+        """Explicitly enforce Win32 WS_MAXIMIZEBOX and WS_THICKFRAME so the window can always be maximized and resized."""
+        try:
+            import ctypes, sys
+            if sys.platform == "win32":
+                self.root.update_idletasks()
+                hwnd = self.root.winfo_id()
+                parent_hwnd = ctypes.windll.user32.GetAncestor(hwnd, 2) or ctypes.windll.user32.GetParent(hwnd)
+                if parent_hwnd:
+                    WS_MAXIMIZEBOX = 0x00010000
+                    WS_THICKFRAME = 0x00040000
+                    style = ctypes.windll.user32.GetWindowLongW(parent_hwnd, -16)
+                    ctypes.windll.user32.SetWindowLongW(parent_hwnd, -16, style | WS_MAXIMIZEBOX | WS_THICKFRAME)
+                    ctypes.windll.user32.SetWindowPos(parent_hwnd, 0, 0, 0, 0, 0, 0x0027)
+        except Exception:
+            pass
 
     def _on_close(self):
         try:
@@ -103,15 +126,36 @@ class LoginWindow:
         center_wrapper.pack(fill="both", expand=True)
 
         outer = tk.Frame(center_wrapper, bg=COLORS["bg_darkest"])
-        outer.pack(anchor="n", padx=20, pady=16)
+        outer.pack(anchor="n", fill="x", padx=24, pady=16)
 
-        # ── Tech Suite Badge ──────────────────────────────────────────────────
-        badge_frame = tk.Frame(outer, bg=COLORS["bg_card"], padx=10, pady=3,
+        # ── Top Row with Tech Suite Badge & In-App Size Toggle ───────────────
+        top_bar = tk.Frame(outer, bg=COLORS["bg_darkest"])
+        top_bar.pack(fill="x", pady=(0, 6))
+
+        badge_frame = tk.Frame(top_bar, bg=COLORS["bg_card"], padx=10, pady=3,
                                highlightthickness=1, highlightbackground=COLORS["border"])
-        badge_frame.pack(pady=(0, 6))
+        badge_frame.pack(side="left")
         suite_title = "ADMIN CONSOLE" if self.app_type == "admin" else "DEVELOPER SUITE"
         tk.Label(badge_frame, text=f"⚡ COMMITMASTER PRO  •  {suite_title}",
                  font=("Consolas", 8, "bold"), fg=COLORS["accent"], bg=COLORS["bg_card"]).pack()
+
+        def _toggle_expand():
+            if str(self.root.state()) == "zoomed":
+                self.root.state("normal")
+                self._expand_btn.config(text="Fullscreen")
+            else:
+                self.root.state("zoomed")
+                self._expand_btn.config(text="Restore Window")
+
+        self._expand_btn = tk.Button(
+            top_bar, text="Fullscreen", font=("Segoe UI", 8, "bold"),
+            bg=COLORS["bg_card"], fg=COLORS["text_secondary"],
+            activebackground=COLORS["bg_card_hover"], activeforeground=COLORS["accent"],
+            relief="flat", bd=0, cursor="hand2", padx=10, pady=3,
+            command=_toggle_expand
+        )
+        self._expand_btn.pack(side="right")
+        self._add_hover(self._expand_btn, COLORS["bg_card_hover"], COLORS["bg_card"])
 
         # ── Logo ──────────────────────────────────────────────────────────────
         self._logo_canvas = tk.Canvas(outer, width=64, height=64,
@@ -238,6 +282,9 @@ class LoginWindow:
         self._q2_combo.pack(fill="x", pady=(2, 3))
         self._a2_entry = self._make_entry(sec_box)
         self._a2_entry.bind("<Return>", lambda e: self._submit())
+
+        # 7. CAPTCHA Security Verification (register only, prevents bot abuse)
+        self._build_captcha_ui()
 
         # Error label
         self._err_label = tk.Label(self._card_inner, text="", font=FONTS["body_sm"],
@@ -413,13 +460,82 @@ class LoginWindow:
     def _make_entry(self, parent, show="") -> tk.Entry:
         e = tk.Entry(parent, font=FONTS["body_md"],
                      bg=COLORS["bg_input"], fg=COLORS["text_primary"],
-                     insertbackground=COLORS["text_primary"],
+                     insertbackground=COLORS["accent"],
+                     insertwidth=2,
+                     insertontime=600, insertofftime=300,
+                     cursor="xterm",
                      relief="flat", bd=0, show=show,
                      highlightthickness=1,
                      highlightbackground=COLORS["border"],
                      highlightcolor=COLORS["border_focus"])
-        e.pack(fill="x", ipady=6, ipadx=10, pady=(3, 0))
+        e.pack(fill="x", ipady=7, ipadx=10, pady=(3, 0))
         return e
+
+    def _build_captcha_ui(self):
+        self._captcha_frame = tk.Frame(self._card_inner, bg=COLORS["bg_card"])
+        sec_box = tk.Frame(self._captcha_frame, bg=COLORS["bg_medium"], padx=10, pady=10,
+                           highlightthickness=1, highlightbackground=COLORS["border"])
+        sec_box.pack(fill="x", pady=(2, 0))
+
+        tk.Label(sec_box, text="🤖 Security Verification (Bot Protection)",
+                 font=FONTS["label_bold"], fg=COLORS["accent"], bg=COLORS["bg_medium"]).pack(anchor="w")
+        tk.Label(
+            sec_box, text="Type the verification code shown in the image below:",
+            font=FONTS["caption"], fg=COLORS["text_secondary"], bg=COLORS["bg_medium"]
+        ).pack(anchor="w", pady=(2, 6))
+
+        canvas_row = tk.Frame(sec_box, bg=COLORS["bg_medium"])
+        canvas_row.pack(fill="x", pady=(2, 6))
+
+        self._captcha_canvas = tk.Canvas(canvas_row, width=170, height=48,
+                                         bg=COLORS["bg_input"], highlightthickness=1,
+                                         highlightbackground=COLORS["border"])
+        self._captcha_canvas.pack(side="left")
+
+        ref_btn = tk.Button(canvas_row, text="🔄 New Code", font=FONTS["caption"],
+                            bg=COLORS["bg_card"], fg=COLORS["text_primary"],
+                            activebackground=COLORS["bg_card_hover"], activeforeground=COLORS["accent"],
+                            relief="flat", bd=0, cursor="hand2", padx=10, pady=6,
+                            command=self._regenerate_captcha)
+        ref_btn.pack(side="left", padx=(10, 0))
+
+        tk.Label(sec_box, text="Verification code", font=FONTS["caption"],
+                 fg=COLORS["text_secondary"], bg=COLORS["bg_medium"]).pack(anchor="w", pady=(4, 0))
+        self._captcha_entry = self._make_entry(sec_box)
+        self._captcha_entry.bind("<Return>", lambda e: self._submit())
+
+    def _regenerate_captcha(self):
+        import random
+        # Clean chars excluding ambiguous O, 0, 1, I, l
+        charset = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ"
+        self._captcha_code = "".join(random.choices(charset, k=5))
+        c = getattr(self, "_captcha_canvas", None)
+        if not c:
+            return
+        c.delete("all")
+        w, h = 170, 48
+        # Background interference lines
+        palette = [COLORS["border"], COLORS["bg_card_hover"], COLORS["accent"], COLORS["info"], COLORS["text_muted"]]
+        for _ in range(6):
+            lx1 = random.randint(0, w)
+            ly1 = random.randint(0, h)
+            lx2 = random.randint(0, w)
+            ly2 = random.randint(0, h)
+            c.create_line(lx1, ly1, lx2, ly2, fill=random.choice(palette), width=1)
+        # Noise dots
+        for _ in range(25):
+            dx = random.randint(2, w - 2)
+            dy = random.randint(2, h - 2)
+            c.create_oval(dx, dy, dx + 2, dy + 2, fill=random.choice(palette), outline="")
+        # Distinct characters
+        spacing = (w - 30) / max(1, len(self._captcha_code))
+        char_colors = [COLORS["accent"], COLORS["text_primary"], COLORS["info"], COLORS["warning"], COLORS["success"]]
+        for i, ch in enumerate(self._captcha_code):
+            cx = 18 + i * spacing + random.randint(-2, 3)
+            cy = h // 2 + random.randint(-3, 3)
+            col = random.choice(char_colors)
+            f_size = random.choice([16, 17, 18])
+            c.create_text(cx, cy, text=ch, font=("Consolas", f_size, "bold"), fill=col)
 
     def _add_hover(self, widget, hover_bg, normal_bg):
         widget.bind("<Enter>", lambda e: widget.config(bg=hover_bg))
@@ -449,22 +565,11 @@ class LoginWindow:
         clear_all.bind("<Button-1>", lambda e: self._remove_all_saved_accounts())
 
         for acc in accounts[:4]:
-            row = tk.Frame(saved_box, bg=COLORS["bg_card"], pady=3)
-            row.pack(fill="x")
-            initial = (acc.get("full_name") or acc.get("username") or "?")[0].upper()
-            cv = tk.Canvas(row, width=24, height=24, bg=COLORS["bg_card"], highlightthickness=0)
-            cv.pack(side="left", padx=(0, 6))
-            cv.create_oval(1, 1, 23, 23, fill=acc.get("avatar_color", "#3fb950"), outline="")
-            cv.create_text(12, 12, text=initial, fill="white", font=("Segoe UI", 9, "bold"))
-
-            disp = acc.get("full_name") or acc.get("username")
-            admin_tag = " [ADMIN]" if db.is_admin_username(acc.get("username")) else ""
-            tk.Label(row, text=f"{disp} (@{acc.get('username')}){admin_tag}", font=FONTS["body_sm"],
-                     fg=COLORS["text_primary"], bg=COLORS["bg_card"]).pack(side="left")
+            row = tk.Frame(saved_box, bg=COLORS["bg_card"], padx=10, pady=8, cursor="hand2",
+                           highlightthickness=1, highlightbackground=COLORS["border"])
+            row.pack(fill="x", pady=4)
 
             def _do_quick_login(target=acc):
-                # Only sign in instantly if the stored session is still valid;
-                # otherwise ask for the password.
                 token = target.get("token", "")
                 valid = None
                 try:
@@ -486,18 +591,78 @@ class LoginWindow:
                     self._on_close()
                     self.on_success(switched)
 
+            # 1. Action buttons on the RIGHT are packed FIRST so they ALWAYS have full room
             rm = tk.Button(row, text="✕", font=("Segoe UI", 9),
                            bg=COLORS["bg_card"], fg=COLORS["text_muted"],
                            activebackground=COLORS["bg_card_hover"], activeforeground=COLORS["danger"],
-                           relief="flat", bd=0, cursor="hand2", padx=4, pady=0,
+                           relief="flat", bd=0, cursor="hand2", padx=6, pady=4,
                            command=lambda t=acc: self._remove_saved_account(t))
-            rm.pack(side="right", padx=(4, 0))
+            rm.pack(side="right", padx=(6, 0))
 
-            btn = tk.Button(row, text="Sign In", font=("Segoe UI", 8, "bold"),
-                            bg=COLORS["accent"], fg="white", relief="flat", bd=0,
-                            cursor="hand2", padx=8, pady=1, command=_do_quick_login)
-            btn.pack(side="right")
+            btn = tk.Button(row, text="Sign In →", font=FONTS["label_bold"],
+                            bg=COLORS["accent"], fg="white", activebackground=COLORS["accent_hover"],
+                            activeforeground="white", relief="flat", bd=0,
+                            cursor="hand2", padx=14, pady=5, command=_do_quick_login)
+            btn.pack(side="right", padx=(8, 0))
             self._add_hover(btn, COLORS["accent_hover"], COLORS["accent"])
+
+            # 2. Avatar on the LEFT
+            initial = (acc.get("full_name") or acc.get("username") or "?")[0].upper()
+            cv = tk.Canvas(row, width=32, height=32, bg=COLORS["bg_card"], highlightthickness=0, cursor="hand2")
+            cv.pack(side="left", padx=(0, 10))
+            cv.create_oval(2, 2, 30, 30, fill=acc.get("avatar_color", "#3fb950"), outline="")
+            cv.create_text(16, 16, text=initial, fill="white", font=("Segoe UI", 11, "bold"))
+
+            # 3. Label in the middle with fill="x", expand=True
+            disp = acc.get("full_name") or acc.get("username") or "User"
+            uname = acc.get("username") or ""
+            is_admin = db.is_admin_username(uname)
+
+            info_col = tk.Frame(row, bg=COLORS["bg_card"], cursor="hand2")
+            info_col.pack(side="left", fill="x", expand=True)
+
+            top_row = tk.Frame(info_col, bg=COLORS["bg_card"], cursor="hand2")
+            top_row.pack(anchor="w", fill="x")
+
+            name_lbl = tk.Label(top_row, text=disp, font=FONTS["label_bold"],
+                                fg=COLORS["text_primary"], bg=COLORS["bg_card"], cursor="hand2")
+            name_lbl.pack(side="left")
+
+            if is_admin:
+                badge = tk.Label(top_row, text=" ADMIN ", font=("Segoe UI", 7, "bold"),
+                                 fg=COLORS["accent"], bg=COLORS["bg_medium"],
+                                 cursor="hand2")
+                badge.pack(side="left", padx=(6, 0))
+
+            sub_lbl = tk.Label(info_col, text=f"@{uname}", font=FONTS["caption"],
+                               fg=COLORS["text_secondary"], bg=COLORS["bg_card"], cursor="hand2")
+            sub_lbl.pack(anchor="w")
+
+            # 4. Make ENTIRE row clickable so user can click anywhere to sign in
+            for clickable in (row, cv, info_col, top_row, name_lbl, sub_lbl):
+                clickable.bind("<Button-1>", lambda e, act=_do_quick_login: act())
+
+            # Hover highlight
+            def _bind_hover(target_row, *widgets):
+                def _enter(e):
+                    target_row.config(bg=COLORS["bg_card_hover"], highlightbackground=COLORS["accent"])
+                    for w in widgets:
+                        try:
+                            w.config(bg=COLORS["bg_card_hover"])
+                        except Exception:
+                            pass
+                def _leave(e):
+                    target_row.config(bg=COLORS["bg_card"], highlightbackground=COLORS["border"])
+                    for w in widgets:
+                        try:
+                            w.config(bg=COLORS["bg_card"])
+                        except Exception:
+                            pass
+                for w in (target_row, *widgets):
+                    w.bind("<Enter>", _enter, add="+")
+                    w.bind("<Leave>", _leave, add="+")
+
+            _bind_hover(row, cv, info_col, top_row, name_lbl, sub_lbl)
 
     def _remove_saved_account(self, acc: dict):
         from tkinter import messagebox
@@ -560,9 +725,11 @@ class LoginWindow:
 
         # Unpack all form widgets inside card
         for widget in [self._name_frame, self._user_frame, self._email_frame,
-                       self._pass_frame, self._confirm_frame, self._security_frame, self._err_label,
-                       self._submit_btn, self._social_sep_frame, self._social_btns_frame]:
-            widget.pack_forget()
+                       self._pass_frame, self._confirm_frame, self._security_frame,
+                       getattr(self, "_captcha_frame", None),
+                       self._err_label, self._submit_btn, self._social_sep_frame, self._social_btns_frame]:
+            if widget:
+                widget.pack_forget()
 
         if mode == "login":
             self.root.title("CommitMaster — Sign In")
@@ -586,8 +753,7 @@ class LoginWindow:
             self._toggle_lbl.config(text="Don't have an account? ")
             self._toggle_btn.config(text="Create one")
 
-            # Maintain sleek standing rectangle format
-            self._resize_window(630)
+            self._resize_window(760)
             self._user_entry.focus()
 
         else:  # register
@@ -604,6 +770,9 @@ class LoginWindow:
             self._pass_frame.pack(fill="x", pady=(0, 8))
             self._confirm_frame.pack(fill="x", pady=(0, 8))
             self._security_frame.pack(fill="x", pady=(0, 8))
+            if hasattr(self, "_captcha_frame"):
+                self._captcha_frame.pack(fill="x", pady=(0, 8))
+                self._regenerate_captcha()
             self._err_label.pack(pady=(2, 6))
             self._submit_btn.config(text="Create Account")
             self._submit_btn.pack(fill="x", pady=(4, 0))
@@ -617,18 +786,18 @@ class LoginWindow:
             self._toggle_lbl.config(text="Already have an account? ")
             self._toggle_btn.config(text="Sign in")
 
-            # Maintain sleek standing rectangle format
-            self._resize_window(630)
+            self._resize_window(780)
             self._name_entry.focus()
 
         # Update scrollregion and reset view to top
         self._update_scrollregion()
         self._canvas.yview_moveto(0)
 
-    def _resize_window(self, target_h: int = 630):
-        w = 430
+    def _resize_window(self, target_h: int = 760):
+        self.root.update_idletasks()
+        cur_w = max(580, self.root.winfo_width())
         sh = self.root.winfo_screenheight()
-        h = min(target_h, max(460, sh - 80))
+        h = min(target_h, max(560, sh - 70))
 
         cur_x = self.root.winfo_x()
         cur_y = self.root.winfo_y()
@@ -637,7 +806,8 @@ class LoginWindow:
         if cur_y + h > sh - 40:
             cur_y = max(10, sh - h - 50)
 
-        self.root.geometry(f"{w}x{h}+{cur_x}+{cur_y}")
+        self.root.geometry(f"{cur_w}x{h}+{cur_x}+{cur_y}")
+        self._ensure_maximize_and_resizable()
         self._update_scrollregion()
 
     def _toggle_mode(self):
@@ -867,6 +1037,22 @@ class LoginWindow:
                 if not a2 or len(a2) < 2:
                     self._err_label.config(text="Please answer security question 2 (at least 2 characters).")
                     self._a2_entry.focus()
+                    return
+
+                # Validate CAPTCHA (Bot protection)
+                user_captcha = (self._captcha_entry.get() if hasattr(self, "_captcha_entry") else "").strip().upper()
+                if not user_captcha:
+                    self._err_label.config(text="Please enter the CAPTCHA verification code.")
+                    if hasattr(self, "_captcha_entry"):
+                        self._captcha_entry.focus()
+                    return
+
+                if user_captcha != getattr(self, "_captcha_code", "").upper():
+                    self._err_label.config(text="Incorrect CAPTCHA verification code. A new code has been generated.")
+                    self._regenerate_captcha()
+                    if hasattr(self, "_captcha_entry"):
+                        self._captcha_entry.delete(0, "end")
+                        self._captcha_entry.focus()
                     return
 
                 # Create account with security questions for password recovery
