@@ -146,12 +146,19 @@ class UserDashboard:
     def _setup_window(self):
         name = self.user.get("full_name") or self.user["username"]
         self.root.title(f"CommitMaster — {name}")
-        self.root.minsize(900, 600)
+        self.root.resizable(True, True)
+        self.root.minsize(960, 620)
         self.root.configure(bg=COLORS["bg_darkest"])
+        self.root.option_add("*Button.cursor", "hand2")
+        self.root.option_add("*Checkbutton.cursor", "hand2")
+        self.root.option_add("*Radiobutton.cursor", "hand2")
+        self.root.option_add("*Entry.cursor", "xterm")
+        self.root.option_add("*Text.cursor", "xterm")
         self.root.update_idletasks()
-        w, h = 1100, 700
         sw = self.root.winfo_screenwidth()
         sh = self.root.winfo_screenheight()
+        w = min(1200, max(960, sw - 60))
+        h = min(780, max(620, sh - 70))
         self.root.geometry(f"{w}x{h}+{(sw - w)//2}+{(sh - h)//2}")
         from commitmaster import windows_integration
         windows_integration.apply_windows_theme(self.root, f"CommitMaster — {name}", app_type="user")
@@ -610,6 +617,7 @@ class UserDashboard:
         # Nav items
         nav_items = [
             ("📊", "Overview",        "overview"),
+            ("📈", "Analytics & Graphs", "analytics"),
             ("💻", "Git Desktop",     "git_desktop"),
             ("📁", "Watched Repos",   "watched_repos"),
             ("📝", "My Commits",      "commits"),
@@ -686,6 +694,7 @@ class UserDashboard:
         self._gd_composer = None
         pages = {
             "overview":        self._page_overview,
+            "analytics":       self._page_analytics,
             "git_desktop":     self._page_git_desktop,
             "watched_repos":   self._page_watched_repos,
             "commits":         self._page_commits,
@@ -1001,7 +1010,14 @@ class UserDashboard:
 
         # Usage chart
         self._section_title(pad, "YOUR ACTIVITY — LAST 30 DAYS", (16, 8))
-        charts.user_activity_chart(pad, self.user["id"], days=30, height=210).pack(fill="x", pady=(0, 8))
+        charts.user_activity_chart(pad, self.user["id"], days=30, height=210).pack(fill="x", pady=(0, 6))
+
+        tk.Button(
+            pad, text="📈 Open Full Capitalio Velocity & Analytics Dashboard →",
+            font=FONTS["label_bold"], fg="white", bg=COLORS["accent"],
+            relief="flat", bd=0, cursor="hand2", padx=16, pady=8,
+            command=lambda: self._nav_to("analytics")
+        ).pack(anchor="w", pady=(0, 14))
 
         # Recent commits
         self._section_title(pad, "RECENT COMMITS", (20, 8))
@@ -1168,12 +1184,18 @@ class UserDashboard:
         account_lbl = tk.Label(sel_bar, text="", font=FONTS["caption"], bg=COLORS["bg_card"])
         account_lbl.pack(side="left")
 
-        # ── Renderer for Changes & AI Preview ─────────────────────────────────
+        # ── Asynchronous Scanner Renderer ─────────────────────────────────
+        scan_token = [0]
+
         def render_scanner_content():
+            scan_token[0] += 1
+            curr_token = scan_token[0]
+
             for w in content_container.winfo_children():
                 w.destroy()
 
-            if not self._gd_selected_repo or not os.path.isdir(self._gd_selected_repo):
+            repo = self._gd_selected_repo
+            if not repo or not os.path.isdir(repo):
                 empty_box = tk.Frame(content_container, bg=COLORS["bg_medium"], padx=16, pady=20)
                 empty_box.pack(fill="x")
                 tk.Label(empty_box, text="📂 No Local Repository Selected",
@@ -1182,127 +1204,157 @@ class UserDashboard:
                          text="Click '＋ Add Local Repo' above to choose a Git repository folder on your PC.",
                          font=FONTS["body_sm"], fg=COLORS["text_secondary"], bg=COLORS["bg_medium"]).pack(anchor="w", pady=(4, 10))
                 tk.Button(empty_box, text="📁 Choose Local Repository Folder", font=FONTS["label_bold"],
-                         fg="white", bg=COLORS["accent"], relief="flat", bd=0, padx=14, pady=6,
-                         command=add_local_folder).pack(anchor="w")
+                          fg="white", bg=COLORS["accent"], relief="flat", bd=0, padx=14, pady=6,
+                          command=add_local_folder).pack(anchor="w")
                 branch_lbl.config(text="")
                 account_lbl.config(text="")
                 return
 
-            branch = commit_engine.current_branch(self._gd_selected_repo)
-            branch_lbl.config(text=f"🌿 {branch}", fg=COLORS["accent"])
-            acc = db.get_repo_account(self.user["id"], self._gd_selected_repo)
-            if acc:
-                account_lbl.config(text=f"🐙 @{acc['github_username']}", fg=COLORS["info"])
-            else:
-                account_lbl.config(text="🐙 Default Git Push", fg=COLORS["text_muted"])
-
-            # Scan for uncommitted changes (respecting track_log_files option)
-            changes = commit_engine.uncommitted_changes(self._gd_selected_repo, track_logs=self._should_track_logs())
-            commit_composer.sync_selection(self, changes, cfg.get("sensitive_patterns", []))
-
-            if not changes:
-                clean_f = tk.Frame(content_container, bg=COLORS["bg_card"], padx=14, pady=16,
-                                   highlightthickness=1, highlightbackground=COLORS["border"])
-                clean_f.pack(fill="x")
-                tk.Label(clean_f, text=f"✔ Working Tree Clean ({commit_engine.repo_name(self._gd_selected_repo)})",
-                         font=FONTS["label_bold"], fg=COLORS["success"], bg=COLORS["bg_card"]).pack(anchor="w")
-                tk.Label(clean_f,
-                         text="No uncommitted changes detected. All files are up to date and clean.\n"
-                              "Make edits to any file in your project, then click '⚡ Scan for Changes Now' to generate comments and push.",
-                         font=FONTS["body_sm"], fg=COLORS["text_secondary"], bg=COLORS["bg_card"]).pack(anchor="w", pady=(4, 8))
-                btn_row = tk.Frame(clean_f, bg=COLORS["bg_card"])
-                btn_row.pack(anchor="w")
-                tk.Button(btn_row, text="🔄 Check Again", font=FONTS["caption"],
-                          fg=COLORS["text_primary"], bg=COLORS["bg_medium"], relief="flat", bd=0, padx=10, pady=4,
-                          command=render_scanner_content).pack(side="left", padx=(0, 8))
-                tk.Button(btn_row, text="🖥️ Open in Git Desktop", font=FONTS["caption"],
-                          fg=COLORS["accent"], bg=COLORS["bg_medium"], relief="flat", bd=0, padx=10, pady=4,
-                          command=lambda: self._nav_to("git_desktop")).pack(side="left")
-                return
-
-            # ── Uncommitted Changes Display ───────────────────────────────────
-            chg_hdr = tk.Frame(content_container, bg=COLORS["bg_card"])
-            chg_hdr.pack(fill="x", pady=(4, 6))
-
+            # Immediate non-blocking loading placeholder
+            loading_f = tk.Frame(content_container, bg=COLORS["bg_card"], padx=14, pady=16)
+            loading_f.pack(fill="x")
             tk.Label(
-                chg_hdr, text=f"Detected Changes ({len(changes)} files in {commit_engine.repo_name(self._gd_selected_repo)}):",
-                font=FONTS["label_bold"], fg=COLORS["text_primary"], bg=COLORS["bg_card"]
-            ).pack(side="left")
+                loading_f, text="⚡ Scanning repository changes and inspecting files...",
+                font=FONTS["body_sm"], fg=COLORS["accent"], bg=COLORS["bg_card"]
+            ).pack(anchor="w")
 
-            def toggle_all():
-                vars_ = [self._gd_staged_vars[p] for _, p in changes if p in self._gd_staged_vars]
-                target = not all(v.get() for v in vars_)
-                for v in vars_:
-                    v.set(target)
+            def _bg_scan():
+                try:
+                    branch = commit_engine.current_branch(repo)
+                    acc = db.get_repo_account(self.user["id"], repo)
+                    changes = commit_engine.uncommitted_changes(repo, track_logs=self._should_track_logs())
+                    inspect_targets = [p for _, p in changes[:35]]
+                    detected_issues = file_inspector.inspect_files(repo, inspect_targets)
+                except Exception as exc:
+                    log.error("Scanner background worker error: %s", exc)
+                    branch = "main"
+                    acc = None
+                    changes = []
+                    detected_issues = {}
 
-            tgl_btn = tk.Button(chg_hdr, text="Toggle All", font=FONTS["caption"],
-                                fg=COLORS["accent"], bg=COLORS["bg_card"], relief="flat", bd=0,
-                                cursor="hand2", command=toggle_all)
-            tgl_btn.pack(side="right")
+                def _apply():
+                    if scan_token[0] != curr_token or not content_container.winfo_exists():
+                        return
+                    for w in content_container.winfo_children():
+                        w.destroy()
 
-            # Pre-commit inspection on all pending changes (code snippets + fix advice on demand)
-            detected_issues = file_inspector.inspect_files(self._gd_selected_repo, [p for _, p in changes])
-            issues_panel = issue_view.build_issues_panel(content_container, detected_issues, self._gd_selected_repo)
-            if issues_panel is not None:
-                issues_panel.pack(fill="x", pady=(0, 8))
-
-            # File list (scrolls when long)
-            list_h = min(len(changes), 8) * 28 + 12
-            files_box = tk.Frame(content_container, bg=COLORS["bg_input"],
-                                 highlightthickness=1, highlightbackground=COLORS["border"])
-            files_box.pack(fill="x", pady=(0, 10))
-            files_cv = tk.Canvas(files_box, bg=COLORS["bg_input"], highlightthickness=0, height=list_h)
-            files_sb = tk.Scrollbar(files_box, orient="vertical", command=files_cv.yview)
-            files_in = tk.Frame(files_cv, bg=COLORS["bg_input"], padx=8, pady=6)
-            files_win = files_cv.create_window((0, 0), window=files_in, anchor="nw")
-            files_in.bind("<Configure>", lambda e: files_cv.configure(scrollregion=files_cv.bbox("all")))
-            files_cv.bind("<Configure>", lambda e: files_cv.itemconfig(files_win, width=e.width))
-            files_cv.configure(yscrollcommand=files_sb.set)
-            if len(changes) > 8:
-                files_sb.pack(side="right", fill="y")
-            files_cv.pack(side="left", fill="both", expand=True)
-
-            status_colors = {"M": ("Modified", "#f0883e"), "A": ("Added", "#3fb950"), "D": ("Deleted", "#f85149"), "??": ("Untracked", "#58a6ff")}
-            for st, path in changes:
-                row = tk.Frame(files_in, bg=COLORS["bg_input"])
-                row.pack(fill="x", pady=1)
-                var = self._gd_staged_vars[path]
-                cb = tk.Checkbutton(row, variable=var, bg=COLORS["bg_input"], selectcolor=COLORS["bg_card"],
-                                    activebackground=COLORS["bg_input"])
-                cb.pack(side="left")
-
-                label_txt, color_hex = status_colors.get(st, (st, "#8b949e"))
-                tk.Label(row, text=f"[{st}]", font=FONTS["mono_sm"], fg=color_hex, bg=COLORS["bg_input"]).pack(side="left", padx=(0, 6))
-                tk.Label(row, text=path, font=FONTS["body_sm"], fg=COLORS["text_primary"], bg=COLORS["bg_input"]).pack(side="left")
-
-                if path in detected_issues:
-                    top_iss = detected_issues[path][0]
-                    sev = top_iss.get("severity")
-                    l_no = top_iss.get("line", 1)
-                    n_more = len(detected_issues[path])
-                    if sev == "error":
-                        b_text, b_bg = f"❌ Error (L{l_no})", "#da3633"
-                    elif sev == "security":
-                        b_text, b_bg = f"🛡️ Security (L{l_no})", "#d29922"
+                    branch_lbl.config(text=f"🌿 {branch}", fg=COLORS["accent"])
+                    if acc:
+                        account_lbl.config(text=f"🐙 @{acc['github_username']}", fg=COLORS["info"])
                     else:
-                        b_text, b_bg = f"⚠️ Warning (L{l_no})", "#9e6a03"
-                    if n_more > 1:
-                        b_text += f" +{n_more - 1}"
-                    tk.Label(row, text=f" {b_text} ", font=FONTS["caption"], fg="#ffffff", bg=b_bg).pack(side="left", padx=(8, 0))
+                        account_lbl.config(text="🐙 Default Git Push", fg=COLORS["text_muted"])
 
-            # ── Commit composer: Summary + Description, one commit per file by default ──
-            composer_box = tk.Frame(content_container, bg=COLORS["bg_card"], padx=14, pady=12,
-                                    highlightthickness=1, highlightbackground=COLORS["accent"])
-            composer_box.pack(fill="x", pady=(0, 10))
-            commit_composer.CommitComposer(
-                composer_box, self, cfg, on_done=render_scanner_content
-            ).pack(fill="x")
-            tk.Button(
-                composer_box, text="🖥️ Open full diff in Git Desktop", font=FONTS["label"],
-                fg=COLORS["text_secondary"], bg=COLORS["bg_card"], activebackground=COLORS["bg_medium"],
-                activeforeground=COLORS["text_primary"], relief="flat", bd=0, cursor="hand2", padx=10, pady=6,
-                command=lambda: self._nav_to("git_desktop")
-            ).pack(anchor="w", pady=(6, 0))
+                    commit_composer.sync_selection(self, changes, cfg.get("sensitive_patterns", []))
+
+                    if not changes:
+                        clean_f = tk.Frame(content_container, bg=COLORS["bg_card"], padx=14, pady=16,
+                                           highlightthickness=1, highlightbackground=COLORS["border"])
+                        clean_f.pack(fill="x")
+                        tk.Label(clean_f, text=f"✔ Working Tree Clean ({commit_engine.repo_name(repo)})",
+                                 font=FONTS["label_bold"], fg=COLORS["success"], bg=COLORS["bg_card"]).pack(anchor="w")
+                        tk.Label(clean_f,
+                                 text="No uncommitted changes detected. All files are up to date and clean.\n"
+                                      "Make edits to any file in your project, then click '⚡ Scan for Changes Now' to generate comments and push.",
+                                 font=FONTS["body_sm"], fg=COLORS["text_secondary"], bg=COLORS["bg_card"]).pack(anchor="w", pady=(4, 8))
+                        btn_row = tk.Frame(clean_f, bg=COLORS["bg_card"])
+                        btn_row.pack(anchor="w")
+                        tk.Button(btn_row, text="🔄 Check Again", font=FONTS["caption"],
+                                  fg=COLORS["text_primary"], bg=COLORS["bg_medium"], relief="flat", bd=0, padx=10, pady=4,
+                                  command=render_scanner_content).pack(side="left", padx=(0, 8))
+                        tk.Button(btn_row, text="🖥️ Open in Git Desktop", font=FONTS["caption"],
+                                  fg=COLORS["accent"], bg=COLORS["bg_medium"], relief="flat", bd=0, padx=10, pady=4,
+                                  command=lambda: self._nav_to("git_desktop")).pack(side="left")
+                        return
+
+                    # ── Uncommitted Changes Display ───────────────────────────────────
+                    chg_hdr = tk.Frame(content_container, bg=COLORS["bg_card"])
+                    chg_hdr.pack(fill="x", pady=(4, 6))
+
+                    tk.Label(
+                        chg_hdr, text=f"Detected Changes ({len(changes)} files in {commit_engine.repo_name(repo)}):",
+                        font=FONTS["label_bold"], fg=COLORS["text_primary"], bg=COLORS["bg_card"]
+                    ).pack(side="left")
+
+                    def toggle_all():
+                        vars_ = [self._gd_staged_vars[p] for _, p in changes if p in self._gd_staged_vars]
+                        target = not all(v.get() for v in vars_)
+                        for v in vars_:
+                            v.set(target)
+
+                    tgl_btn = tk.Button(chg_hdr, text="Toggle All", font=FONTS["caption"],
+                                        fg=COLORS["accent"], bg=COLORS["bg_card"], relief="flat", bd=0,
+                                        cursor="hand2", command=toggle_all)
+                    tgl_btn.pack(side="right")
+
+                    # Pre-commit inspection on pending changes
+                    issues_panel = issue_view.build_issues_panel(content_container, detected_issues, repo)
+                    if issues_panel is not None:
+                        issues_panel.pack(fill="x", pady=(0, 8))
+
+                    # File list (scrolls when long)
+                    list_h = min(len(changes), 8) * 28 + 12
+                    files_box = tk.Frame(content_container, bg=COLORS["bg_input"],
+                                         highlightthickness=1, highlightbackground=COLORS["border"])
+                    files_box.pack(fill="x", pady=(0, 10))
+                    files_cv = tk.Canvas(files_box, bg=COLORS["bg_input"], highlightthickness=0, height=list_h)
+                    files_sb = tk.Scrollbar(files_box, orient="vertical", command=files_cv.yview)
+                    files_in = tk.Frame(files_cv, bg=COLORS["bg_input"], padx=8, pady=6)
+                    files_win = files_cv.create_window((0, 0), window=files_in, anchor="nw")
+                    files_in.bind("<Configure>", lambda e: files_cv.configure(scrollregion=files_cv.bbox("all")))
+                    files_cv.bind("<Configure>", lambda e: files_cv.itemconfig(files_win, width=e.width))
+                    files_cv.configure(yscrollcommand=files_sb.set)
+                    if len(changes) > 8:
+                        files_sb.pack(side="right", fill="y")
+                    files_cv.pack(side="left", fill="both", expand=True)
+
+                    status_colors = {"M": ("Modified", "#f0883e"), "A": ("Added", "#3fb950"), "D": ("Deleted", "#f85149"), "??": ("Untracked", "#58a6ff")}
+                    for st, path in changes:
+                        row = tk.Frame(files_in, bg=COLORS["bg_input"])
+                        row.pack(fill="x", pady=1)
+                        var = self._gd_staged_vars[path]
+                        cb = tk.Checkbutton(row, variable=var, bg=COLORS["bg_input"], selectcolor=COLORS["bg_card"],
+                                            activebackground=COLORS["bg_input"])
+                        cb.pack(side="left")
+
+                        label_txt, color_hex = status_colors.get(st, (st, "#8b949e"))
+                        tk.Label(row, text=f"[{st}]", font=FONTS["mono_sm"], fg=color_hex, bg=COLORS["bg_input"]).pack(side="left", padx=(0, 6))
+                        tk.Label(row, text=path, font=FONTS["body_sm"], fg=COLORS["text_primary"], bg=COLORS["bg_input"]).pack(side="left")
+
+                        if path in detected_issues:
+                            top_iss = detected_issues[path][0]
+                            sev = top_iss.get("severity")
+                            l_no = top_iss.get("line", 1)
+                            n_more = len(detected_issues[path])
+                            if sev == "error":
+                                b_text, b_bg = f"❌ Error (L{l_no})", "#da3633"
+                            elif sev == "security":
+                                b_text, b_bg = f"🛡️ Security (L{l_no})", "#d29922"
+                            else:
+                                b_text, b_bg = f"⚠️ Warning (L{l_no})", "#9e6a03"
+                            if n_more > 1:
+                                b_text += f" +{n_more - 1}"
+                            tk.Label(row, text=f" {b_text} ", font=FONTS["caption"], fg="#ffffff", bg=b_bg).pack(side="left", padx=(8, 0))
+
+                    # ── Commit composer: Summary + Description, one commit per file by default ──
+                    composer_box = tk.Frame(content_container, bg=COLORS["bg_card"], padx=14, pady=12,
+                                            highlightthickness=1, highlightbackground=COLORS["accent"])
+                    composer_box.pack(fill="x", pady=(0, 10))
+                    commit_composer.CommitComposer(
+                        composer_box, self, cfg, on_done=render_scanner_content
+                    ).pack(fill="x")
+                    tk.Button(
+                        composer_box, text="🖥️ Open full diff in Git Desktop", font=FONTS["label"],
+                        fg=COLORS["text_secondary"], bg=COLORS["bg_card"], activebackground=COLORS["bg_medium"],
+                        activeforeground=COLORS["text_primary"], relief="flat", bd=0, cursor="hand2", padx=10, pady=6,
+                        command=lambda: self._nav_to("git_desktop")
+                    ).pack(anchor="w", pady=(6, 0))
+
+                try:
+                    self.root.after(0, _apply)
+                except Exception:
+                    pass
+
+            threading.Thread(target=_bg_scan, daemon=True, name="user-scanner-worker").start()
 
         render_scanner_content()
 
@@ -2855,6 +2907,19 @@ class UserDashboard:
             )
 
         messagebox.showinfo("Saved", "Settings saved successfully! Reminder service updated.", parent=self.root)
+
+    def _page_analytics(self):
+        self._set_header("Analytics & Graphs")
+        p = self._content_frame
+        pad = tk.Frame(p, bg=COLORS["bg_dark"], padx=24, pady=20)
+        pad.pack(fill="both", expand=True)
+
+        self._create_page_header_panel(
+            pad, "Portfolio Analytics & Graphs",
+            "Watermelon Capitalio-grade commit performance, velocity tracking, and repository distribution.",
+            icon="📈"
+        )
+        charts.render_capitalio_dashboard(pad, user_id=self.user["id"], days=30)
 
     def _page_profile(self):
         self._set_header("My Profile")
