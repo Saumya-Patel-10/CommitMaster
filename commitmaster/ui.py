@@ -97,7 +97,14 @@ def _ensure_ui_thread() -> None:
 
 
 def run_in_ui_thread(fn) -> None:
-    """Schedule fn() to run on the dedicated UI thread."""
+    """Schedule fn() to run on the active Tkinter UI thread."""
+    root = getattr(tk, "_default_root", None)
+    if root and hasattr(root, "after"):
+        try:
+            root.after(0, fn)
+            return
+        except Exception:
+            pass
     _ensure_ui_thread()
     _ui_queue.put(fn)
 
