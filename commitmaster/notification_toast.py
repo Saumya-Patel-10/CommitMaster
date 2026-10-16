@@ -402,22 +402,9 @@ def show_toast(
     master: Optional[tk.Misc] = None,
 ) -> None:
     """
-    Thread-safe function to display the bottom-right toast notification.
-    Dispatches to Tkinter thread if necessary. Also triggers desktop notification fallback.
+    Thread-safe function to display the bottom-right custom toast notification.
+    Dispatches to Tkinter thread if necessary. Only displays the in-app featured toast.
     """
-    # Companion notification in Windows Action Center (safely fallback if unavail)
-    try:
-        from plyer import notification
-        # On Windows 11 balloontip can fail without a registered icon handle, so guard against errors
-        notification.notify(
-            title=f"CommitMaster: {title}",
-            message=message,
-            app_name="CommitMaster",
-            timeout=8,
-        )
-    except Exception as exc:
-        log.debug("Companion notification skipped: %s", exc)
-
     def _do_show():
         try:
             toast = NotificationToast(
@@ -439,8 +426,11 @@ def show_toast(
             log.error("Failed to display NotificationToast: %s", exc)
 
     target_root = master or getattr(tk, "_default_root", None)
-    if target_root and hasattr(target_root, "after") and target_root.winfo_exists():
-        target_root.after(0, _do_show)
-    else:
-        from commitmaster import ui
-        ui.run_in_ui_thread(_do_show)
+    if target_root and hasattr(target_root, "after"):
+        try:
+            target_root.after(0, _do_show)
+            return
+        except Exception:
+            pass
+    from commitmaster import ui
+    ui.run_in_ui_thread(_do_show)
