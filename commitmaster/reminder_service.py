@@ -100,6 +100,7 @@ class ReminderService(threading.Thread):
 
         # Multi-IDE session tracking: maps lower-case exe name -> info dict
         self._tracked_ide_sessions: Dict[str, Dict[str, Any]] = {}
+        self._pid_project_cache: Dict[int, Tuple[Optional[str], Optional[str]]] = {}
         self.last_interval_reminder_time: float = time.time()
         self.detected_project_path: str = ""
         self.detected_project_name: str = ""
@@ -281,7 +282,7 @@ class ReminderService(threading.Thread):
             except Exception as exc:
                 log.error("Exception in ReminderService loop: %s", exc, exc_info=True)
 
-            self._stop_event.wait(2.0)
+            self._stop_event.wait(3.5)
 
         log.info("ReminderService background thread stopped.")
 
@@ -440,6 +441,7 @@ class ReminderService(threading.Thread):
                     all_watched.add(alias.lower())
                     preset_map[alias.lower()] = preset["name"]
 
+        active_pids = set()
         try:
             for p in psutil.process_iter(["pid", "name"]):
                 try:
@@ -448,41 +450,47 @@ class ReminderService(threading.Thread):
                         continue
                     name_lower = name.lower()
                     if name_lower in all_watched:
+                        pid = p.info["pid"]
+                        active_pids.add(pid)
                         disp_name = preset_map.get(name_lower, name)
                         if name_lower not in running:
                             proj_path, proj_name = None, None
-                            try:
-                                proc = psutil.Process(p.info["pid"])
-                                # Strategy 1: Check process CWD
+                            if pid in self._pid_project_cache:
+                                proj_path, proj_name = self._pid_project_cache[pid]
+                            else:
                                 try:
-                                    cwd = proc.cwd()
-                                    if cwd and os.path.isdir(cwd) and commit_engine.is_git_repo(cwd):
-                                        proj_path = os.path.normpath(cwd)
-                                        proj_name = commit_engine.repo_name(cwd)
+                                    proc = psutil.Process(pid)
+                                    # Strategy 1: Check process CWD
+                                    try:
+                                        cwd = proc.cwd()
+                                        if cwd and os.path.isdir(cwd) and commit_engine.is_git_repo(cwd):
+                                            proj_path = os.path.normpath(cwd)
+                                            proj_name = commit_engine.repo_name(cwd)
+                                    except Exception:
+                                        pass
+
+                                    # Strategy 2: Check command line arguments for folder paths
+                                    if not proj_path:
+                                        try:
+                                            cmd = proc.cmdline()
+                                            for arg in cmd:
+                                                clean_arg = arg.strip(' "\'')
+                                                if clean_arg and os.path.isdir(clean_arg) and commit_engine.is_git_repo(clean_arg):
+                                                    proj_path = os.path.normpath(clean_arg)
+                                                    proj_name = commit_engine.repo_name(clean_arg)
+                                                    break
+                                        except Exception:
+                                            pass
+                                    self._pid_project_cache[pid] = (proj_path, proj_name)
                                 except Exception:
                                     pass
 
-                                # Strategy 2: Check command line arguments for folder paths
-                                if not proj_path:
-                                    try:
-                                        cmd = proc.cmdline()
-                                        for arg in cmd:
-                                            clean_arg = arg.strip(' "\'')
-                                            if clean_arg and os.path.isdir(clean_arg) and commit_engine.is_git_repo(clean_arg):
-                                                proj_path = os.path.normpath(clean_arg)
-                                                proj_name = commit_engine.repo_name(clean_arg)
-                                                break
-                                    except Exception:
-                                        pass
-                            except Exception:
-                                pass
-
                             start_ts = time.time()
                             try:
-                                if proc:
-                                    ct = proc.create_time()
-                                    if 0 < ct <= time.time():
-                                        start_ts = ct
+                                proc = psutil.Process(pid)
+                                ct = proc.create_time()
+                                if 0 < ct <= time.time():
+                                    start_ts = ct
                             except Exception:
                                 pass
 
@@ -497,6 +505,11 @@ class ReminderService(threading.Thread):
                     continue
         except Exception as exc:
             log.debug("Process iteration exception: %s", exc)
+
+        # Evict old PIDs from cache that are no longer active
+        dead_pids = [k for k in self._pid_project_cache if k not in active_pids]
+        for dp in dead_pids:
+            self._pid_project_cache.pop(dp, None)
 
         return running
 
