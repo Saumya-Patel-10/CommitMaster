@@ -9,6 +9,7 @@ dist/
 *.spec
 msix_layout/
 Real_Store_Screenshots/
+node_modules/
 
 # Code Signing Certificates & Keys
 *.pfx
