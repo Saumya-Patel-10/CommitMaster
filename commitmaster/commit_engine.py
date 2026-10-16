@@ -207,6 +207,14 @@ def _format_xy_status(xy: str) -> str:
     return xy.strip(".") or "M"
 
 
+IGNORED_EXPAND_DIRS = {
+    "node_modules", ".git", ".venv", "venv", "env", "build", "dist",
+    "__pycache__", ".next", ".nuxt", "vendor", "target", ".gradle",
+    ".idea", ".vscode", "coverage", ".pytest_cache", ".mypy_cache",
+    ".cache", "msix_layout"
+}
+
+
 def _expand_dir_files(repo_path: Optional[str], dir_rel_path: str, seen: set) -> List[Tuple[str, str]]:
     """Expand untracked directory into individual files matching GitHub Desktop's view."""
     added = []
@@ -214,12 +222,18 @@ def _expand_dir_files(repo_path: Optional[str], dir_rel_path: str, seen: set) ->
         return added
     full_path = os.path.join(repo_path, dir_rel_path)
     if os.path.isdir(full_path):
-        for root, _, filenames in os.walk(full_path):
+        for root, dirs, filenames in os.walk(full_path):
+            # Prune massive dependency, cache, and build directories
+            dirs[:] = [d for d in dirs if d.lower() not in IGNORED_EXPAND_DIRS and not d.startswith(".")]
             for fn in sorted(filenames):
                 rel = os.path.relpath(os.path.join(root, fn), repo_path).replace("\\", "/")
                 if rel not in seen:
                     seen.add(rel)
                     added.append(("??", rel))
+                if len(added) >= 200:
+                    break
+            if len(added) >= 200:
+                break
     return added
 
 
