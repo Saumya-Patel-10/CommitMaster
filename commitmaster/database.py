@@ -11,7 +11,10 @@ import secrets
 import threading
 from datetime import datetime, timedelta
 from typing import Optional, Dict, List, Any, Tuple, Iterator
-import requests
+try:
+    import requests
+except ImportError:
+    requests = None
 
 from commitmaster import paths
 
@@ -109,6 +112,8 @@ def _get_api_headers(token: Optional[str] = None) -> Dict[str, str]:
 
 def get_server_url() -> str:
     """Return configured CommitMaster Cloud Backend Server URL or empty string."""
+    if requests is None:
+        return ""
     env_url = os.getenv("COMMITMASTER_SERVER_URL", "").strip()
     if env_url:
         return env_url.rstrip("/")
@@ -141,6 +146,8 @@ def set_server_url(url: str) -> None:
 
 def test_server_connection(url: Optional[str] = None) -> Tuple[bool, str]:
     """Test connectivity to the backend server."""
+    if requests is None:
+        return False, "HTTP client module 'requests' is not available."
     target_url = (url if url is not None else get_server_url()).strip().rstrip("/")
     if not target_url:
         return False, "No server URL provided (Local Mode)"
