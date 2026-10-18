@@ -64,17 +64,34 @@ CommitMaster evolved from a simple background tray daemon into an enterprise-gra
 - **Merge Conflict Blocker**: Blocks accidental staging of conflict markers (`<<<<<<< HEAD`, `=======`, `>>>>>>>`).
 - **Empty File Warning**: Alerts you if a file was accidentally truncated to 0 bytes.
 
-### 5. 🐙 Multi-Account GitHub Linking & Web Sign-In
+### 5. 📊 Capitalio-Style Analytics & Interactive Multi-Series Engine
+- **5 Top KPI Metrics**: Real-time tracking for **Total Commits**, **Vulnerabilities**, **Code Errors**, **Failed Operations** (commits + pushes), and **Code Stability Score** with dynamic micro-sparklines and period comparative trends.
+- **Interactive Multi-Series Performance Chart**: Watermelon Capitalio dot-grid canvas plotting Commits, Vulnerabilities, Errors, Failures, and Sessions concurrently.
+- **Legend Pill Toggles**: Clickable header badges allow developers to toggle individual metrics on and off with instant canvas re-scaling.
+- **Glassmorphic Hover Crosshair**: Dynamic guideline snapping across dates displaying a structured floating breakdown card of all active metrics.
+- **Live System Audit Tables**: Prominent Security Findings and 7-day Daily Breakdown tables providing comprehensive repository visibility.
+
+### 6. 🔔 Clean Single-Delivery In-App Notifications
+- **Featured Toast Overlay**: Custom bottom-right floating notification toast with direct interactive action buttons (`Commit Now`, `Snooze`, `Dismiss`).
+- **Zero OS Duplication**: Eliminates duplicate Windows Action Center balloon popups, keeping developer notifications clean and distraction-free.
+
+### 7. 👥 Administrator Multi-Select & Bulk Account Operations
+- **Bulk Selection Control**: Select multiple user accounts via bright contrast checkboxes or by clicking anywhere on account rows.
+- **Visual Selection Feedback**: Selected rows immediately highlight in dark emerald glass with reactive hover states.
+- **Instant Bulk Operations**: Mass `Disable Selected`, `Enable Selected`, and `Delete Selected` with confirmation modals, database batch transactions, and audit logging.
+- **Admin Self-Protection**: Designated administrators and active self-accounts are strictly protected against accidental bulk disablement or deletion.
+
+### 8. 🐙 Multi-Account GitHub Linking & Web Sign-In
 - **Fast Web Sign-In**: Automatically launches GitHub with pre-filled scopes (`repo`, `user:email`, `read:org`, `workflow`) for instant authorization.
 - **Multi-Account Profile Manager**: Easily switch between personal, open-source, and corporate GitHub accounts.
 - **Repo-to-Account Push Bindings**: Bind specific repositories to specific accounts so commits and pushes always reflect the right identity.
 - **Interactive Push Protection**: Modal confirmation summarizes repository, branch, author account, and commit list prior to remote push.
 
-### 6. 🌐 Dual-Mode Architecture: Local & Central Cloud Sync
+### 9. 🌐 Dual-Mode Architecture: Local & Central Cloud Sync
 - **Local Mode (Default)**: Out-of-the-box zero-config operation powered by a high-performance local SQLite database.
 - **Cloud Backend Mode (`server.py`)**: Deploy the included lightweight REST API to Render, Railway, or VPS so you can log in, sync tracked repositories, and manage sessions across multiple Windows computers.
 
-### 7. 🔐 20-Point Enterprise Security Architecture
+### 10. 🔐 20-Point Enterprise Security Architecture
 1. **Never Hardcode Secrets**: API keys and tokens stored strictly in local configuration or `.env`.
 2. **Purge Git Secrets**: Account tokens and sessions excluded by default.
 3. **Database Security**: SQLite WAL mode with remote TLS REST sync.
@@ -100,13 +117,14 @@ CommitMaster evolved from a simple background tray daemon into an enterprise-gra
 
 ## 🚀 Getting Started
 
-### Option 1: Microsoft Store (Recommended)
-Download directly from the **Microsoft Store** for seamless background updates, Windows 11 sandbox isolation, and 1-click installation.
+### Option 1: Microsoft Store Package (MSIX)
+Download directly from the **Microsoft Store** or install `CommitMaster.msix` for seamless background updates, Windows 11 sandbox isolation, and 1-click installation.
 
 ### Option 2: Standalone Portable Windows Binary
-1. Download `CommitMaster.exe` from the [Latest GitHub Release](../../releases/latest).
-2. Place the executable in any folder (or your development tools directory).
-3. Run `CommitMaster.exe` — no Python runtime or installer required.
+1. Download `CommitMaster-v1.0-Windows.zip` (or `CommitMaster.exe`) from the [Latest GitHub Release](../../releases/latest).
+2. Extract the archive into any folder on your PC.
+3. Run `CommitMaster.exe` (or `Launch_CommitMaster.bat`) — no Python runtime or installer required.
+4. *SmartScreen Note*: If Windows displays a SmartScreen notice for a newly downloaded executable, click **More info** → **Run anyway**, or run `Install_Certificate.bat` once to trust the Authenticode certificate.
 
 ### Option 3: Running from Source
 
@@ -130,22 +148,24 @@ python app.py
 
 ## 🛠️ Building & Packaging
 
-CommitMaster includes build scripts to compile standalone binaries and Microsoft Store packages:
+CommitMaster includes build scripts to compile standalone binaries, release zip archives, and Microsoft Store packages:
 
-### 1. Build Standalone Binaries (PyInstaller)
+### 1. Build Standalone Binaries & Release ZIPs
 ```powershell
 python build_exe.py
 ```
-**Output:**
-- `dist/CommitMaster.exe` (User Desktop Application)
-- `dist/CommitMaster-Admin.exe` (Administrator Companion Application)
+**Outputs (`dist/`):**
+- `CommitMaster.exe` (Public User Desktop App, Digitally Signed)
+- `CommitMaster-v1.0-Windows.zip` (Public release package with unblocker launcher & cert)
+- `CommitMaster.zip` (Universal distribution archive)
+- `CommitMaster-Admin.exe` (Saumya's Private Admin Console)
 
 ### 2. Build Microsoft Store MSIX Package
 ```powershell
 python build_msix.py
 ```
-**Output:**
-- `dist/CommitMaster.msix` (Production package ready for Microsoft Partner Center submission)
+**Output (`dist/`):**
+- `CommitMaster.msix` (Production package ready for Microsoft Partner Center submission and local testing)
 
 ---
 
