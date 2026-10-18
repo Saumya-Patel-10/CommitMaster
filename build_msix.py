@@ -29,7 +29,7 @@ DEFAULT_IDENTITY = {
     "package_display_name": "CommitMaster",
     "publisher_name": "CN=SaumyaPatel",
     "publisher_display_name": "Saumya Patel",
-    "version": "3.0.0.0",
+    "version": "1.0.0.0",
 }
 
 
