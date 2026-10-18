@@ -62,11 +62,12 @@ def get_data_dir() -> str:
     # 3. If running frozen from outside workspace repo
     if getattr(sys, "frozen", False):
         exe_dir = os.path.dirname(os.path.abspath(sys.executable))
-        # If running from dist/ inside workspace
-        candidate_repo = os.path.dirname(exe_dir)
-        candidate_db = os.path.join(candidate_repo, "commitmaster.db")
-        if os.path.exists(candidate_db):
-            return candidate_repo
+        # If running from dist/ inside workspace (and not packaged in WindowsApps / Program Files)
+        if not any(p in exe_dir.lower() for p in ["windowsapps", "program files"]):
+            candidate_repo = os.path.dirname(exe_dir)
+            candidate_db = os.path.join(candidate_repo, "commitmaster.db")
+            if os.path.exists(candidate_db) and os.access(candidate_repo, os.W_OK):
+                return candidate_repo
 
     # 4. Standard Windows persistent application data directory
     os.makedirs(local_commitmaster_dir, exist_ok=True)
