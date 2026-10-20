@@ -126,6 +126,73 @@ class TestAdminScrollAndLogos(unittest.TestCase):
         self.assertGreater(after_scroll[0], before_scroll[0])
         app.root.destroy()
 
+    def test_05_admin_portal_window_resizability_and_protocol(self):
+        """Verify AdminPortal window is resizable, has minsize, and binds WM_DELETE_WINDOW."""
+        closed = []
+        portal = AdminPortal(
+            admin_user={"id": 1, "username": "test.admin@Admin_#", "email": "test.admin@example.com", "role": "admin"},
+            on_close=lambda: closed.append(True)
+        )
+        portal.root.withdraw()
+        portal.root.update_idletasks()
+
+        # Check resizable
+        resizable_x, resizable_y = portal.root.resizable()
+        self.assertTrue(resizable_x)
+        self.assertTrue(resizable_y)
+
+        # Check minsize
+        min_w, min_h = portal.root.minsize()
+        self.assertGreaterEqual(min_w, 960)
+        self.assertGreaterEqual(min_h, 600)
+
+        # Check WM_DELETE_WINDOW protocol
+        protocol_handler = portal.root.protocol("WM_DELETE_WINDOW")
+        self.assertTrue(bool(protocol_handler))
+
+        # Trigger go_back and verify on_close callback called
+        portal._go_back()
+        self.assertTrue(len(closed) > 0 and closed[0])
+
+    def test_06_admin_portal_responsive_user_table_and_activity(self):
+        """Verify AdminPortal responsive grid layout in User Management and Activity Log."""
+        portal = AdminPortal(
+            admin_user={"id": 1, "username": "test.admin@Admin_#", "email": "test.admin@example.com", "role": "admin"},
+            on_close=lambda: None
+        )
+        portal.root.withdraw()
+
+        # Navigate to users page
+        portal._go("users")
+        portal.root.update()
+
+        # Verify grid layout used for user rows
+        self.assertTrue(hasattr(portal, "_user_row_widgets"))
+        for uid, row_data in portal._user_row_widgets.items():
+            row_frame = row_data["row"]
+            # Column 6 must be the Actions frame
+            col_info = row_frame.grid_columnconfigure(6)
+            self.assertGreaterEqual(col_info["minsize"], 200)
+
+        # Simulate resize to wide window
+        portal.root.geometry("1400x800")
+        portal.root.update()
+        canvas_w = portal._canvas.winfo_width()
+        content_w = portal._content_frame.winfo_width()
+        self.assertGreaterEqual(canvas_w, 800)
+
+        # Navigate to activity log
+        portal._go("activity")
+        portal.root.update()
+
+        # Navigate to customize page
+        portal._go("customize")
+        portal.root.update()
+        self.assertTrue(hasattr(portal, "_theme_cards"))
+        self.assertEqual(len(portal._theme_cards), 8)
+
+        portal.root.destroy()
+
 
 if __name__ == "__main__":
     unittest.main()
