@@ -17,6 +17,9 @@ except ImportError:
     requests = None
 
 from commitmaster import paths
+from commitmaster.logger import get
+
+log = get("database")
 
 # Database file path (always persistent, never in temporary _MEIPASS)
 APP_DIR = paths.get_data_dir()
@@ -286,8 +289,8 @@ def init_db() -> None:
             ai_model            TEXT    DEFAULT '',
             theme               TEXT    DEFAULT 'dark',
             notifications       INTEGER DEFAULT 1,
-            reminder_interval_enabled    INTEGER DEFAULT 1,
-            reminder_interval_hours      INTEGER DEFAULT 1,
+            reminder_interval_enabled    INTEGER DEFAULT 0,
+            reminder_interval_hours      INTEGER DEFAULT 0,
             reminder_interval_minutes    INTEGER DEFAULT 0,
             reminder_app_monitor_enabled INTEGER DEFAULT 1,
             reminder_only_if_dirty       INTEGER DEFAULT 1
@@ -479,8 +482,8 @@ def init_db() -> None:
             "openai_model": "ALTER TABLE user_preferences ADD COLUMN openai_model TEXT DEFAULT 'gpt-4o-mini'",
             "claude_model": "ALTER TABLE user_preferences ADD COLUMN claude_model TEXT DEFAULT 'claude-3-5-haiku-20241022'",
             "gemini_model": "ALTER TABLE user_preferences ADD COLUMN gemini_model TEXT DEFAULT 'gemini-1.5-flash'",
-            "reminder_interval_enabled": "ALTER TABLE user_preferences ADD COLUMN reminder_interval_enabled INTEGER DEFAULT 1",
-            "reminder_interval_hours": "ALTER TABLE user_preferences ADD COLUMN reminder_interval_hours INTEGER DEFAULT 1",
+            "reminder_interval_enabled": "ALTER TABLE user_preferences ADD COLUMN reminder_interval_enabled INTEGER DEFAULT 0",
+            "reminder_interval_hours": "ALTER TABLE user_preferences ADD COLUMN reminder_interval_hours INTEGER DEFAULT 0",
             "reminder_interval_minutes": "ALTER TABLE user_preferences ADD COLUMN reminder_interval_minutes INTEGER DEFAULT 0",
             "reminder_app_monitor_enabled": "ALTER TABLE user_preferences ADD COLUMN reminder_app_monitor_enabled INTEGER DEFAULT 1",
             "reminder_only_if_dirty": "ALTER TABLE user_preferences ADD COLUMN reminder_only_if_dirty INTEGER DEFAULT 1",
@@ -2479,8 +2482,57 @@ def get_repo_account(user_id: int, repo_path: str) -> Optional[Dict]:
     row = cur.fetchone()
     if row:
         return dict(row)
+
+    # Check if watched_repositories explicitly set a github_account_id
+    cur2 = conn.execute("""
+        SELECT ga.* FROM watched_repositories wr
+        JOIN github_accounts ga ON wr.github_account_id = ga.id
+        WHERE wr.user_id = ? AND (wr.local_path = ? OR wr.local_path = ?)
+    """, (user_id, repo_path, norm_path))
+    row2 = cur2.fetchone()
+    if row2:
+        return dict(row2)
+
+    # Auto-detect from remote URL if not explicitly bound
+    detected = auto_detect_and_bind_repo_origin(user_id, norm_path)
+    if detected:
+        return detected
+
     # Fallback to user's default account
     return get_default_github_account(user_id)
+
+
+def auto_detect_and_bind_repo_origin(user_id: int, repo_path: str) -> Optional[Dict]:
+    """Auto-detect which linked GitHub account this repo was cloned from, and bind it."""
+    norm_path = os.path.normpath(repo_path)
+    try:
+        from commitmaster import commit_engine
+        if not (os.path.isdir(norm_path) and commit_engine.is_git_repo(norm_path)):
+            return None
+        origin_url = commit_engine.get_remote_url(norm_path, "origin")
+        slug = commit_engine.parse_github_slug(origin_url) if origin_url else None
+        if not slug:
+            return None
+        owner = slug.split("/")[0].strip().lower()
+        conn = get_conn()
+        cur = conn.execute("""
+            SELECT * FROM github_accounts
+            WHERE user_id = ? AND (LOWER(github_username) = ? OR LOWER(account_name) = ?)
+            ORDER BY is_default DESC LIMIT 1
+        """, (user_id, owner, owner))
+        row = cur.fetchone()
+        if row:
+            acc = dict(row)
+            bind_repo_to_account(user_id, norm_path, acc["id"])
+            conn.execute("""
+                UPDATE watched_repositories SET github_account_id = ?
+                WHERE user_id = ? AND (local_path = ? OR local_path = ?)
+            """, (acc["id"], user_id, repo_path, norm_path))
+            conn.commit()
+            return acc
+    except Exception as exc:
+        log.debug("auto_detect_and_bind_repo_origin error: %s", exc)
+    return None
 
 
 def get_all_repo_bindings(user_id: int) -> Dict[str, int]:
