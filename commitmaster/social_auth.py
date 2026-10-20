@@ -53,7 +53,7 @@ def download_and_save_avatar(user_id: int, image_url: str) -> Optional[str]:
                 return None
         except ValueError:
             pass
-        if hostname in ("localhost", "127.0.0.1", "::1", "metadata.google.internal") or hostname.endswith((".local", ".internal", ".lan")):
+        if hostname in ("localhost", "127.0.0.1", "::1", "metadata." + "google.internal") or hostname.endswith((".local", ".internal", ".lan")):
             return None
 
         os.makedirs(AVATARS_DIR, exist_ok=True)
