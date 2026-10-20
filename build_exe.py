@@ -89,6 +89,7 @@ def build_single(target_script: str, exe_name: str, description: str, icon_file:
         "--hidden-import", "commitmaster.paths",
         "--hidden-import", "commitmaster.pattern_utils",
         "--hidden-import", "commitmaster.reminder_service",
+        "--hidden-import", "commitmaster.repo_analyzer",
         "--hidden-import", "commitmaster.session_monitor",
         "--hidden-import", "commitmaster.settings_ui",
         "--hidden-import", "commitmaster.social_auth",
