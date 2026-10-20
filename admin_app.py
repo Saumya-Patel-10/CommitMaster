@@ -27,7 +27,7 @@ _edition.set_admin_edition()  # this module only ships in the private admin buil
 from commitmaster import database as db
 from commitmaster import avatar_utils
 from commitmaster import pattern_utils
-from commitmaster import commit_engine, ai_messages, ui, github_service, file_inspector
+from commitmaster import commit_engine, ai_messages, ui, github_service, file_inspector, repo_analyzer
 from commitmaster import commit_composer, charts, navigation, issue_view
 from commitmaster.config import load_config, save_config
 from commitmaster.app_styles import (
@@ -38,6 +38,9 @@ from commitmaster.github_service import mask_token, verify_github_token
 from commitmaster.github_account_dialog import GitHubAccountDialog, SelectGitHubReposDialog
 from commitmaster.login_window import LoginWindow
 from commitmaster.reminder_service import ReminderService
+from commitmaster.logger import get
+
+log = get("admin_app")
 
 from commitmaster import paths
 
@@ -160,6 +163,8 @@ class AdminApp:
         # Watched Repos state
         self._wr_search_var: tk.StringVar = tk.StringVar()
         self._wr_filter_mode: str = "all"
+        self._wr_sub_tab: str = "repos"
+        self._wr_selected_status_repo: Optional[str] = None
 
         # Multi-select User Management state
         self._selected_users: set = set()
@@ -750,6 +755,18 @@ class AdminApp:
                  fg=COLORS["text_secondary"], bg=COLORS["bg_dark"]).pack(
             anchor="w", pady=pady)
 
+    def _section_title(self, parent, text: str, pady=(0, 12)) -> tk.Label:
+        lbl = tk.Label(parent, text=text, font=FONTS["heading_sm"],
+                       fg=COLORS["text_secondary"], bg=COLORS["bg_dark"])
+        lbl.pack(anchor="w", pady=pady)
+        return lbl
+
+    def _should_track_logs(self) -> bool:
+        if hasattr(self, "_track_log_files_var"):
+            return bool(self._track_log_files_var.get())
+        prefs = db.get_preferences(self.user["id"]) or {}
+        return bool(prefs.get("track_log_files", 0))
+
     def _entry_row(self, parent, label: str, var: tk.StringVar,
                    width: int = 14, show: str = "") -> tk.Entry:
         f = tk.Frame(parent, bg=COLORS["bg_card"])
@@ -1230,6 +1247,14 @@ class AdminApp:
         tk.Label(inner, text=msg, font=FONTS["body_sm"],
                  fg=COLORS["text_primary"], bg=COLORS["bg_card"],
                  anchor="w").pack(side="left", padx=10, fill="x", expand=True)
+        diff_btn = tk.Button(
+            inner, text="👁 View Diff →", font=("Segoe UI", 8, "bold"),
+            fg=COLORS["accent"], bg=COLORS["bg_medium"], relief="flat", bd=0,
+            cursor="hand2", padx=8, pady=3,
+            command=lambda ent=entry: self._show_commit_diff_modal(ent)
+        )
+        diff_btn.pack(side="right", padx=(8, 0))
+        self._add_hover(diff_btn, COLORS["bg_card_hover"], COLORS["bg_medium"])
         tk.Label(inner, text=entry["committed_at"][:16],
                  font=FONTS["caption"], fg=COLORS["text_muted"],
                  bg=COLORS["bg_card"]).pack(side="right")
@@ -1310,7 +1335,8 @@ class AdminApp:
         dlg.transient(self.root)
 
         top_f = tk.Frame(dlg, bg="#161b22", padx=16, pady=12, highlightthickness=1, highlightbackground="#30363d")
-        top_f.pack(fill="x")
+        tk.Label(top_f, text="🔍 Code Reviewer Mode — Inspect before-and-after file modifications compared to previous state",
+                 font=FONTS["caption"], fg=COLORS["accent"], bg="#161b22").pack(anchor="w", pady=(0, 2))
         tk.Label(top_f, text=f"Commit: {entry.get('commit_msg', '')}", font=("Segoe UI", 12, "bold"),
                  fg="#f0f6fc", bg="#161b22").pack(anchor="w")
         tk.Label(top_f, text=f"📁 {entry.get('repo_name')}  •  Hash: {c_hash or 'N/A'}  •  {entry.get('committed_at')}",
@@ -2102,6 +2128,41 @@ class AdminApp:
         active_count = sum(1 for r in watched_all if r.get("is_active_watch"))
         local_count = sum(1 for r in watched_all if r.get("local_path"))
 
+        # Sub-tab Navigation: 📁 Repositories List | 📊 Repository Status & AI Recommendations
+        sub_tab_bar = tk.Frame(pad, bg=COLORS["bg_dark"])
+        sub_tab_bar.pack(fill="x", pady=(0, 14))
+
+        cur_tab = getattr(self, "_wr_sub_tab", "list")
+        is_list = (cur_tab != "status")
+
+        list_btn = tk.Button(
+            sub_tab_bar, text="📁 Authorized Repositories List",
+            font=FONTS["label_bold"],
+            fg=COLORS["accent"] if is_list else COLORS["text_secondary"],
+            bg=COLORS["bg_card_hover"] if is_list else COLORS["bg_card"],
+            activebackground=COLORS["bg_card_hover"], activeforeground=COLORS["accent"],
+            relief="flat", bd=0, cursor="hand2", padx=16, pady=8,
+            command=lambda: self._wr_switch_sub_tab("list")
+        )
+        list_btn.pack(side="left", padx=(0, 8))
+        self._add_hover(list_btn, COLORS["bg_card_hover"], COLORS["bg_card_hover"] if is_list else COLORS["bg_card"])
+
+        status_btn = tk.Button(
+            sub_tab_bar, text="📊 Repository Status, Logs & AI Recommendations",
+            font=FONTS["label_bold"],
+            fg=COLORS["accent"] if not is_list else COLORS["text_secondary"],
+            bg=COLORS["bg_card_hover"] if not is_list else COLORS["bg_card"],
+            activebackground=COLORS["bg_card_hover"], activeforeground=COLORS["accent"],
+            relief="flat", bd=0, cursor="hand2", padx=16, pady=8,
+            command=lambda: self._wr_switch_sub_tab("status")
+        )
+        status_btn.pack(side="left")
+        self._add_hover(status_btn, COLORS["bg_card_hover"], COLORS["bg_card_hover"] if not is_list else COLORS["bg_card"])
+
+        if not is_list:
+            self._render_repo_status_tab(pad, watched_all)
+            return
+
         stats_row = tk.Frame(pad, bg=COLORS["bg_dark"])
         stats_row.pack(fill="x", pady=(0, 16))
         self._stat_card(stats_row, "Total Repositories", str(len(watched_all)), COLORS["accent"], "🐙")
@@ -2195,14 +2256,25 @@ class AdminApp:
             return
 
         rname = commit_engine.repo_name(folder)
+        # Feature 1: Auto-detect clone origin GitHub account
+        detected_acc = db.auto_detect_and_bind_repo_origin(self.user["id"], folder)
+        gh_acc_id = detected_acc["id"] if detected_acc else None
+
         db.add_or_update_watched_repo(
             user_id=self.user["id"],
             repo_name=rname,
             repo_full_name=rname,
             local_path=folder,
             is_active_watch=1,
+            github_account_id=gh_acc_id,
         )
         self._gd_selected_repo = folder
+        if detected_acc:
+            messagebox.showinfo(
+                "Repository Added & Bound",
+                f"Repository '{rname}' added successfully!\n\nAuto-detected clone origin: @{detected_acc['github_username']} ({detected_acc['account_name']}).\nAny pending commit files will automatically commit to this account.",
+                parent=self.root
+            )
         self._nav_to("watched_repos")
 
     def _wr_remove_repo(self, repo: Dict):
@@ -2253,11 +2325,87 @@ class AdminApp:
         tk.Label(left_info, text=path_text, font=FONTS["caption"],
                  fg=path_fg, bg=COLORS["bg_card"]).pack(anchor="w", pady=(3, 0))
 
+        # Bound Account info row (Feature 1: Cloned account auto-detect & manual override)
+        acc_row = tk.Frame(left_info, bg=COLORS["bg_card"])
+        acc_row.pack(fill="x", pady=(4, 0))
+
+        bound_acc = None
+        if lp:
+            bound_acc = db.get_repo_account(self.user["id"], lp)
+        elif repo.get("github_account_id"):
+            bound_acc = db.get_github_account(repo["github_account_id"])
+
+        cur_acc_text = f"@{bound_acc['github_username']} ({bound_acc['account_name']})" if bound_acc else "⚡ Auto-Detect Clone Origin"
+
+        tk.Label(acc_row, text="👤 Auto-Commit Account:", font=FONTS["caption"],
+                 fg=COLORS["text_secondary"], bg=COLORS["bg_card"]).pack(side="left")
+
+        all_accounts = db.get_github_accounts(self.user["id"])
+        menu_items = {f"@{a['github_username']} ({a['account_name']})": a["id"] for a in all_accounts}
+        menu_items["⚡ Auto-Detect Clone Origin"] = 0
+
+        acc_choice_var = tk.StringVar(value=cur_acc_text if cur_acc_text in menu_items else "⚡ Auto-Detect Clone Origin")
+
+        def _on_acc_change(val, r=repo, p=lp):
+            sel_id = menu_items.get(val, 0)
+            if sel_id > 0:
+                if p:
+                    db.bind_repo_to_account(self.user["id"], p, sel_id)
+                db.add_or_update_watched_repo(
+                    user_id=self.user["id"],
+                    repo_name=r["repo_name"],
+                    repo_full_name=r.get("repo_full_name", r["repo_name"]),
+                    local_path=p or "",
+                    github_account_id=sel_id,
+                )
+                messagebox.showinfo("Account Bound", f"Repository '{r['repo_name']}' is now set to commit and push via {val}.\nAll pending commits will automatically commit and push to this GitHub account.", parent=self.root)
+            else:
+                if p:
+                    det = db.auto_detect_and_bind_repo_origin(self.user["id"], p)
+                    if det:
+                        messagebox.showinfo("Auto-Detected", f"Detected clone origin: @{det['github_username']}", parent=self.root)
+            self._nav_to("watched_repos")
+
+        if menu_items:
+            am = tk.OptionMenu(acc_row, acc_choice_var, *menu_items.keys(), command=_on_acc_change)
+            am.config(font=FONTS["caption"], bg=COLORS["bg_medium"], fg=COLORS["text_primary"],
+                      relief="flat", bd=0, highlightthickness=1, highlightbackground=COLORS["border"])
+            am["menu"].config(bg=COLORS["bg_card"], fg=COLORS["text_primary"], font=FONTS["caption"])
+            am.pack(side="left", padx=4)
+
         right_ctrl = tk.Frame(top_row, bg=COLORS["bg_card"])
         right_ctrl.pack(side="right")
 
+        # Status & AI Recommendations button (Feature 2)
+        status_btn = tk.Button(
+            right_ctrl, text="📊 Status & AI Insights", font=FONTS["caption"],
+            fg="white", bg=COLORS["accent"], relief="flat", bd=0, cursor="hand2",
+            padx=10, pady=5,
+            command=lambda p=lp, rname=repo["repo_name"]: self._wr_switch_sub_tab("status", p or rname)
+        )
+        status_btn.pack(side="left", padx=(0, 6))
+        self._add_hover(status_btn, COLORS["accent_hover"], COLORS["accent"])
+
+        # Check for uncommitted changes to offer 1-click Auto-Commit to source account
+        uncommitted = []
+        if lp and os.path.isdir(lp) and commit_engine.is_git_repo(lp):
+            try:
+                uncommitted = commit_engine.uncommitted_changes(lp, track_logs=self._should_track_logs())
+            except Exception:
+                pass
+
+        if uncommitted:
+            auto_btn = tk.Button(
+                right_ctrl, text=f"⚡ Auto-Commit ({len(uncommitted)})", font=("Segoe UI", 8, "bold"),
+                fg="#ffffff", bg="#238636", relief="flat", bd=0, cursor="hand2",
+                padx=8, pady=5,
+                command=lambda p=lp, rname=repo["repo_name"]: self._wr_auto_commit_pending(p, rname)
+            )
+            auto_btn.pack(side="left", padx=(0, 6))
+            self._add_hover(auto_btn, "#2ea043", "#238636")
+
         is_watched = bool(repo.get("is_active_watch"))
-        watch_btn_text = "🟢 Actively Watched (Auto-Commit)" if is_watched else "⚪ Manual Only (No Auto-Commit)"
+        watch_btn_text = "🟢 Actively Watched" if is_watched else "⚪ Manual Only"
         watch_btn_bg = COLORS["success"] if is_watched else COLORS["bg_medium"]
         watch_btn_fg = "white" if is_watched else COLORS["text_secondary"]
 
@@ -2312,6 +2460,10 @@ class AdminApp:
         if d:
             if commit_engine.is_git_repo(d):
                 db.set_watched_repo_local_path(repo["id"], self.user["id"], d)
+                detected = db.auto_detect_and_bind_repo_origin(self.user["id"], d)
+                if detected:
+                    db.bind_repo_to_account(self.user["id"], d, detected["id"])
+                    messagebox.showinfo("Linked & Bound", f"Linked '{repo['repo_name']}' to folder:\n{d}\n\nAuto-detected clone origin: @{detected['github_username']}", parent=self.root)
                 self._nav_to("watched_repos")
             else:
                 messagebox.showwarning("Not a Git Repo", f"Folder '{d}' does not contain a .git directory.", parent=self.root)
@@ -2330,7 +2482,16 @@ class AdminApp:
                 if ok:
                     db.set_watched_repo_local_path(repo["id"], self.user["id"], target_path)
                     db.toggle_watched_repo(repo["id"], self.user["id"], is_active=True)
-                    messagebox.showinfo("Cloned", f"Repository cloned to:\n{target_path}", parent=self.root)
+                    if account:
+                        db.bind_repo_to_account(self.user["id"], target_path, account["id"])
+                    else:
+                        db.auto_detect_and_bind_repo_origin(self.user["id"], target_path)
+                    acc_label = f"@{account['github_username']}" if account else "source GitHub account"
+                    messagebox.showinfo(
+                        "Cloned Successfully",
+                        f"Repository cloned to:\n{target_path}\n\nAuto-bound to GitHub account: {acc_label}.\nAll future uncommitted changes will automatically commit to this account.",
+                        parent=self.root
+                    )
                     self._nav_to("watched_repos")
                 else:
                     messagebox.showerror("Clone Failed", f"Could not clone repository:\n\n{msg}", parent=self.root)
@@ -2342,6 +2503,367 @@ class AdminApp:
         self._gd_selected_repo = local_path
         self._gd_active_file = None
         self._nav_to("git_desktop")
+
+    def _wr_switch_sub_tab(self, tab: str, repo_path: Optional[str] = None):
+        self._wr_sub_tab = tab
+        if repo_path:
+            self._wr_selected_status_repo = repo_path
+        self._nav_to("watched_repos")
+
+    def _wr_auto_commit_pending(self, repo_path: str, repo_name: str):
+        """Automatically commit all pending files for this repo to its cloned GitHub account."""
+        if not (os.path.isdir(repo_path) and commit_engine.is_git_repo(repo_path)):
+            messagebox.showerror("Error", f"'{repo_path}' is not a valid git repository.", parent=self.root)
+            return
+
+        uncommitted = commit_engine.uncommitted_changes(repo_path, track_logs=self._should_track_logs())
+        if not uncommitted:
+            messagebox.showinfo("Clean Workspace", f"No uncommitted changes in {repo_name}.", parent=self.root)
+            return
+
+        acc = db.get_repo_account(self.user["id"], repo_path)
+        acc_label = f"@{acc['github_username']} ({acc['account_name']})" if acc else "Default Git Account"
+
+        if not messagebox.askyesno(
+            "Auto-Commit Pending Changes",
+            f"Auto-commit {len(uncommitted)} pending file(s) in '{repo_name}' to GitHub account:\n{acc_label}?\n\nFiles will be committed with author {acc_label} and pushed directly to remote.",
+            parent=self.root
+        ):
+            return
+
+        def _do_auto_commit():
+            try:
+                if acc:
+                    commit_engine.configure_author_identity(
+                        repo_path,
+                        acc.get("author_name") or acc.get("github_username") or acc.get("account_name"),
+                        acc.get("author_email") or acc.get("email") or f"{acc['github_username']}@users.noreply.github.com"
+                    )
+
+                cfg = load_config()
+                groups = commit_engine.build_groups(uncommitted, sensitive_patterns=[])
+                msgs = ai_messages.generate_messages(cfg, repo_path, groups)
+                summary_line = ""
+                for grp, f_list in groups.items():
+                    if grp == "sensitive" or not f_list:
+                        continue
+                    m = msgs.get(grp, "").strip() or f"chore: update {len(f_list)} files in {repo_name}"
+                    summary_line = commit_engine.stage_and_commit(repo_path, f_list, m)
+                    db.log_commit(self.user["id"], repo_path, m, len(f_list), summary_line.split()[0] if summary_line else "")
+
+                push_ok, push_msg = False, ""
+                if acc:
+                    push_ok, push_msg = commit_engine.push_repo_with_account(repo_path, acc)
+                else:
+                    push_ok, push_msg = commit_engine.push(repo_path)
+
+                def _finish():
+                    if push_ok:
+                        messagebox.showinfo(
+                            "Committed & Pushed",
+                            f"Successfully committed and pushed to GitHub account {acc_label}!\n\nCommit: {summary_line}",
+                            parent=self.root
+                        )
+                    else:
+                        messagebox.showinfo(
+                            "Committed Locally",
+                            f"Files committed locally with author {acc_label}.\nPush status: {push_msg}",
+                            parent=self.root
+                        )
+                    self._nav_to("watched_repos")
+
+                self.root.after(0, _finish)
+            except Exception as exc:
+                log.error("Auto-commit error: %s", exc)
+                self.root.after(0, lambda: messagebox.showerror("Commit Failed", f"Auto-commit encountered an error:\n{exc}", parent=self.root))
+
+        threading.Thread(target=_do_auto_commit, daemon=True).start()
+
+    def _refresh_ai_recommendations(self, repo_path: str):
+        """Invalidate cache and re-run AI recommendations generation."""
+        repo_analyzer.invalidate_repo_recommendations(repo_path)
+        messagebox.showinfo("Refreshed", "Generating fresh AI recommendations for this repository...", parent=self.root)
+        self._nav_to("watched_repos")
+
+    def _render_repo_status_tab(self, parent, watched_all: List[Dict]):
+        """Render the rich Status tab for watched repos showing logs, bugs, failed runs, and AI recommendations."""
+        avail_repos: List[Dict] = []
+        for r in watched_all:
+            lp = (r.get("local_path") or "").strip()
+            if lp and os.path.isdir(lp) and commit_engine.is_git_repo(lp):
+                avail_repos.append(r)
+
+        if not avail_repos:
+            empty = self._card(parent, padx=24, pady=30)
+            empty.pack(fill="x", pady=(0, 10))
+            tk.Label(empty, text="📂 No linked local repositories available to analyze.",
+                     font=FONTS["heading_sm"], fg=COLORS["text_secondary"], bg=COLORS["bg_card"]).pack(anchor="w")
+            tk.Label(empty, text="Link a local folder to any of your watched repositories or add a local repo to view bugs, logs, and AI recommendations.",
+                     font=FONTS["caption"], fg=COLORS["text_muted"], bg=COLORS["bg_card"]).pack(anchor="w", pady=(4, 12))
+            tk.Button(
+                empty, text="📁 Add Local Repository", font=FONTS["label_bold"],
+                fg="white", bg=COLORS["accent"], relief="flat", bd=0, cursor="hand2",
+                padx=14, pady=6, command=self._wr_add_local_repo
+            ).pack(anchor="w")
+            return
+
+        selected_path = self._wr_selected_status_repo
+        active_repo = None
+        if selected_path:
+            for r in avail_repos:
+                if r.get("local_path") == selected_path or r.get("repo_name") == selected_path:
+                    active_repo = r
+                    break
+        if not active_repo:
+            active_repo = avail_repos[0]
+            self._wr_selected_status_repo = active_repo.get("local_path")
+
+        active_path = active_repo.get("local_path")
+        active_name = active_repo.get("repo_name")
+
+        # ── Control Bar: Repo Selector & Action Toolbar ──────────────────────
+        ctrl_card = self._card(parent, padx=16, pady=12)
+        ctrl_card.pack(fill="x", pady=(0, 14))
+
+        top_ctrl = tk.Frame(ctrl_card, bg=COLORS["bg_card"])
+        top_ctrl.pack(fill="x")
+
+        tk.Label(top_ctrl, text="Repository: ", font=FONTS["label_bold"],
+                 fg=COLORS["text_secondary"], bg=COLORS["bg_card"]).pack(side="left", padx=(0, 6))
+
+        repo_choices = {f"📁 {r['repo_name']} ({r.get('local_path', '')})": r['local_path'] for r in avail_repos}
+        active_label = f"📁 {active_name} ({active_path})"
+        for k, v in repo_choices.items():
+            if v == active_path:
+                active_label = k
+                break
+        repo_choice_var = tk.StringVar(value=active_label)
+
+        def _on_status_repo_select(val):
+            target_p = repo_choices.get(val)
+            if target_p:
+                self._wr_selected_status_repo = target_p
+                self._nav_to("watched_repos")
+
+        rmenu = tk.OptionMenu(top_ctrl, repo_choice_var, *repo_choices.keys(), command=_on_status_repo_select)
+        rmenu.config(font=FONTS["body_sm"], bg=COLORS["bg_medium"], fg=COLORS["text_primary"],
+                     relief="flat", bd=0, highlightthickness=1, highlightbackground=COLORS["border"])
+        rmenu["menu"].config(bg=COLORS["bg_card"], fg=COLORS["text_primary"], font=FONTS["body_sm"])
+        rmenu.pack(side="left", padx=(0, 14))
+
+        right_actions = tk.Frame(top_ctrl, bg=COLORS["bg_card"])
+        right_actions.pack(side="right")
+
+        ref_btn = tk.Button(
+            right_actions, text="🔄 Refresh Logs & Status", font=FONTS["caption"],
+            fg=COLORS["text_primary"], bg=COLORS["bg_medium"], relief="flat", bd=0, cursor="hand2",
+            padx=10, pady=5, command=lambda: self._nav_to("watched_repos")
+        )
+        ref_btn.pack(side="left", padx=(0, 6))
+        self._add_hover(ref_btn, COLORS["bg_card_hover"], COLORS["bg_medium"])
+
+        re_ai_btn = tk.Button(
+            right_actions, text="🤖 Refresh AI Recommendations", font=FONTS["caption"],
+            fg=COLORS["accent"], bg=COLORS["bg_medium"], relief="flat", bd=0, cursor="hand2",
+            padx=10, pady=5,
+            command=lambda p=active_path: self._refresh_ai_recommendations(p)
+        )
+        re_ai_btn.pack(side="left", padx=(0, 6))
+        self._add_hover(re_ai_btn, COLORS["bg_card_hover"], COLORS["bg_medium"])
+
+        auto_com_btn = tk.Button(
+            right_actions, text="⚡ Auto-Commit & Push Pending", font=("Segoe UI", 8, "bold"),
+            fg="#ffffff", bg="#238636", relief="flat", bd=0, cursor="hand2",
+            padx=12, pady=5,
+            command=lambda p=active_path, r=active_name: self._wr_auto_commit_pending(p, r)
+        )
+        auto_com_btn.pack(side="left")
+        self._add_hover(auto_com_btn, "#2ea043", "#238636")
+
+        # ── Collect Deep Status & Logs ───────────────────────────────────────
+        status_data = repo_analyzer.scan_repo_status_and_logs(active_path, self.user["id"])
+        recommendations = repo_analyzer.generate_repo_recommendations(active_path)
+
+        # ── Repo Health Banner ───────────────────────────────────────────────
+        banner = tk.Frame(parent, bg=COLORS["bg_card"], highlightthickness=1,
+                          highlightbackground=COLORS["border"], padx=18, pady=12)
+        banner.pack(fill="x", pady=(0, 14))
+
+        b_top = tk.Frame(banner, bg=COLORS["bg_card"])
+        b_top.pack(fill="x")
+
+        tk.Label(b_top, text=f"📁 {active_name}", font=FONTS["heading_sm"],
+                 fg=COLORS["text_primary"], bg=COLORS["bg_card"]).pack(side="left")
+
+        b_acc = status_data.get("bound_account")
+        acc_text = f"👤 Target Account: @{b_acc['github_username']} ({b_acc['account_name']})" if b_acc else "👤 Target Account: Default Git"
+        tk.Label(b_top, text=acc_text, font=FONTS["caption"],
+                 fg=COLORS["accent"], bg=COLORS["bg_card"]).pack(side="right")
+
+        b_sub = tk.Frame(banner, bg=COLORS["bg_card"])
+        b_sub.pack(fill="x", pady=(6, 0))
+
+        pills = [
+            (f"🌿 {status_data['branch']}", COLORS["info"], COLORS["bg_medium"]),
+            (f"⚡ {status_data['commits_count']} Commits", COLORS["accent"], COLORS["bg_medium"]),
+            (f"📝 {status_data['uncommitted_count']} Uncommitted Changes", COLORS["warning"] if status_data['uncommitted_count'] else COLORS["success"], COLORS["bg_medium"]),
+            (f"🐞 {status_data['total_bug_count']} Detected Issues", "#f85149" if status_data['total_bug_count'] else COLORS["success"], "#2a1215" if status_data['total_bug_count'] else COLORS["bg_medium"]),
+        ]
+        for p_txt, p_fg, p_bg in pills:
+            pf = tk.Frame(b_sub, bg=p_bg, highlightthickness=1, highlightbackground=p_fg, padx=8, pady=3)
+            pf.pack(side="left", padx=(0, 8))
+            tk.Label(pf, text=p_txt, font=("Segoe UI", 8, "bold"), fg=p_fg, bg=p_bg).pack()
+
+        # ── Section 1: 🐞 Bugs, Logs & Failed Runs ───────────────────────────
+        self._section_title(parent, f"BUGS, RUN LOGS & FAILED RUNS ({status_data['total_bug_count']})", pady=(6, 8))
+
+        log_card = self._card(parent, padx=16, pady=12)
+        log_card.pack(fill="x", pady=(0, 14))
+
+        has_any_issues = False
+
+        if status_data.get("code_issues"):
+            has_any_issues = True
+            tk.Label(log_card, text="⚠️ Active Code & Syntax Issues Detected in Workspace:",
+                     font=FONTS["label_bold"], fg=COLORS["warning"], bg=COLORS["bg_card"]).pack(anchor="w", pady=(0, 4))
+            for iss in status_data["code_issues"][:10]:
+                i_row = tk.Frame(log_card, bg=COLORS["bg_medium"], padx=10, pady=6, highlightthickness=1, highlightbackground=COLORS["border"])
+                i_row.pack(fill="x", pady=2)
+                sev_color = "#f85149" if iss["severity"] == "error" else ("#d29922" if iss["severity"] == "security" else COLORS["warning"])
+                tk.Label(i_row, text=f"[{iss['severity'].upper()}]", font=FONTS["mono_bold"],
+                         fg=sev_color, bg=COLORS["bg_medium"]).pack(side="left", padx=(0, 8))
+                tk.Label(i_row, text=f"{iss['file']}:{iss['line']} — {iss['title']}: {iss['message']}",
+                         font=FONTS["body_sm"], fg=COLORS["text_primary"], bg=COLORS["bg_medium"], anchor="w").pack(side="left", fill="x", expand=True)
+
+        if status_data.get("failed_commits"):
+            has_any_issues = True
+            tk.Label(log_card, text="🔴 Failed Commit & Push Attempts:",
+                     font=FONTS["label_bold"], fg="#f85149", bg=COLORS["bg_card"]).pack(anchor="w", pady=(8, 4))
+            for fc in status_data["failed_commits"][:6]:
+                f_row = tk.Frame(log_card, bg="#2a1215", padx=10, pady=6, highlightthickness=1, highlightbackground="#f85149")
+                f_row.pack(fill="x", pady=2)
+                tk.Label(f_row, text=fc.get("committed_at", "")[:16], font=FONTS["caption"],
+                         fg="#f87171", bg="#2a1215").pack(side="left", padx=(0, 10))
+                tk.Label(f_row, text=f"Failed: {fc.get('commit_msg', '')[:90]}", font=FONTS["body_sm"],
+                         fg="#ffffff", bg="#2a1215", anchor="w").pack(side="left", fill="x", expand=True)
+
+        if status_data.get("disk_logs"):
+            has_any_issues = True
+            tk.Label(log_card, text="📄 Discovered Log Files (*.log):",
+                     font=FONTS["label_bold"], fg=COLORS["info"], bg=COLORS["bg_card"]).pack(anchor="w", pady=(8, 4))
+            for dl in status_data["disk_logs"]:
+                d_row = tk.Frame(log_card, bg=COLORS["bg_medium"], padx=10, pady=6, highlightthickness=1, highlightbackground=COLORS["border"])
+                d_row.pack(fill="x", pady=2)
+                tk.Label(d_row, text=f"📄 {dl['file']} ({dl['total_lines']} lines)", font=FONTS["label_bold"],
+                         fg=COLORS["text_primary"], bg=COLORS["bg_medium"]).pack(anchor="w")
+                if dl.get("snippet"):
+                    tk.Label(d_row, text=dl["snippet"][:300], font=FONTS["mono_sm"],
+                             fg=COLORS["text_secondary"], bg=COLORS["bg_medium"], justify="left", anchor="w").pack(anchor="w", pady=(2, 0))
+
+        if status_data.get("error_events"):
+            has_any_issues = True
+            tk.Label(log_card, text="⚡ System Error & Event Logs:",
+                     font=FONTS["label_bold"], fg=COLORS["text_secondary"], bg=COLORS["bg_card"]).pack(anchor="w", pady=(8, 4))
+            for ev in status_data["error_events"][:5]:
+                e_row = tk.Frame(log_card, bg=COLORS["bg_medium"], padx=10, pady=4)
+                e_row.pack(fill="x", pady=1)
+                tk.Label(e_row, text=f"{ev.get('created_at', '')[:16]}  [{ev.get('kind', '')}]  {ev.get('detail', '')[:80]}",
+                         font=FONTS["caption"], fg=COLORS["text_muted"], bg=COLORS["bg_medium"], anchor="w").pack(anchor="w")
+
+        if not has_any_issues:
+            tk.Label(log_card, text="✅ All Clear: Zero bugs, errors, or failed runs detected in this repository.",
+                     font=FONTS["body_md"], fg=COLORS["success"], bg=COLORS["bg_card"]).pack(anchor="w", pady=4)
+
+        # ── Section 2: 🤖 AI Recommendations & Insights ──────────────────────
+        self._section_title(parent, "AI RECOMMENDATIONS & REPOSITORY INSIGHTS", pady=(10, 8))
+
+        rec_card = self._card(parent, padx=16, pady=12)
+        rec_card.pack(fill="x", pady=(0, 14))
+
+        summary_text = recommendations.get("project_summary", "Repository ready for automated analysis.")
+        sum_box = tk.Frame(rec_card, bg=COLORS["bg_medium"], padx=12, pady=10, highlightthickness=1, highlightbackground=COLORS["accent"])
+        sum_box.pack(fill="x", pady=(0, 12))
+        tk.Label(sum_box, text=f"💡 Project Purpose & Architecture: {summary_text}",
+                 font=FONTS["body_sm"], fg=COLORS["text_primary"], bg=COLORS["bg_medium"],
+                 wraplength=760, justify="left").pack(anchor="w")
+
+        # Test Cases Recommendations
+        tk.Label(rec_card, text="🧪 High-Priority Test Cases to Implement:",
+                 font=FONTS["heading_sm"], fg=COLORS["accent"], bg=COLORS["bg_card"]).pack(anchor="w", pady=(0, 6))
+
+        for tc in recommendations.get("test_cases", []):
+            tc_f = tk.Frame(rec_card, bg=COLORS["bg_medium"], padx=12, pady=10, highlightthickness=1, highlightbackground=COLORS["border"])
+            tc_f.pack(fill="x", pady=4)
+
+            tc_top = tk.Frame(tc_f, bg=COLORS["bg_medium"])
+            tc_top.pack(fill="x")
+
+            pri = tc.get("priority", "Medium")
+            pri_bg = "#2a1215" if pri == "High" else COLORS["bg_card"]
+            pri_fg = "#f85149" if pri == "High" else COLORS["info"]
+            p_badge = tk.Frame(tc_top, bg=pri_bg, padx=6, pady=2, highlightthickness=1, highlightbackground=pri_fg)
+            p_badge.pack(side="left", padx=(0, 8))
+            tk.Label(p_badge, text=f"{pri.upper()} PRIORITY", font=("Segoe UI", 7, "bold"), fg=pri_fg, bg=pri_bg).pack()
+
+            tk.Label(tc_top, text=tc.get("title", "Test Case"), font=FONTS["label_bold"],
+                     fg=COLORS["text_primary"], bg=COLORS["bg_medium"]).pack(side="left")
+
+            def _copy_tc(spec=tc):
+                spec_str = f"Test Case: {spec.get('title')}\nTarget: {spec.get('target')}\nScenario: {spec.get('scenario')}\nDescription: {spec.get('description')}"
+                try:
+                    self.root.clipboard_clear()
+                    self.root.clipboard_append(spec_str)
+                    messagebox.showinfo("Copied", f"Copied test case specification to clipboard:\n\n{spec.get('title')}", parent=self.root)
+                except Exception:
+                    pass
+
+            copy_btn = tk.Button(
+                tc_top, text="📋 Copy Test Spec", font=FONTS["caption"],
+                fg=COLORS["text_secondary"], bg=COLORS["bg_card"], relief="flat", bd=0, cursor="hand2",
+                padx=8, pady=2, command=_copy_tc
+            )
+            copy_btn.pack(side="right")
+            self._add_hover(copy_btn, COLORS["bg_card_hover"], COLORS["bg_card"])
+
+            tk.Label(tc_f, text=f"🎯 Target: {tc.get('target', '')}   •   Scenario: {tc.get('scenario', '')}",
+                     font=FONTS["caption"], fg=COLORS["text_muted"], bg=COLORS["bg_medium"]).pack(anchor="w", pady=(3, 2))
+            tk.Label(tc_f, text=tc.get("description", ""),
+                     font=FONTS["body_sm"], fg=COLORS["text_secondary"], bg=COLORS["bg_medium"],
+                     wraplength=760, justify="left").pack(anchor="w")
+
+        # Feature Recommendations
+        tk.Label(rec_card, text="🚀 High-Impact Feature Recommendations:",
+                 font=FONTS["heading_sm"], fg=COLORS["accent"], bg=COLORS["bg_card"]).pack(anchor="w", pady=(12, 6))
+
+        for feat in recommendations.get("features", []):
+            feat_f = tk.Frame(rec_card, bg=COLORS["bg_medium"], padx=12, pady=10, highlightthickness=1, highlightbackground=COLORS["border"])
+            feat_f.pack(fill="x", pady=4)
+
+            feat_top = tk.Frame(feat_f, bg=COLORS["bg_medium"])
+            feat_top.pack(fill="x")
+
+            cat_badge = tk.Frame(feat_top, bg=COLORS["bg_card"], padx=6, pady=2, highlightthickness=1, highlightbackground=COLORS["accent"])
+            cat_badge.pack(side="left", padx=(0, 8))
+            tk.Label(cat_badge, text=feat.get("category", "Feature").upper(), font=("Segoe UI", 7, "bold"),
+                     fg=COLORS["accent"], bg=COLORS["bg_card"]).pack()
+
+            tk.Label(feat_top, text=feat.get("title", "Feature"), font=FONTS["label_bold"],
+                     fg=COLORS["text_primary"], bg=COLORS["bg_medium"]).pack(side="left")
+
+            tk.Label(feat_f, text=feat.get("description", ""),
+                     font=FONTS["body_sm"], fg=COLORS["text_secondary"], bg=COLORS["bg_medium"],
+                     wraplength=760, justify="left").pack(anchor="w", pady=(3, 0))
+
+        # Proactive Bug Prevention & Code Quality
+        tk.Label(rec_card, text="🛡️ Code Quality & Bug Prevention Guidelines:",
+                 font=FONTS["heading_sm"], fg=COLORS["accent"], bg=COLORS["bg_card"]).pack(anchor="w", pady=(12, 6))
+
+        for bp in recommendations.get("bug_prevention", []):
+            bp_f = tk.Frame(rec_card, bg=COLORS["bg_medium"], padx=12, pady=8, highlightthickness=1, highlightbackground=COLORS["border"])
+            bp_f.pack(fill="x", pady=3)
+            tk.Label(bp_f, text=f"• {bp.get('title', 'Guideline')}: {bp.get('description', '')}",
+                     font=FONTS["body_sm"], fg=COLORS["text_secondary"], bg=COLORS["bg_medium"],
+                     wraplength=760, justify="left").pack(anchor="w")
 
     # ── Customize Interface Page ──────────────────────────────────────────────
 
@@ -2399,53 +2921,6 @@ class AdminApp:
             t_name.bind("<Button-1>", make_handler())
             swatch_f.bind("<Button-1>", make_handler())
             self._theme_cards[t_key] = t_card
-
-        # ── Surface Patterns & Procedural Textures Section ────────────────────
-        self._section_hdr(p, "Surface Patterns & Procedural Textures", pady=(8, 4))
-        tk.Label(p, text="Procedural geometric patterns and tactile textures rendered across headers, cards, and desktop backgrounds (avoids plain flat colors).",
-                 font=FONTS["caption"], fg=COLORS["text_secondary"], bg=COLORS["bg_dark"]).pack(anchor="w", pady=(0, 8))
-
-        pat_grid = tk.Frame(p, bg=COLORS["bg_dark"])
-        pat_grid.pack(fill="x", pady=(0, 16))
-
-        self._custom_pattern = curr.get("pattern", "dot_matrix")
-        self._pattern_cards = {}
-        for col_idx, (p_key, p_info) in enumerate(pattern_utils.PATTERNS.items()):
-            col = col_idx % 4
-            row = col_idx // 4
-            p_card = tk.Frame(pat_grid, bg=COLORS["bg_card"],
-                              highlightthickness=2,
-                              highlightbackground=COLORS["accent"] if p_key == self._custom_pattern else COLORS["border"],
-                              padx=10, pady=8, cursor="hand2")
-            p_card.grid(row=row, column=col, padx=6, pady=6, sticky="nsew")
-            pat_grid.grid_columnconfigure(col, weight=1)
-
-            # Preview thumbnail
-            try:
-                thumb = pattern_utils.generate_pattern_preview_card(p_key, COLORS["bg_card"], COLORS["accent"], width=130, height=45)
-                thumb_lbl = tk.Label(p_card, image=thumb, bg=COLORS["bg_card"], cursor="hand2", bd=0)
-                thumb_lbl._thumb = thumb
-                thumb_lbl.pack(fill="x", pady=(0, 6))
-            except Exception:
-                thumb_lbl = tk.Label(p_card, text=p_info["icon"], font=("Segoe UI", 16), bg=COLORS["bg_card"])
-                thumb_lbl.pack(pady=(0, 4))
-
-            # Pattern title & description
-            p_title = tk.Label(p_card, text=f"{p_info['icon']}  {p_info['name']}",
-                               font=FONTS["label_bold"], fg=COLORS["text_primary"],
-                               bg=COLORS["bg_card"], cursor="hand2")
-            p_title.pack(anchor="w")
-            p_desc = tk.Label(p_card, text=p_info["desc"],
-                              font=FONTS["caption"], fg=COLORS["text_secondary"],
-                              bg=COLORS["bg_card"], wraplength=140, justify="left", cursor="hand2")
-            p_desc.pack(anchor="w", pady=(2, 0))
-
-            def make_pat_handler(pk=p_key):
-                return lambda e: self._select_pattern_card(pk)
-
-            for w in (p_card, thumb_lbl, p_title, p_desc):
-                w.bind("<Button-1>", make_pat_handler())
-            self._pattern_cards[p_key] = p_card
 
         # ── Accent Colors Section ─────────────────────────────────────────────
         self._section_hdr(p, "Primary Accent Color", pady=(8, 10))
@@ -2559,18 +3034,6 @@ class AdminApp:
                               padx=14, pady=10, command=self._reset_customization)
         reset_btn.pack(side="left")
 
-    def _select_pattern_card(self, pattern_key: str):
-        self._custom_pattern = pattern_key
-        for k, card in getattr(self, "_pattern_cards", {}).items():
-            border_c = COLORS["accent"] if k == pattern_key else COLORS["border"]
-            card.config(highlightbackground=border_c)
-        apply_customization(pattern=pattern_key)
-        try:
-            db.update_preferences(self.user["id"], bg_pattern=pattern_key)
-        except Exception:
-            pass
-        self._rebuild_ui("customize")
-
     def _select_theme_card(self, theme_key: str):
         self._custom_theme = theme_key
         for k, card in self._theme_cards.items():
@@ -2682,36 +3145,22 @@ class AdminApp:
         t_btn.pack(side="right")
         self._add_hover(t_btn, COLORS["bg_card_hover"], COLORS["bg_medium"])
 
-        self._rem_int_var = tk.BooleanVar(value=bool(prefs.get("reminder_interval_enabled", 1)))
-        self._rem_h_var = tk.StringVar(value=str(prefs.get("reminder_interval_hours", 1)))
-        self._rem_m_var = tk.StringVar(value=str(prefs.get("reminder_interval_minutes", 0)))
         self._rem_app_var = tk.BooleanVar(value=bool(prefs.get("reminder_app_monitor_enabled", 1)))
         self._rem_dirty_var = tk.BooleanVar(value=bool(prefs.get("reminder_only_if_dirty", 1)))
 
-        tk.Checkbutton(rem_card, text="Interval-based reminders (Timer)", variable=self._rem_int_var,
+        tk.Label(rem_card, text="1. Coding App & IDE Lifecycle Monitoring", font=FONTS["label_bold"],
+                 fg=COLORS["text_primary"], bg=COLORS["bg_card"]).pack(anchor="w", pady=(4, 2))
+        tk.Checkbutton(rem_card, text="Monitor active code editor sessions (Alert when IDE closes)", variable=self._rem_app_var,
                        font=FONTS["body_md"], fg=COLORS["text_primary"], bg=COLORS["bg_card"],
                        selectcolor=COLORS["bg_input"], activebackground=COLORS["bg_card"],
-                       activeforeground=COLORS["text_primary"]).pack(anchor="w", pady=2)
+                       activeforeground=COLORS["text_primary"]).pack(anchor="w", pady=(0, 6))
 
-        t_row = tk.Frame(rem_card, bg=COLORS["bg_card"])
-        t_row.pack(anchor="w", padx=20, pady=2)
-        tk.Label(t_row, text="Remind every: ", font=FONTS["body_md"], fg=COLORS["text_secondary"], bg=COLORS["bg_card"]).pack(side="left")
-        tk.Entry(t_row, textvariable=self._rem_h_var, width=3, font=FONTS["mono"], bg=COLORS["bg_input"],
-                 fg=COLORS["text_primary"], relief="flat", highlightthickness=1, highlightbackground=COLORS["border"]).pack(side="left", padx=2)
-        tk.Label(t_row, text="hrs", font=FONTS["body_md"], fg=COLORS["text_secondary"], bg=COLORS["bg_card"]).pack(side="left", padx=(0, 6))
-        tk.Entry(t_row, textvariable=self._rem_m_var, width=3, font=FONTS["mono"], bg=COLORS["bg_input"],
-                 fg=COLORS["text_primary"], relief="flat", highlightthickness=1, highlightbackground=COLORS["border"]).pack(side="left", padx=2)
-        tk.Label(t_row, text="mins", font=FONTS["body_md"], fg=COLORS["text_secondary"], bg=COLORS["bg_card"]).pack(side="left")
-
-        tk.Checkbutton(rem_card, text="App & IDE monitoring (Alert when IDE closes)", variable=self._rem_app_var,
-                       font=FONTS["body_md"], fg=COLORS["text_primary"], bg=COLORS["bg_card"],
-                       selectcolor=COLORS["bg_input"], activebackground=COLORS["bg_card"],
-                       activeforeground=COLORS["text_primary"]).pack(anchor="w", pady=2)
-
+        tk.Label(rem_card, text="2. Uncommitted File Tracker", font=FONTS["label_bold"],
+                 fg=COLORS["text_primary"], bg=COLORS["bg_card"]).pack(anchor="w", pady=(4, 2))
         tk.Checkbutton(rem_card, text="Only alert when uncommitted changes exist in repos", variable=self._rem_dirty_var,
                        font=FONTS["body_md"], fg=COLORS["text_primary"], bg=COLORS["bg_card"],
                        selectcolor=COLORS["bg_input"], activebackground=COLORS["bg_card"],
-                       activeforeground=COLORS["text_primary"]).pack(anchor="w", pady=2)
+                       activeforeground=COLORS["text_primary"]).pack(anchor="w", pady=(0, 2))
 
         # Watched Coding Apps & IDEs card
         apps_card = self._card(p, padx=20, pady=16)
@@ -2910,15 +3359,6 @@ class AdminApp:
         prov = getattr(self, "_admin_prov_map", {}).get(self._ai_provider_var.get(), "bionic")
         m_val = self._ai_model_var.get().strip()
 
-        try:
-            rem_h = max(0, int(self._rem_h_var.get().strip()))
-        except Exception:
-            rem_h = 1
-        try:
-            rem_m = max(0, int(self._rem_m_var.get().strip()))
-        except Exception:
-            rem_m = 0
-
         selected_apps = self._admin_ide_selector.get_selected_apps() if hasattr(self, "_admin_ide_selector") else []
 
         db.update_preferences(
@@ -2927,9 +3367,9 @@ class AdminApp:
             skip_sensitive=int(self._skip_var.get()),
             notifications=int(self._notif_var.get()),
             session_end_grace=int(self._grace_var.get() or 120),
-            reminder_interval_enabled=int(self._rem_int_var.get()),
-            reminder_interval_hours=rem_h,
-            reminder_interval_minutes=rem_m,
+            reminder_interval_enabled=0,
+            reminder_interval_hours=0,
+            reminder_interval_minutes=0,
             reminder_app_monitor_enabled=int(self._rem_app_var.get()),
             reminder_only_if_dirty=int(self._rem_dirty_var.get()),
             ai_provider=prov,
@@ -2946,9 +3386,9 @@ class AdminApp:
         )
         cfg = load_config()
         cfg["reminder"] = {
-            "interval_enabled": bool(self._rem_int_var.get()),
-            "interval_hours": rem_h,
-            "interval_minutes": rem_m,
+            "interval_enabled": False,
+            "interval_hours": 0,
+            "interval_minutes": 0,
             "app_monitor_enabled": bool(self._rem_app_var.get()),
             "only_if_dirty": bool(self._rem_dirty_var.get()),
         }
@@ -3268,6 +3708,13 @@ class AdminApp:
         # Table Header with Master Select Checkbox
         hdr = tk.Frame(p, bg=COLORS["bg_medium"])
         hdr.pack(fill="x")
+        hdr.grid_columnconfigure(0, weight=0, minsize=40)
+        hdr.grid_columnconfigure(1, weight=3, minsize=140)
+        hdr.grid_columnconfigure(2, weight=3, minsize=150)
+        hdr.grid_columnconfigure(3, weight=1, minsize=80)
+        hdr.grid_columnconfigure(4, weight=1, minsize=80)
+        hdr.grid_columnconfigure(5, weight=1, minsize=70)
+        hdr.grid_columnconfigure(6, weight=0, minsize=210)
 
         master_chk = tk.Checkbutton(
             hdr, variable=self._select_all_var, bg=COLORS["bg_medium"],
@@ -3275,13 +3722,21 @@ class AdminApp:
             fg=COLORS["text_primary"], activeforeground=COLORS["accent"],
             cursor="hand2", command=self._toggle_master_checkbox
         )
-        master_chk.pack(side="left", padx=(10, 4))
+        master_chk.grid(row=0, column=0, padx=(10, 4), pady=6, sticky="w")
 
-        for col, w in [("User", 28), ("Email", 26), ("Role", 10),
-                       ("Status", 10), ("Commits", 10), ("Actions", 22)]:
-            tk.Label(hdr, text=col, font=FONTS["label_bold"],
-                     fg=COLORS["text_secondary"], bg=COLORS["bg_medium"],
-                     width=w, anchor="w", padx=8, pady=6).pack(side="left")
+        cols = [
+            (1, "User", "w", (6, 8)),
+            (2, "Email", "w", (8, 8)),
+            (3, "Role", "w", (8, 8)),
+            (4, "Status", "w", (8, 8)),
+            (5, "Commits", "w", (8, 8)),
+            (6, "Actions", "e", (8, 14)),
+        ]
+        for col_idx, col_name, sticky, px in cols:
+            tk.Label(hdr, text=col_name, font=FONTS["label_bold"],
+                     fg=COLORS["text_secondary"], bg=COLORS["bg_medium"]).grid(
+                row=0, column=col_idx, sticky=sticky, padx=px, pady=6
+            )
 
         self._users_list_frame = tk.Frame(p, bg=COLORS["bg_dark"])
         self._users_list_frame.pack(fill="x")
@@ -3494,12 +3949,20 @@ class AdminApp:
         sep = tk.Frame(parent, height=1, bg=COLORS["border"])
         sep.pack(fill="x")
 
+        row.grid_columnconfigure(0, weight=0, minsize=40)
+        row.grid_columnconfigure(1, weight=3, minsize=140)
+        row.grid_columnconfigure(2, weight=3, minsize=150)
+        row.grid_columnconfigure(3, weight=1, minsize=80)
+        row.grid_columnconfigure(4, weight=1, minsize=80)
+        row.grid_columnconfigure(5, weight=1, minsize=70)
+        row.grid_columnconfigure(6, weight=0, minsize=210)
+
         sub_widgets = []
 
         is_self = (uid == self.user["id"])
         is_protected_admin = db.is_admin_username(user.get("username"))
 
-        # Selection Checkbox column
+        # Selection Checkbox column (col 0)
         if not is_self and not is_protected_admin:
             var = tk.BooleanVar(value=is_sel)
             self._user_check_vars[uid] = var
@@ -3509,25 +3972,29 @@ class AdminApp:
                 fg="#ffffff", activeforeground="#ffffff", cursor="hand2",
                 command=lambda u_id=uid: self._toggle_user_selection(u_id)
             )
-            chk.pack(side="left", padx=(10, 4))
+            chk.grid(row=0, column=0, padx=(10, 4), pady=6, sticky="w")
             sub_widgets.append(chk)
         else:
             ph = tk.Label(row, text="  ", bg=bg_col, width=2)
-            ph.pack(side="left", padx=(10, 4))
+            ph.grid(row=0, column=0, padx=(10, 4), pady=6, sticky="w")
             sub_widgets.append(ph)
+
+        # Col 1: User info (Avatar + Name & Username)
+        user_cell = tk.Frame(row, bg=bg_col, cursor="hand2")
+        user_cell.grid(row=0, column=1, sticky="w", padx=(6, 8), pady=6)
+        sub_widgets.append(user_cell)
 
         color = user.get("avatar_color", AVATAR_COLORS[0])
         name = user.get("full_name") or user["username"]
         initials = (name.split()[0][0] + name.split()[-1][0]
                     if len(name.split()) >= 2 else name[:2]).upper()
-        av = tk.Label(row, text=initials, bg=color, fg="white",
+        av = tk.Label(user_cell, text=initials, bg=color, fg="white",
                       font=("Segoe UI", 9, "bold"), width=3,
                       padx=4, pady=4, cursor="hand2")
-        av.pack(side="left", padx=(4, 0), pady=6)
+        av.pack(side="left", padx=(0, 8))
 
-        nf = tk.Frame(row, bg=bg_col, width=180, cursor="hand2")
-        nf.pack(side="left", padx=8, pady=6)
-        nf.pack_propagate(False)
+        nf = tk.Frame(user_cell, bg=bg_col, cursor="hand2")
+        nf.pack(side="left", fill="x", expand=True)
         sub_widgets.append(nf)
 
         name_lbl = tk.Label(nf, text=name, font=FONTS["label_bold"],
@@ -3542,29 +4009,32 @@ class AdminApp:
         uname_lbl.pack(anchor="w")
         sub_widgets.append(uname_lbl)
 
+        # Col 2: Email
         email_lbl = tk.Label(row, text=user.get("email", ""), font=FONTS["body_sm"],
                              fg=COLORS["text_secondary"], bg=bg_col,
-                             width=26, anchor="w", cursor="hand2")
-        email_lbl.pack(side="left", padx=4)
+                             anchor="w", cursor="hand2")
+        email_lbl.grid(row=0, column=2, sticky="w", padx=8, pady=6)
         sub_widgets.append(email_lbl)
 
+        # Col 3: Role
         rc = COLORS["admin"] if user["role"] == "admin" else COLORS["info"]
         role_lbl = tk.Label(row, text=user["role"].capitalize(), font=FONTS["label"],
-                            fg=rc, bg=bg_col, width=10, cursor="hand2")
-        role_lbl.pack(side="left")
+                            fg=rc, bg=bg_col, anchor="w", cursor="hand2")
+        role_lbl.grid(row=0, column=3, sticky="w", padx=8, pady=6)
         sub_widgets.append(role_lbl)
 
-        sc = COLORS["success"] if user["is_active"] else COLORS["error"]
+        # Col 4: Status
         status_lbl = tk.Label(row, text="● Active" if user["is_active"] else "● Disabled",
-                              font=FONTS["label"], fg=sc, bg=bg_col,
-                              width=10, cursor="hand2")
-        status_lbl.pack(side="left")
+                              font=FONTS["label"], fg=COLORS["success"] if user["is_active"] else COLORS["error"],
+                              bg=bg_col, anchor="w", cursor="hand2")
+        status_lbl.grid(row=0, column=4, sticky="w", padx=8, pady=6)
         sub_widgets.append(status_lbl)
 
+        # Col 5: Commits
         commits_lbl = tk.Label(row, text=str(user.get("total_commits", 0)),
                                font=FONTS["body_sm"], fg=COLORS["text_primary"],
-                               bg=bg_col, width=10, cursor="hand2")
-        commits_lbl.pack(side="left")
+                               bg=bg_col, anchor="w", cursor="hand2")
+        commits_lbl.grid(row=0, column=5, sticky="w", padx=8, pady=6)
         sub_widgets.append(commits_lbl)
 
         # Store widget mapping for fast, flicker-free background toggles
@@ -3575,15 +4045,16 @@ class AdminApp:
 
         # Bind row click to toggle selection (if not self/protected)
         if not is_self and not is_protected_admin:
-            for clickable in [row, av, nf, name_lbl, uname_lbl, email_lbl, role_lbl, status_lbl, commits_lbl]:
+            for clickable in [row, av, user_cell, nf, name_lbl, uname_lbl, email_lbl, role_lbl, status_lbl, commits_lbl]:
                 clickable.bind("<Button-1>", lambda e, u_id=uid: self._toggle_user_selection(u_id))
 
         # Hover effects
         row.bind("<Enter>", lambda e, u_id=uid: self._on_row_hover(u_id, True))
         row.bind("<Leave>", lambda e, u_id=uid: self._on_row_hover(u_id, False))
 
+        # Col 6: Action buttons
         af = tk.Frame(row, bg=bg_col)
-        af.pack(side="left", padx=8)
+        af.grid(row=0, column=6, sticky="e", padx=(8, 14), pady=6)
         sub_widgets.append(af)
 
         for text, cmd in [
@@ -3666,36 +4137,82 @@ class AdminApp:
         activity = db.get_activity_log(limit=200)
         hdr = tk.Frame(p, bg=COLORS["bg_medium"])
         hdr.pack(fill="x")
-        for col, w in [("User", 16), ("Repository", 18),
-                       ("Commit Message", 38), ("Files", 7), ("Date", 16)]:
-            tk.Label(hdr, text=col, font=FONTS["label_bold"],
-                     fg=COLORS["text_secondary"], bg=COLORS["bg_medium"],
-                     width=w, anchor="w", padx=6, pady=6).pack(side="left")
+        hdr.grid_columnconfigure(0, weight=2, minsize=140)  # User
+        hdr.grid_columnconfigure(1, weight=2, minsize=140)  # Repository
+        hdr.grid_columnconfigure(2, weight=5, minsize=180)  # Commit Message
+        hdr.grid_columnconfigure(3, weight=1, minsize=60)   # Files
+        hdr.grid_columnconfigure(4, weight=2, minsize=130)  # Date
+
+        for col_idx, col_name, sticky, px in [
+            (0, "User", "w", (12, 6)),
+            (1, "Repository", "w", (6, 6)),
+            (2, "Commit Message", "w", (6, 6)),
+            (3, "Files", "w", (6, 6)),
+            (4, "Date", "e", (6, 14)),
+        ]:
+            tk.Label(hdr, text=col_name, font=FONTS["label_bold"],
+                     fg=COLORS["text_secondary"], bg=COLORS["bg_medium"]).grid(
+                row=0, column=col_idx, sticky=sticky, padx=px, pady=6
+            )
+
         if not activity:
             tk.Label(p, text="No activity yet.",
                      font=FONTS["body_md"], fg=COLORS["text_muted"],
                      bg=COLORS["bg_dark"]).pack(anchor="w", pady=20)
             return
+
         for entry in activity:
             row = tk.Frame(p, bg=COLORS["bg_card"])
             row.pack(fill="x")
             tk.Frame(p, height=1, bg=COLORS["border"]).pack(fill="x")
+
+            row.grid_columnconfigure(0, weight=2, minsize=140)
+            row.grid_columnconfigure(1, weight=2, minsize=140)
+            row.grid_columnconfigure(2, weight=5, minsize=180)
+            row.grid_columnconfigure(3, weight=1, minsize=60)
+            row.grid_columnconfigure(4, weight=2, minsize=130)
+
             row.bind("<Enter>", lambda e, r=row: r.config(bg=COLORS["bg_card_hover"]))
             row.bind("<Leave>", lambda e, r=row: r.config(bg=COLORS["bg_card"]))
+
+            # Col 0: User (avatar + name)
+            ucell = tk.Frame(row, bg=COLORS["bg_card"])
+            ucell.grid(row=0, column=0, sticky="w", padx=(12, 6), pady=6)
             color = entry.get("avatar_color", AVATAR_COLORS[0])
-            tk.Label(row, text=(entry.get("username") or "?")[:2].upper(),
-                     bg=color, fg="white", font=FONTS["caption"],
-                     width=2, padx=3, pady=3).pack(side="left", padx=(6, 0), pady=5)
-            for text, w, fc in [
-                (entry.get("username", ""), 14, COLORS["text_primary"]),
-                (entry["repo_name"][:18], 18, COLORS["accent"]),
-                (entry["commit_msg"][:38], 38, COLORS["text_primary"]),
-                (str(entry.get("files_count", 0)), 7, COLORS["text_secondary"]),
-                (entry["committed_at"][:16], 16, COLORS["text_muted"]),
-            ]:
-                tk.Label(row, text=text, font=FONTS["body_sm"],
-                         fg=fc, bg=COLORS["bg_card"],
-                         width=w, anchor="w", padx=4, pady=7).pack(side="left")
+            av = tk.Label(ucell, text=(entry.get("username") or "?")[:2].upper(),
+                          bg=color, fg="white", font=FONTS["caption"],
+                          width=2, padx=3, pady=3)
+            av.pack(side="left", padx=(0, 6))
+            tk.Label(ucell, text=entry.get("username", ""), font=FONTS["body_sm"],
+                     fg=COLORS["text_primary"], bg=COLORS["bg_card"]).pack(side="left")
+
+            # Col 1: Repository
+            tk.Label(row, text=entry["repo_name"][:24], font=FONTS["body_sm"],
+                     fg=COLORS["accent"], bg=COLORS["bg_card"]).grid(
+                row=0, column=1, sticky="w", padx=6, pady=6
+            )
+
+            # Col 2: Commit message (dynamic width, up to 100 chars)
+            cmsg = entry.get("commit_msg", "")
+            if len(cmsg) > 100:
+                cmsg = cmsg[:97] + "..."
+            tk.Label(row, text=cmsg, font=FONTS["body_sm"],
+                     fg=COLORS["text_primary"], bg=COLORS["bg_card"], anchor="w").grid(
+                row=0, column=2, sticky="w", padx=6, pady=6
+            )
+
+            # Col 3: Files count
+            tk.Label(row, text=str(entry.get("files_count", 0)), font=FONTS["body_sm"],
+                     fg=COLORS["text_secondary"], bg=COLORS["bg_card"]).grid(
+                row=0, column=3, sticky="w", padx=6, pady=6
+            )
+
+            # Col 4: Date
+            date_str = (entry.get("committed_at") or "")[:16]
+            tk.Label(row, text=date_str, font=FONTS["caption"],
+                     fg=COLORS["text_muted"], bg=COLORS["bg_card"]).grid(
+                row=0, column=4, sticky="e", padx=(6, 14), pady=6
+            )
 
     def _page_charts(self):
         p = self._pad()
