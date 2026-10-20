@@ -19,7 +19,7 @@ Provides dual-engine reminder tracking:
 import os
 import threading
 import time
-from typing import Callable, Dict, List, Optional, Set, Tuple
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
 import psutil
 
@@ -91,7 +91,7 @@ class ReminderService(threading.Thread):
         self._lock = threading.Lock()
 
         # Preferences state
-        self.interval_enabled: bool = True
+        self.interval_enabled: bool = False
         self.interval_hours: int = 1
         self.interval_minutes: int = 0
         self.app_monitor_enabled: bool = True
@@ -119,8 +119,8 @@ class ReminderService(threading.Thread):
             cfg = load_config()
 
             with self._lock:
-                self.interval_enabled = bool(prefs.get("reminder_interval_enabled", 1))
-                self.interval_hours = int(prefs.get("reminder_interval_hours", 1))
+                self.interval_enabled = bool(prefs.get("reminder_interval_enabled", 0))
+                self.interval_hours = int(prefs.get("reminder_interval_hours", 0))
                 self.interval_minutes = int(prefs.get("reminder_interval_minutes", 0))
                 # IDE & Coding App monitoring is ALWAYS ON
                 self.app_monitor_enabled = True
@@ -232,13 +232,7 @@ class ReminderService(threading.Thread):
                     only_dirty = self.only_if_dirty
                     watched = [a.lower() for a in self.watched_apps]
 
-                # 1. Process Interval-based reminders
-                if int_enabled:
-                    total_interval_seconds = max((int_hours * 3600) + (int_mins * 60), 60)
-                    if now - self.last_interval_reminder_time >= total_interval_seconds:
-                        self._handle_interval_trigger(only_dirty, int_hours, int_mins)
-                        with self._lock:
-                            self.last_interval_reminder_time = time.time()
+                # Interval-based reminders removed per Fix 2: App & IDE monitoring + Uncommitted tracker only
 
                 # 2. Process App / IDE Monitoring (Independent per-IDE tracking)
                 if app_enabled:
