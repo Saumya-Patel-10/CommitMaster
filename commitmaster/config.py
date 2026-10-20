@@ -42,8 +42,8 @@ DEFAULTS: Dict[str, Any] = {
     "session_end_grace_seconds": 120,  # apps must be closed this long before prompt fires
     # Commit reminder notification configuration
     "reminder": {
-        "interval_enabled": True,
-        "interval_hours": 1,
+        "interval_enabled": False,
+        "interval_hours": 0,
         "interval_minutes": 0,
         "app_monitor_enabled": True,
         "only_if_dirty": True,
