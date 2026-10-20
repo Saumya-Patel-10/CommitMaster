@@ -8,7 +8,7 @@ import threading
 import tkinter as tk
 from tkinter import messagebox, simpledialog, ttk
 from datetime import datetime
-from typing import Dict, Callable
+from typing import Dict, Callable, Any, List, Optional, Tuple
 
 from commitmaster import commit_engine, charts, navigation, pattern_utils
 from commitmaster.app_styles import (
@@ -49,12 +49,15 @@ class AdminPortal:
 
     def _setup_window(self):
         self.root.title("CommitMaster — Admin Portal")
-        self.root.minsize(1000, 640)
+        self.root.minsize(960, 600)
+        self.root.resizable(True, True)
         self.root.configure(bg=COLORS["bg_darkest"])
+        self.root.protocol("WM_DELETE_WINDOW", self._go_back)
         self.root.update_idletasks()
-        w, h = 1200, 750
         sw = self.root.winfo_screenwidth()
         sh = self.root.winfo_screenheight()
+        w = min(1280, max(960, sw - 80))
+        h = min(820, max(640, sh - 100))
         self.root.geometry(f"{w}x{h}+{(sw - w)//2}+{(sh - h)//2}")
         from commitmaster import windows_integration
         windows_integration.apply_windows_theme(self.root, "CommitMaster Admin — Admin Portal", app_type="admin")
@@ -97,21 +100,26 @@ class AdminPortal:
             self.root, self._nav_order, self._go, self._nav_back, self._nav_forward)
 
     def _on_frame_configure(self, event=None):
+        canvas_w = self._canvas.winfo_width()
         bbox = self._canvas.bbox("all")
         if bbox and (bbox[2] > 1 or bbox[3] > 1):
-            if getattr(self, "_last_scrollregion", None) != bbox:
-                self._last_scrollregion = bbox
-                self._canvas.configure(scrollregion=bbox)
+            sr_w = max(canvas_w, bbox[2])
+            sr = (0, 0, sr_w, bbox[3])
+            if getattr(self, "_last_scrollregion", None) != sr:
+                self._last_scrollregion = sr
+                self._canvas.configure(scrollregion=sr)
         elif event and getattr(event, "height", 0) > 1:
-            self._canvas.configure(scrollregion=(0, 0, max(event.width, self._canvas.winfo_width()), event.height))
+            self._canvas.configure(scrollregion=(0, 0, max(canvas_w, 1), event.height))
 
     def _on_canvas_configure(self, event):
         if getattr(self, "_last_canvas_width", None) != event.width:
             self._last_canvas_width = event.width
             self._canvas.itemconfig(self._cw, width=event.width)
+        canvas_w = event.width
         bbox = self._canvas.bbox("all")
         if bbox and (bbox[2] > 1 or bbox[3] > 1):
-            self._canvas.configure(scrollregion=bbox)
+            sr_w = max(canvas_w, bbox[2])
+            self._canvas.configure(scrollregion=(0, 0, sr_w, bbox[3]))
 
     # ── Sidebar ───────────────────────────────────────────────────────────────
 
@@ -286,14 +294,21 @@ class AdminPortal:
         self._hdr_bg_lbl.place(x=0, y=0, relwidth=1, relheight=1)
 
         def _update_hdr_bg(e=None):
-            w = header.winfo_width()
-            if w > 10:
-                pat = get_active_customization().get("pattern", "dot_matrix")
-                banner = pattern_utils.generate_header_banner(
-                    w, 58, COLORS["bg_dark"], COLORS["admin"], pat
-                )
-                self._hdr_bg_lbl.config(image=banner)
-                self._hdr_bg_lbl._photo = banner
+            try:
+                if not getattr(self, "root", None) or not self.root.winfo_exists():
+                    return
+                if not getattr(self, "_hdr_bg_lbl", None) or not self._hdr_bg_lbl.winfo_exists():
+                    return
+                w = header.winfo_width()
+                if w > 10:
+                    pat = get_active_customization().get("pattern", "dot_matrix")
+                    banner = pattern_utils.generate_header_banner(
+                        w, 58, COLORS["bg_dark"], COLORS["admin"], pat
+                    )
+                    self._hdr_bg_lbl.config(image=banner)
+                    self._hdr_bg_lbl._photo = banner
+            except Exception:
+                pass
 
         header.bind("<Configure>", _update_hdr_bg)
 
@@ -308,7 +323,17 @@ class AdminPortal:
         badge = tk.Label(header, text="  ADMIN  ",
                          font=("Segoe UI", 9, "bold"),
                          fg=COLORS["bg_darkest"], bg=COLORS["admin"])
-        badge.pack(side="right", padx=16, pady=16)
+        badge.pack(side="right", padx=(6, 16), pady=16)
+
+        # Header Exit Button
+        back_btn = tk.Button(header, text="← Exit Admin Portal",
+                             font=FONTS["label_bold"], fg=COLORS["text_secondary"],
+                             bg=COLORS["bg_medium"], activebackground=COLORS["bg_card_hover"],
+                             activeforeground=COLORS["text_primary"], relief="flat", bd=0,
+                             cursor="hand2", padx=12, pady=6, command=self._go_back)
+        back_btn.pack(side="right", padx=(8, 8), pady=12)
+        back_btn.bind("<Enter>", lambda e: back_btn.config(bg=COLORS["bg_card_hover"], fg=COLORS["text_primary"]))
+        back_btn.bind("<Leave>", lambda e: back_btn.config(bg=COLORS["bg_medium"], fg=COLORS["text_secondary"]))
 
     def _rebuild_ui(self, nav_to: str = "customize"):
         """Tear down and recreate UI with new theme/tokens."""
@@ -643,10 +668,9 @@ class AdminPortal:
                         highlightbackground=COLORS["border"],
                         highlightthickness=1, **kw)
 
-    def _stat_card(self, parent, title: str, value: str,
-                   color: str, icon: str, subtitle: str = ""):
+    def _create_stat_card_widget(self, parent, title: str, value: str,
+                                 color: str, icon: str, subtitle: str = "") -> tk.Frame:
         card = self._card(parent)
-        card.pack(side="left", fill="both", expand=True, padx=6, pady=6)
 
         # Top 3px accent color stripe
         tk.Frame(card, height=3, bg=color).pack(fill="x")
@@ -677,6 +701,13 @@ class AdminPortal:
         if subtitle:
             tk.Label(inner, text=subtitle, font=FONTS["caption"],
                      fg=COLORS["text_muted"], bg=COLORS["bg_card"]).pack(anchor="w")
+        return card
+
+    def _stat_card(self, parent, title: str, value: str,
+                   color: str, icon: str, subtitle: str = "") -> tk.Frame:
+        card = self._create_stat_card_widget(parent, title, value, color, icon, subtitle)
+        card.pack(side="left", fill="both", expand=True, padx=6, pady=6)
+        return card
 
     def _action_btn(self, parent, text: str, cmd, color=None) -> tk.Button:
         c = color or COLORS["bg_medium"]
@@ -705,17 +736,46 @@ class AdminPortal:
 
         stats = db.get_dashboard_stats()
 
-        # Stats row 1
-        row1 = tk.Frame(pad, bg=COLORS["bg_dark"])
-        row1.pack(fill="x")
-        self._stat_card(row1, "Total Users", str(stats["total_users"]),
-                        COLORS["info"], "👥", f"{stats['total_admins']} admins")
-        self._stat_card(row1, "Active Today", str(stats["active_today"]),
-                        COLORS["success"], "🟢", "unique logins")
-        self._stat_card(row1, "Total Commits", str(stats["total_commits"]),
-                        COLORS["accent"], "📝", "all time")
-        self._stat_card(row1, "This Week", str(stats["commits_this_week"]),
-                        COLORS["admin"], "📈", "commits (7d)")
+        # Responsive stats grid
+        stats_frame = tk.Frame(pad, bg=COLORS["bg_dark"])
+        stats_frame.pack(fill="x", pady=(0, 16))
+
+        stat_items = [
+            ("Total Users", str(stats["total_users"]), COLORS["info"], "👥", f"{stats['total_admins']} admins"),
+            ("Active Today", str(stats["active_today"]), COLORS["success"], "🟢", "unique logins"),
+            ("Total Commits", str(stats["total_commits"]), COLORS["accent"], "📝", "all time"),
+            ("This Week", str(stats["commits_this_week"]), COLORS["admin"], "📈", "commits (7d)"),
+        ]
+        self._dash_stat_widgets = []
+        for t, v, c, i, s in stat_items:
+            w = self._create_stat_card_widget(stats_frame, t, v, c, i, s)
+            self._dash_stat_widgets.append(w)
+
+        def _reflow_dash_stats(e=None):
+            try:
+                if not getattr(self, "root", None) or not self.root.winfo_exists():
+                    return
+                if not stats_frame.winfo_exists():
+                    return
+                width = stats_frame.winfo_width()
+                if width <= 10:
+                    width = self._canvas.winfo_width() - 48
+                cols = 4 if width >= 820 else 2
+                if getattr(self, "_last_dash_cols", None) == cols:
+                    return
+                self._last_dash_cols = cols
+                for col_i in range(4):
+                    stats_frame.grid_columnconfigure(col_i, weight=1 if col_i < cols else 0)
+                for idx, card_w in enumerate(self._dash_stat_widgets):
+                    card_w.grid(row=idx // cols, column=idx % cols, sticky="nsew", padx=6, pady=6)
+            except Exception:
+                pass
+
+        stats_frame.bind("<Configure>", _reflow_dash_stats)
+        try:
+            stats_frame.after(10, _reflow_dash_stats)
+        except Exception:
+            pass
 
         # Top committers
         tk.Label(pad, text="TOP COMMITTERS", font=FONTS["label_bold"],
@@ -833,6 +893,13 @@ class AdminPortal:
         # Table header with master select checkbox
         hdr = tk.Frame(pad, bg=COLORS["bg_medium"])
         hdr.pack(fill="x")
+        hdr.grid_columnconfigure(0, weight=0, minsize=40)
+        hdr.grid_columnconfigure(1, weight=3, minsize=140)
+        hdr.grid_columnconfigure(2, weight=3, minsize=150)
+        hdr.grid_columnconfigure(3, weight=1, minsize=80)
+        hdr.grid_columnconfigure(4, weight=1, minsize=80)
+        hdr.grid_columnconfigure(5, weight=1, minsize=70)
+        hdr.grid_columnconfigure(6, weight=0, minsize=210)
 
         master_chk = tk.Checkbutton(
             hdr, variable=self._select_all_var, bg=COLORS["bg_medium"],
@@ -840,13 +907,21 @@ class AdminPortal:
             fg=COLORS["text_primary"], activeforeground=COLORS["accent"],
             cursor="hand2", command=self._toggle_master_checkbox
         )
-        master_chk.pack(side="left", padx=(10, 4))
+        master_chk.grid(row=0, column=0, padx=(10, 4), pady=6, sticky="w")
 
-        for col, width in [("User", 28), ("Email", 28), ("Role", 10),
-                           ("Status", 10), ("Commits", 10), ("Actions", 22)]:
-            tk.Label(hdr, text=col, font=FONTS["label_bold"],
-                     fg=COLORS["text_secondary"], bg=COLORS["bg_medium"],
-                     width=width, anchor="w", padx=8, pady=6).pack(side="left")
+        cols = [
+            (1, "User", "w", (6, 8)),
+            (2, "Email", "w", (8, 8)),
+            (3, "Role", "w", (8, 8)),
+            (4, "Status", "w", (8, 8)),
+            (5, "Commits", "w", (8, 8)),
+            (6, "Actions", "e", (8, 14)),
+        ]
+        for col_idx, col_name, sticky, px in cols:
+            tk.Label(hdr, text=col_name, font=FONTS["label_bold"],
+                     fg=COLORS["text_secondary"], bg=COLORS["bg_medium"]).grid(
+                row=0, column=col_idx, sticky=sticky, padx=px, pady=6
+            )
 
         # User list container
         self._users_container = tk.Frame(pad, bg=COLORS["bg_dark"])
@@ -1063,6 +1138,14 @@ class AdminPortal:
         sep = tk.Frame(parent, height=1, bg=COLORS["border"])
         sep.pack(fill="x")
 
+        row.grid_columnconfigure(0, weight=0, minsize=40)
+        row.grid_columnconfigure(1, weight=3, minsize=140)
+        row.grid_columnconfigure(2, weight=3, minsize=150)
+        row.grid_columnconfigure(3, weight=1, minsize=80)
+        row.grid_columnconfigure(4, weight=1, minsize=80)
+        row.grid_columnconfigure(5, weight=1, minsize=70)
+        row.grid_columnconfigure(6, weight=0, minsize=210)
+
         sub_widgets = []
 
         is_self = (uid == self.admin_user["id"])
@@ -1078,22 +1161,26 @@ class AdminPortal:
                 fg="#ffffff", activeforeground="#ffffff", cursor="hand2",
                 command=lambda u_id=uid: self._toggle_user_selection(u_id)
             )
-            chk.pack(side="left", padx=(10, 4))
+            chk.grid(row=0, column=0, padx=(10, 4), pady=6, sticky="w")
             sub_widgets.append(chk)
         else:
             ph = tk.Label(row, text="  ", bg=bg_col, width=2)
-            ph.pack(side="left", padx=(10, 4))
+            ph.grid(row=0, column=0, padx=(10, 4), pady=6, sticky="w")
             sub_widgets.append(ph)
+
+        # Col 1: User info (Avatar + Name & Username)
+        user_cell = tk.Frame(row, bg=bg_col, cursor="hand2")
+        user_cell.grid(row=0, column=1, sticky="w", padx=(6, 8), pady=6)
+        sub_widgets.append(user_cell)
 
         color = user.get("avatar_color", AVATAR_COLORS[0])
         initials = self._user_initials(user)
-        av = tk.Label(row, text=initials, font=("Segoe UI", 9, "bold"),
+        av = tk.Label(user_cell, text=initials, font=("Segoe UI", 9, "bold"),
                       bg=color, fg="white", width=3, padx=4, pady=4, cursor="hand2")
-        av.pack(side="left", padx=(8, 0), pady=6)
+        av.pack(side="left", padx=(0, 8))
 
-        name_f = tk.Frame(row, bg=bg_col, width=180, cursor="hand2")
-        name_f.pack(side="left", padx=8, pady=6)
-        name_f.pack_propagate(False)
+        name_f = tk.Frame(user_cell, bg=bg_col, cursor="hand2")
+        name_f.pack(side="left", fill="x", expand=True)
         sub_widgets.append(name_f)
 
         name_lbl = tk.Label(name_f, text=user.get("full_name") or user["username"],
@@ -1107,29 +1194,33 @@ class AdminPortal:
         uname_lbl.pack(anchor="w")
         sub_widgets.append(uname_lbl)
 
+        # Col 2: Email
         email_lbl = tk.Label(row, text=user.get("email", ""),
                              font=FONTS["body_sm"], fg=COLORS["text_secondary"],
-                             bg=bg_col, width=28, anchor="w", cursor="hand2")
-        email_lbl.pack(side="left", padx=4)
+                             bg=bg_col, anchor="w", cursor="hand2")
+        email_lbl.grid(row=0, column=2, sticky="w", padx=8, pady=6)
         sub_widgets.append(email_lbl)
 
+        # Col 3: Role
         role_color = COLORS["admin"] if user["role"] == "admin" else COLORS["info"]
         role_lbl = tk.Label(row, text=user["role"].capitalize(), font=FONTS["label"],
-                            fg=role_color, bg=bg_col, width=10, cursor="hand2")
-        role_lbl.pack(side="left")
+                            fg=role_color, bg=bg_col, anchor="w", cursor="hand2")
+        role_lbl.grid(row=0, column=3, sticky="w", padx=8, pady=6)
         sub_widgets.append(role_lbl)
 
+        # Col 4: Status
         status = "Active" if user["is_active"] else "Disabled"
         sc = COLORS["success"] if user["is_active"] else COLORS["error"]
         status_lbl = tk.Label(row, text=f"● {status}", font=FONTS["label"],
-                              fg=sc, bg=bg_col, width=10, cursor="hand2")
-        status_lbl.pack(side="left")
+                              fg=sc, bg=bg_col, anchor="w", cursor="hand2")
+        status_lbl.grid(row=0, column=4, sticky="w", padx=8, pady=6)
         sub_widgets.append(status_lbl)
 
+        # Col 5: Commits
         commits = user.get("total_commits", 0)
         commits_lbl = tk.Label(row, text=str(commits), font=FONTS["body_sm"],
-                               fg=COLORS["text_primary"], bg=bg_col, width=10, cursor="hand2")
-        commits_lbl.pack(side="left")
+                               fg=COLORS["text_primary"], bg=bg_col, anchor="w", cursor="hand2")
+        commits_lbl.grid(row=0, column=5, sticky="w", padx=8, pady=6)
         sub_widgets.append(commits_lbl)
 
         # Store widget mapping for fast, flicker-free background toggles
@@ -1140,7 +1231,7 @@ class AdminPortal:
 
         # Bind row click to toggle selection (if not self/protected)
         if not is_self and not is_protected_admin:
-            for clickable in [row, av, name_f, name_lbl, uname_lbl, email_lbl, role_lbl, status_lbl, commits_lbl]:
+            for clickable in [row, av, user_cell, name_f, name_lbl, uname_lbl, email_lbl, role_lbl, status_lbl, commits_lbl]:
                 clickable.bind("<Button-1>", lambda e, u_id=uid: self._toggle_user_selection(u_id))
 
         # Hover effects
@@ -1149,7 +1240,7 @@ class AdminPortal:
 
         # Action buttons
         actions = tk.Frame(row, bg=bg_col)
-        actions.pack(side="left", padx=8)
+        actions.grid(row=0, column=6, sticky="e", padx=(8, 14), pady=6)
         sub_widgets.append(actions)
 
         # Protect admin from deleting themselves
@@ -1228,11 +1319,23 @@ class AdminPortal:
         # Table header
         hdr = tk.Frame(pad, bg=COLORS["bg_medium"])
         hdr.pack(fill="x")
-        for col, width in [("User", 16), ("Repository", 18),
-                           ("Commit Message", 40), ("Files", 7), ("Date", 16)]:
-            tk.Label(hdr, text=col, font=FONTS["label_bold"],
-                     fg=COLORS["text_secondary"], bg=COLORS["bg_medium"],
-                     width=width, anchor="w", padx=6, pady=6).pack(side="left")
+        hdr.grid_columnconfigure(0, weight=2, minsize=140)  # User
+        hdr.grid_columnconfigure(1, weight=2, minsize=140)  # Repository
+        hdr.grid_columnconfigure(2, weight=5, minsize=180)  # Commit Message
+        hdr.grid_columnconfigure(3, weight=1, minsize=60)   # Files
+        hdr.grid_columnconfigure(4, weight=2, minsize=130)  # Date
+
+        for col_idx, col_name, sticky, px in [
+            (0, "User", "w", (12, 6)),
+            (1, "Repository", "w", (6, 6)),
+            (2, "Commit Message", "w", (6, 6)),
+            (3, "Files", "w", (6, 6)),
+            (4, "Date", "e", (6, 14)),
+        ]:
+            tk.Label(hdr, text=col_name, font=FONTS["label_bold"],
+                     fg=COLORS["text_secondary"], bg=COLORS["bg_medium"]).grid(
+                row=0, column=col_idx, sticky=sticky, padx=px, pady=6
+            )
 
         if not activity:
             tk.Label(pad, text="No activity yet.",
@@ -1247,28 +1350,55 @@ class AdminPortal:
             row.pack(fill="x")
             tk.Frame(pad, height=1, bg=COLORS["border"]).pack(fill="x")
 
+            row.grid_columnconfigure(0, weight=2, minsize=140)
+            row.grid_columnconfigure(1, weight=2, minsize=140)
+            row.grid_columnconfigure(2, weight=5, minsize=180)
+            row.grid_columnconfigure(3, weight=1, minsize=60)
+            row.grid_columnconfigure(4, weight=2, minsize=130)
+
             def on_enter(e, r=row): r.config(bg=COLORS["bg_card_hover"])
             def on_leave(e, r=row): r.config(bg=COLORS["bg_card"])
             row.bind("<Enter>", on_enter)
             row.bind("<Leave>", on_leave)
 
+            # Col 0: User (avatar + name)
+            ucell = tk.Frame(row, bg=COLORS["bg_card"])
+            ucell.grid(row=0, column=0, sticky="w", padx=(12, 6), pady=6)
             color = entry.get("avatar_color", AVATAR_COLORS[0])
-            av = tk.Label(row, text=(entry.get("username") or "?")[:2].upper(),
+            av = tk.Label(ucell, text=(entry.get("username") or "?")[:2].upper(),
                           bg=color, fg="white", font=FONTS["caption"],
                           width=2, padx=3, pady=3)
-            av.pack(side="left", padx=(6, 0), pady=5)
+            av.pack(side="left", padx=(0, 6))
+            tk.Label(ucell, text=entry.get("username", ""), font=FONTS["body_sm"],
+                     fg=COLORS["text_primary"], bg=COLORS["bg_card"]).pack(side="left")
 
-            fields = [
-                (entry.get("username", ""), 14, COLORS["text_primary"]),
-                (entry["repo_name"][:18], 18, COLORS["accent"]),
-                (entry["commit_msg"][:40], 40, COLORS["text_primary"]),
-                (str(entry.get("files_count", 0)), 7, COLORS["text_secondary"]),
-                (entry["committed_at"][:16], 16, COLORS["text_muted"]),
-            ]
-            for text, width, fcolor in fields:
-                tk.Label(row, text=text, font=FONTS["body_sm"],
-                         fg=fcolor, bg=COLORS["bg_card"],
-                         width=width, anchor="w", padx=4, pady=7).pack(side="left")
+            # Col 1: Repository
+            tk.Label(row, text=entry["repo_name"][:24], font=FONTS["body_sm"],
+                     fg=COLORS["accent"], bg=COLORS["bg_card"]).grid(
+                row=0, column=1, sticky="w", padx=6, pady=6
+            )
+
+            # Col 2: Commit message (dynamic width, up to 100 chars)
+            cmsg = entry.get("commit_msg", "")
+            if len(cmsg) > 100:
+                cmsg = cmsg[:97] + "..."
+            tk.Label(row, text=cmsg, font=FONTS["body_sm"],
+                     fg=COLORS["text_primary"], bg=COLORS["bg_card"], anchor="w").grid(
+                row=0, column=2, sticky="w", padx=6, pady=6
+            )
+
+            # Col 3: Files count
+            tk.Label(row, text=str(entry.get("files_count", 0)), font=FONTS["body_sm"],
+                     fg=COLORS["text_secondary"], bg=COLORS["bg_card"]).grid(
+                row=0, column=3, sticky="w", padx=6, pady=6
+            )
+
+            # Col 4: Date
+            date_str = (entry.get("committed_at") or "")[:16]
+            tk.Label(row, text=date_str, font=FONTS["caption"],
+                     fg=COLORS["text_muted"], bg=COLORS["bg_card"]).grid(
+                row=0, column=4, sticky="e", padx=(6, 14), pady=6
+            )
 
     def _page_charts(self):
         p = self._content_frame
@@ -1517,7 +1647,7 @@ class AdminPortal:
                  fg=COLORS["accent"], bg=COLORS["bg_card"]).pack(side="left")
 
         tk.Label(info_f, text=f"{repo_path}  •  Remote: {remote_url}", font=FONTS["caption"],
-                 fg=COLORS["text_muted"], bg=COLORS["bg_card"]).pack(anchor="w", pady=(2, 0))
+                 fg=COLORS["text_muted"], bg=COLORS["bg_card"], wraplength=550, justify="left").pack(anchor="w", pady=(2, 0))
 
         ctrl_f = tk.Frame(row, bg=COLORS["bg_card"])
         ctrl_f.pack(side="right")
@@ -1648,19 +1778,15 @@ class AdminPortal:
         themes_grid.pack(fill="x", pady=(0, 16))
 
         self._theme_cards = {}
-        for col_idx, (t_key, t_info) in enumerate(THEMES.items()):
-            col = col_idx % 4
-            row = col_idx // 4
+        for t_key, t_info in THEMES.items():
             t_card = tk.Frame(themes_grid, bg=t_info["bg_card"],
                               highlightthickness=2,
                               highlightbackground=COLORS["accent"] if t_key == self._custom_theme else t_info["border"],
                               padx=12, pady=10, cursor="hand2")
-            t_card.grid(row=row, column=col, padx=6, pady=6, sticky="nsew")
-            themes_grid.grid_columnconfigure(col, weight=1)
 
             t_name = tk.Label(t_card, text=t_info["name"].split("(")[0].strip(),
                               font=FONTS["label_bold"], fg=t_info["text_primary"],
-                              bg=t_info["bg_card"], cursor="hand2")
+                              bg=t_info["bg_card"], cursor="hand2", wraplength=170, justify="left")
             t_name.pack(anchor="w")
 
             swatch_f = tk.Frame(t_card, bg=t_info["bg_card"], cursor="hand2")
@@ -1677,53 +1803,31 @@ class AdminPortal:
             swatch_f.bind("<Button-1>", make_handler())
             self._theme_cards[t_key] = t_card
 
-        # ── Surface Patterns & Procedural Textures Section ────────────────────
-        tk.Label(pad, text="Surface Patterns & Procedural Textures", font=FONTS["label_bold"],
-                 fg=COLORS["text_secondary"], bg=COLORS["bg_dark"]).pack(anchor="w", pady=(8, 4))
-        tk.Label(pad, text="Procedural geometric patterns and tactile textures rendered across headers, cards, and desktop backgrounds (avoids plain flat colors).",
-                 font=FONTS["caption"], fg=COLORS["text_secondary"], bg=COLORS["bg_dark"]).pack(anchor="w", pady=(0, 8))
-
-        pat_grid = tk.Frame(pad, bg=COLORS["bg_dark"])
-        pat_grid.pack(fill="x", pady=(0, 16))
-
-        self._custom_pattern = curr.get("pattern", "dot_matrix")
-        self._pattern_cards = {}
-        for col_idx, (p_key, p_info) in enumerate(pattern_utils.PATTERNS.items()):
-            col = col_idx % 4
-            row = col_idx // 4
-            p_card = tk.Frame(pat_grid, bg=COLORS["bg_card"],
-                              highlightthickness=2,
-                              highlightbackground=COLORS["accent"] if p_key == self._custom_pattern else COLORS["border"],
-                              padx=10, pady=8, cursor="hand2")
-            p_card.grid(row=row, column=col, padx=6, pady=6, sticky="nsew")
-            pat_grid.grid_columnconfigure(col, weight=1)
-
-            # Preview thumbnail
+        def _reflow_themes(e=None):
             try:
-                thumb = pattern_utils.generate_pattern_preview_card(p_key, COLORS["bg_card"], COLORS["accent"], width=130, height=45)
-                thumb_lbl = tk.Label(p_card, image=thumb, bg=COLORS["bg_card"], cursor="hand2", bd=0)
-                thumb_lbl._thumb = thumb
-                thumb_lbl.pack(fill="x", pady=(0, 6))
+                if not getattr(self, "root", None) or not self.root.winfo_exists():
+                    return
+                if not themes_grid.winfo_exists():
+                    return
+                w = themes_grid.winfo_width()
+                if w <= 10:
+                    w = self._canvas.winfo_width() - 48
+                cols = 4 if w >= 880 else (3 if w >= 640 else 2)
+                if getattr(self, "_last_theme_cols", None) == cols:
+                    return
+                self._last_theme_cols = cols
+                for c_i in range(4):
+                    themes_grid.grid_columnconfigure(c_i, weight=1 if c_i < cols else 0)
+                for idx, (tk_key, c_widget) in enumerate(self._theme_cards.items()):
+                    c_widget.grid(row=idx // cols, column=idx % cols, padx=6, pady=6, sticky="nsew")
             except Exception:
-                thumb_lbl = tk.Label(p_card, text=p_info["icon"], font=("Segoe UI", 16), bg=COLORS["bg_card"])
-                thumb_lbl.pack(pady=(0, 4))
+                pass
 
-            # Pattern title & description
-            p_title = tk.Label(p_card, text=f"{p_info['icon']}  {p_info['name']}",
-                               font=FONTS["label_bold"], fg=COLORS["text_primary"],
-                               bg=COLORS["bg_card"], cursor="hand2")
-            p_title.pack(anchor="w")
-            p_desc = tk.Label(p_card, text=p_info["desc"],
-                              font=FONTS["caption"], fg=COLORS["text_secondary"],
-                              bg=COLORS["bg_card"], wraplength=140, justify="left", cursor="hand2")
-            p_desc.pack(anchor="w", pady=(2, 0))
-
-            def make_pat_handler(pk=p_key):
-                return lambda e: self._select_pattern_card(pk)
-
-            for w in (p_card, thumb_lbl, p_title, p_desc):
-                w.bind("<Button-1>", make_pat_handler())
-            self._pattern_cards[p_key] = p_card
+        themes_grid.bind("<Configure>", _reflow_themes)
+        try:
+            themes_grid.after(10, _reflow_themes)
+        except Exception:
+            pass
 
         # Accent Colors Section
         tk.Label(pad, text="Primary Accent Color", font=FONTS["label_bold"],
@@ -1735,23 +1839,25 @@ class AdminPortal:
         acc_chips_f.pack(fill="x", pady=(0, 10))
 
         self._accent_chips = {}
-        for a_key, a_info in ACCENTS.items():
+        for idx, (a_key, a_info) in enumerate(ACCENTS.items()):
             chip_f = tk.Frame(acc_chips_f, bg=COLORS["bg_card"], cursor="hand2")
-            chip_f.pack(side="left", padx=(0, 12))
+            chip_f.grid(row=idx // 4, column=idx % 4, padx=8, pady=6, sticky="w")
+            acc_chips_f.grid_columnconfigure(idx % 4, weight=1)
 
             dot = tk.Label(chip_f, text="  ", bg=a_info["accent"], width=3, height=1,
                            highlightthickness=2,
                            highlightbackground="white" if a_key == self._custom_accent else COLORS["border"],
                            cursor="hand2")
-            dot.pack(anchor="center")
+            dot.pack(side="left", padx=(0, 6))
             lbl = tk.Label(chip_f, text=a_info["name"].split("/")[0].strip(),
                            font=FONTS["caption"], fg=COLORS["text_secondary"],
                            bg=COLORS["bg_card"], cursor="hand2")
-            lbl.pack(anchor="center", pady=(2, 0))
+            lbl.pack(side="left")
 
             def make_acc_handler(k=a_key, hexv=a_info["accent"]):
                 return lambda e: self._select_accent_chip(k, hexv)
 
+            chip_f.bind("<Button-1>", make_acc_handler())
             dot.bind("<Button-1>", make_acc_handler())
             lbl.bind("<Button-1>", make_acc_handler())
             self._accent_chips[a_key] = dot
@@ -1838,18 +1944,6 @@ class AdminPortal:
                               relief="flat", bd=0, cursor="hand2",
                               padx=14, pady=10, command=self._reset_customization)
         reset_btn.pack(side="left")
-
-    def _select_pattern_card(self, pattern_key: str):
-        self._custom_pattern = pattern_key
-        for k, card in getattr(self, "_pattern_cards", {}).items():
-            border_c = COLORS["accent"] if k == pattern_key else COLORS["border"]
-            card.config(highlightbackground=border_c)
-        apply_customization(pattern=pattern_key)
-        try:
-            db.update_preferences(self.admin_user["id"], bg_pattern=pattern_key)
-        except Exception:
-            pass
-        self._rebuild_ui("customize")
 
     def _select_theme_card(self, theme_key: str):
         self._custom_theme = theme_key
