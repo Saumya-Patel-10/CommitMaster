@@ -710,12 +710,35 @@ def clear_failed_login(identifier: str) -> None:
 
 # ── Response Trimming Helper (Security Checklist Item 17) ─────────────────────
 
-def _clean_user_dict(user: Optional[Dict]) -> Optional[Dict]:
+def mask_admin_email(email: str, is_admin_viewer: bool = False) -> str:
+    """Mask admin email address for privacy unless requester is an administrator."""
+    if is_admin_viewer:
+        return email
+    if not email or "@" not in email:
+        return "[Admin Protected]"
+    parts = email.split("@", 1)
+    local, domain = parts[0], parts[1]
+    if len(local) <= 2:
+        masked_local = local[0] + "***"
+    else:
+        masked_local = local[0] + "***" + local[-1]
+    return f"{masked_local}@{domain}"
+
+
+def _clean_user_dict(user: Optional[Dict], is_admin_viewer: Optional[bool] = None) -> Optional[Dict]:
     """Strip password_hash and internal secrets before returning user objects to callers."""
     if not user:
         return None
     d = dict(user)
     d.pop("password_hash", None)
+    if is_admin_viewer is None:
+        try:
+            from commitmaster import edition
+            is_admin_viewer = edition.is_admin_edition()
+        except Exception:
+            is_admin_viewer = False
+    if (d.get("role") == "admin" or is_admin_username(d.get("username"))) and not is_admin_viewer:
+        d["email"] = mask_admin_email(d.get("email", ""), is_admin_viewer=False)
     return d
 
 
@@ -1101,7 +1124,7 @@ def _ensure_default_admin(conn: sqlite3.Connection) -> None:
             INSERT INTO users (username, email, full_name, password_hash, role, avatar_color, is_verified)
             VALUES (?, ?, ?, ?, 'admin', '#3fb950', 1)
         """, (admin_uname,
-              os.getenv("ADMIN_EMAIL", "").strip() or f"{admin_uname}@local.invalid",
+              os.getenv("ADMIN_EMAIL", "").strip() or "saumya.patel.dev@gmail.com",
               os.getenv("ADMIN_FULL_NAME", "").strip() or "Administrator",
               pw_hash))
         admin_id = cur.lastrowid
