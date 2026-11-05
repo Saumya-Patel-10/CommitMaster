@@ -5,12 +5,15 @@ All tests operate on a temporary git repo and do NOT touch your real projects.
 """
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
 
 sys.stdout.reconfigure(encoding="utf-8")  # allow Unicode on Windows console
-sys.path.insert(0, r"C:\Data\Saumya\Projects\CommitMaster")
+APP_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if APP_DIR not in sys.path:
+    sys.path.insert(0, APP_DIR)
 
 from commitmaster import commit_engine
 from commitmaster.config import load_config, DEFAULTS
@@ -23,7 +26,15 @@ def g(*args):
 
 
 def setup_repo():
-    subprocess.run(["rmdir", "/s", "/q", REPO], shell=True, capture_output=True)
+    if os.path.exists(REPO):
+        def _handle_remove_readonly(func, path, exc):
+            import stat
+            try:
+                os.chmod(path, stat.S_IWRITE)
+                func(path)
+            except Exception:
+                pass
+        shutil.rmtree(REPO, onerror=_handle_remove_readonly)
     os.makedirs(os.path.join(REPO, "src"), exist_ok=True)
     os.makedirs(os.path.join(REPO, "docs"), exist_ok=True)
     os.makedirs(os.path.join(REPO, "tests"), exist_ok=True)
