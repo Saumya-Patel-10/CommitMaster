@@ -8,6 +8,8 @@ import os
 import threading
 import tkinter as tk
 from tkinter import ttk, filedialog
+from typing import Optional
+
 
 from commitmaster import ai_messages, commit_engine
 from commitmaster.config import ConfigManager, get_manager, load_config, save_config, _deep_merge, DEFAULTS
@@ -604,4 +606,3 @@ def open_settings(config_manager: Optional[ConfigManager] = None) -> None:
         log.warning("Settings window closed unexpectedly: %s", exc)
 
 
-from typing import Optional
