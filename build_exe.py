@@ -19,8 +19,16 @@ def _stage_public_assets() -> str:
     """Copy assets for the public build, excluding per-user avatars (private data)."""
     dest = os.path.join(APP_DIR, "build", "public_assets")
     if os.path.exists(dest):
-        shutil.rmtree(dest)
-    shutil.copytree(os.path.join(APP_DIR, "assets"), dest,
+        import stat
+        def _err(func, path, exc):
+            try:
+                os.chmod(path, stat.S_IWRITE)
+                func(path)
+            except Exception:
+                pass
+        shutil.rmtree(dest, onerror=_err)
+    if not os.path.exists(dest):
+        shutil.copytree(os.path.join(APP_DIR, "assets"), dest,
                     ignore=shutil.ignore_patterns("avatars"))
     return dest
 
@@ -31,7 +39,7 @@ def build_single(target_script: str, exe_name: str, description: str, icon_file:
     assets_src = os.path.join(APP_DIR, "assets") if is_admin_build else _stage_public_assets()
     cmd = [
         sys.executable, "-m", "PyInstaller",
-        "--clean",
+        "--noconfirm",
         "--onefile",
         "--noconsole",
         "--name", exe_name,
@@ -94,6 +102,7 @@ def build_single(target_script: str, exe_name: str, description: str, icon_file:
         "--hidden-import", "commitmaster.settings_ui",
         "--hidden-import", "commitmaster.social_auth",
         "--hidden-import", "commitmaster.startup_manager",
+        "--hidden-import", "commitmaster.tailscale_service",
         "--hidden-import", "commitmaster.tray_manager",
         "--hidden-import", "commitmaster.ui",
         "--hidden-import", "commitmaster.user_dashboard",
