@@ -332,7 +332,27 @@ class LoginWindow:
             command=self._open_google_auth, padx=12, pady=7
         )
         self._add_hover(self._google_btn, COLORS["bg_card_hover"], COLORS["bg_medium"])
-        self._google_btn.pack(fill="x")
+        self._google_btn.pack(fill="x", pady=(0, 6))
+
+        self._tailscale_btn = tk.Button(
+            self._social_btns_frame, text="🛡️  Sign in with Tailscale Mesh", font=FONTS["body_sm"],
+            bg=COLORS["bg_medium"], fg=COLORS["text_primary"],
+            activebackground=COLORS["bg_card_hover"], activeforeground=COLORS["admin"],
+            relief="flat", cursor="hand2", bd=0,
+            command=self._open_tailscale_auth, padx=12, pady=7
+        )
+        self._add_hover(self._tailscale_btn, COLORS["bg_card_hover"], COLORS["bg_medium"])
+        self._tailscale_btn.pack(fill="x")
+
+        self._tailscale_setup_btn = tk.Button(
+            self._social_btns_frame, text="🌐  Join Team Network (Tailscale Setup)", font=FONTS["body_sm"],
+            bg=COLORS["bg_medium"], fg=COLORS["accent"],
+            activebackground=COLORS["bg_card_hover"], activeforeground=COLORS["accent_hover"],
+            relief="flat", cursor="hand2", bd=0,
+            command=self._open_tailscale_setup, padx=12, pady=6
+        )
+        self._add_hover(self._tailscale_setup_btn, COLORS["bg_card_hover"], COLORS["bg_medium"])
+        self._tailscale_setup_btn.pack(fill="x", pady=(6, 0))
 
         # ── Toggle login / register footer ────────────────────────────────────
         toggle_f = tk.Frame(outer, bg=COLORS["bg_darkest"])
@@ -698,6 +718,101 @@ class LoginWindow:
         from commitmaster.social_auth import GoogleAuthDialog
         GoogleAuthDialog(self.root, on_success=self._on_social_success)
 
+    def _open_tailscale_setup(self):
+        """Open the guided Tailscale setup & network onboarding wizard."""
+        from commitmaster.tailscale_setup import show_tailscale_setup
+        show_tailscale_setup(parent=self.root, on_complete=self._on_tailscale_setup_complete)
+
+    def _on_tailscale_setup_complete(self, connected: bool):
+        if connected:
+            self._err_label.config(text="Connected to team private network!", fg=COLORS["success"])
+            self.root.after(500, self._open_tailscale_auth)
+
+    def _open_tailscale_auth(self):
+        """Authenticate seamlessly via verified Tailscale Whois identity."""
+        from commitmaster import tailscale_service
+        if not tailscale_service.is_tailscale_installed():
+            if messagebox.askyesno(
+                "Tailscale Required",
+                "Tailscale is not installed on this PC.\n\n"
+                "Would you like to install Tailscale and connect to your team's private network now?"
+            ):
+                self._open_tailscale_setup()
+            else:
+                self._err_label.config(
+                    text="Tailscale is required for Mesh SSO. Click 'Join Team Network' to install.",
+                    fg=COLORS["error"]
+                )
+            return
+
+        if not tailscale_service.is_tailnet_connected():
+            if messagebox.askyesno(
+                "Tailscale Offline",
+                "Tailscale is currently offline or not signed in.\n\n"
+                "Would you like to open the network setup wizard?"
+            ):
+                self._open_tailscale_setup()
+            else:
+                self._err_label.config(
+                    text="Tailscale is offline. Please sign in to Tailscale to authenticate.",
+                    fg=COLORS["warning"]
+                )
+            return
+
+        server_url = db.get_server_url()
+        self._err_label.config(text="Verifying Tailscale identity...", fg=COLORS["text_secondary"])
+        self.root.update_idletasks()
+
+        # If connected to a central server: authenticate via server Whois endpoint
+        if server_url:
+            try:
+                import requests
+                resp = requests.post(f"{server_url.rstrip('/')}/api/auth/tailscale", timeout=5)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    user = data.get("user")
+                    tok = data.get("token")
+                    if user and tok:
+                        db.set_active_session_token(tok)
+                        account_manager.save_account(user, tok)
+                        self._on_social_success(user)
+                        return
+                else:
+                    err_msg = resp.json().get("error") if resp.headers.get("content-type") == "application/json" else resp.text
+                    self._err_label.config(text=f"Tailscale login failed: {err_msg}", fg=COLORS["error"])
+                    return
+            except Exception as e:
+                self._err_label.config(text=f"Server connection failed: {e}", fg=COLORS["error"])
+                return
+
+        # Local mode: match or auto-link user via local Tailnet profile
+        ts_user = tailscale_service.get_tailnet_user()
+        if not ts_user or not ts_user.get("LoginName"):
+            self._err_label.config(text="Could not retrieve local Tailnet profile.", fg=COLORS["error"])
+            return
+
+        login_name = ts_user["LoginName"].strip().lower()
+        matched_user = db.get_user_by_username_or_email(login_name)
+        if not matched_user:
+            # Check if this machine belongs to the designated admin
+            admin_user = db.get_user(1)
+            if admin_user and any(p in login_name for p in ["saumya", "admin"]):
+                matched_user = admin_user
+            else:
+                # Create local account for this Tailscale developer
+                username = login_name.split("@")[0]
+                full_name = ts_user.get("DisplayName") or username
+                uid = db.create_user(username, login_name, secrets.token_hex(16), full_name=full_name)
+                matched_user = db.get_user(uid)
+
+        if matched_user:
+            tok = db.create_session_token(matched_user["id"])
+            db.set_active_session_token(tok)
+            account_manager.save_account(dict(matched_user), tok)
+            self._on_social_success(dict(matched_user))
+        else:
+            self._err_label.config(text="Could not complete Tailscale authentication.", fg=COLORS["error"])
+
     def _open_forgot_password(self):
         """Open the password reset dialog via security questions."""
         from commitmaster.forgot_password_dialog import ForgotPasswordDialog
@@ -908,7 +1023,37 @@ class LoginWindow:
                               bg=COLORS["bg_card"], fg=COLORS["text_secondary"],
                               activebackground=COLORS["bg_card_hover"], relief="flat", bd=0,
                               cursor="hand2", padx=12, pady=6, command=_do_local)
-        local_btn.pack(side="left")
+        local_btn.pack(side="left", padx=(0, 8))
+
+        def _do_detect_tailscale():
+            res_lbl.config(text="Probing Tailnet peers for CommitMaster Hub...", fg=COLORS["text_secondary"])
+            dlg.update_idletasks()
+            from commitmaster import tailscale_service
+            peers = tailscale_service.get_tailnet_peers()
+            found_url = None
+            for pr in peers:
+                if pr.get("online") and pr.get("ip"):
+                    info = tailscale_service.probe_tailnet_hub(pr["ip"])
+                    if info:
+                        found_url = info["url"]
+                        break
+            if not found_url and tailscale_service.get_tailscale_ip():
+                info = tailscale_service.probe_tailnet_hub(tailscale_service.get_tailscale_ip())
+                if info:
+                    found_url = info["url"]
+
+            if found_url:
+                url_ent.delete(0, "end")
+                url_ent.insert(0, found_url)
+                res_lbl.config(text=f"✔ Detected Tailnet Hub at {found_url}", fg=COLORS["success"])
+            else:
+                res_lbl.config(text="✖ No CommitMaster hub found on active Tailnet peers.", fg=COLORS["warning"])
+
+        ts_btn = tk.Button(btn_row, text="🔍 Tailnet Hub", font=FONTS["label_bold"],
+                           bg=COLORS["bg_medium"], fg=COLORS["admin"],
+                           activebackground=COLORS["bg_card_hover"], relief="flat", bd=0,
+                           cursor="hand2", padx=12, pady=6, command=_do_detect_tailscale)
+        ts_btn.pack(side="left")
 
         save_btn = tk.Button(btn_row, text="💾 Save & Connect", font=FONTS["label_bold"],
                              bg=COLORS["accent"], fg="#ffffff",
