@@ -10,7 +10,7 @@ import re
 import subprocess
 import time
 from collections import OrderedDict
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from commitmaster.logger import get
 
@@ -361,6 +361,27 @@ def diff_summary(repo_path: str, max_chars: int = 8_000) -> str:
 
 # ── Commit operations ─────────────────────────────────────────────────────────
 
+def sanitize_commit_message(message: str) -> str:
+    """Sanitize commit message: strip hashtags, backticks, junk formatting and ensure clean formatting."""
+    if not message:
+        return ""
+    lines = message.strip().splitlines()
+    if not lines:
+        return ""
+    try:
+        from commitmaster import ai_messages
+        headline = ai_messages._clean_summary(lines[0])
+        description = "\n".join(lines[1:]).strip() if len(lines) > 1 else ""
+        return ai_messages.compose_commit_message(headline, description)
+    except Exception:
+        # Fallback basic sanitation
+        import re
+        headline = re.sub(r"^#+\s*", "", lines[0]).strip()
+        headline = re.sub(r"\s*#[a-zA-Z0-9_\-]+", "", headline).replace("#", "")
+        headline = re.sub(r"[`*~^|]+", "", headline).strip()
+        return headline
+
+
 def stage_and_commit(repo_path: str, files: List[str], message: str) -> str:
     """Stage specific files and create one commit.  Returns commit summary."""
     if not files:
@@ -373,7 +394,8 @@ def stage_and_commit(repo_path: str, files: List[str], message: str) -> str:
     # Chunk the adds — very long arg lists can hit OS command-line limits.
     for i in range(0, len(files), 40):
         git(repo_path, "add", "-A", "--", *files[i:i + 40])
-    git(repo_path, "commit", "-m", message)
+    clean_message = sanitize_commit_message(message) or message.strip()
+    git(repo_path, "commit", "-m", clean_message)
     invalidate_changes_cache(repo_path)
     summary = git(repo_path, "log", "-1", "--oneline").strip()
     log.info("Committed in %s: %s", repo_name(repo_path), summary)
@@ -401,7 +423,7 @@ def stage_and_commit_individual(
     results: List[Dict[str, str]] = []
     failures: List[str] = []
     for file_path, msg in file_comments:
-        clean_msg = (msg or "").strip() or f"chore: update {os.path.basename(file_path)}"
+        clean_msg = sanitize_commit_message(msg) or (msg or "").strip() or f"chore: update {os.path.basename(file_path)}"
         try:
             # Stage only this specific file (handles additions, modifications, and deletions)
             git(repo_path, "add", "-A", "--", file_path)
