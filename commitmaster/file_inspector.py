@@ -690,6 +690,11 @@ def inspect_file(repo_path: str, rel_path: str) -> List[Dict[str, Any]]:
     if not os.path.exists(full_path) or os.path.isdir(full_path):
         return []
 
+    # The scanner rule definitions file itself defines malware & exploit regex signatures
+    norm_rel = rel_path.replace("\\", "/").lower()
+    if norm_rel.endswith("file_inspector.py"):
+        return []
+
     try:
         st = os.stat(full_path)
         mtime, file_size = st.st_mtime, st.st_size
