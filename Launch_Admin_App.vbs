@@ -4,7 +4,7 @@ Set fso = CreateObject("Scripting.FileSystemObject")
 currentDir = fso.GetParentFolderName(WScript.ScriptFullName)
 WshShell.CurrentDirectory = currentDir
 
-' Ensure Desktop shortcut exists with official custom icon
+' Ensure Desktop shortcut exists with official custom admin icon
 desktopPath = WshShell.SpecialFolders("Desktop")
 shortcutPath = desktopPath & "\CommitMaster Admin.lnk"
 If Not fso.FileExists(shortcutPath) Then
@@ -14,25 +14,34 @@ If Not fso.FileExists(shortcutPath) Then
     oLink.Arguments = """" & WScript.ScriptFullName & """"
     oLink.WorkingDirectory = currentDir
     oLink.Description = "CommitMaster Admin Portal"
-    If fso.FileExists(currentDir & "\icon.ico") Then
+    If fso.FileExists(currentDir & "\icon_admin.ico") Then
+        oLink.IconLocation = currentDir & "\icon_admin.ico, 0"
+    ElseIf fso.FileExists(currentDir & "\icon.ico") Then
         oLink.IconLocation = currentDir & "\icon.ico, 0"
     End If
     oLink.Save
     On Error GoTo 0
 End If
 
-' Determine best Python executable
-pyExe = "pythonw.exe"
-If fso.FileExists("C:\Python314\pythonw.exe") Then
-    pyExe = "C:\Python314\pythonw.exe"
-ElseIf fso.FileExists(WshShell.ExpandEnvironmentStrings("%LOCALAPPDATA%\Programs\Python\Python312\pythonw.exe")) Then
-    pyExe = WshShell.ExpandEnvironmentStrings("%LOCALAPPDATA%\Programs\Python\Python312\pythonw.exe")
+' Check if standalone admin binary exists
+adminExe = currentDir & "\dist\CommitMaster-Admin.exe"
+If fso.FileExists(currentDir & "\CommitMaster-Admin.exe") Then
+    adminExe = currentDir & "\CommitMaster-Admin.exe"
 End If
 
-scriptPath = currentDir & "\app.py"
+If fso.FileExists(adminExe) Then
+    WshShell.Run """" & adminExe & """", 1, False
+    WScript.Quit 0
+End If
+
+' Determine best Python executable
+pyExe = "pythonw.exe"
+If fso.FileExists(WshShell.ExpandEnvironmentStrings("%LOCALAPPDATA%\Programs\Python\Python312\pythonw.exe")) Then
+    pyExe = WshShell.ExpandEnvironmentStrings("%LOCALAPPDATA%\Programs\Python\Python312\pythonw.exe")
+ElseIf fso.FileExists("C:\Python314\pythonw.exe") Then
+    pyExe = "C:\Python314\pythonw.exe"
+End If
+
+scriptPath = currentDir & "\admin_app.py"
 cmdLine = """" & pyExe & """ """ & scriptPath & """"
 WshShell.Run cmdLine, 0, False
-
-
-
-
