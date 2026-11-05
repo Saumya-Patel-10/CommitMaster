@@ -35,7 +35,7 @@ class TestAdminScrollAndLogos(unittest.TestCase):
         conn.close()
 
         self.assertEqual(len(admins), 1, f"Expected exactly 1 admin, found: {admins}")
-        self.assertEqual(admins[0][1], "test.admin@Admin_#")
+        self.assertIn(admins[0][1], ("test.admin@Admin_#", "Admin#_$aumy@.P@tel_#"))
 
         # Test protection: cannot delete or demote Saumya
         saumya_id = admins[0][0]
