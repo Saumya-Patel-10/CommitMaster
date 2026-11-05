@@ -1,7 +1,7 @@
 """Line charts (with data-point markers, hover tooltips, clickable legend) and the
 admin analytics builders shared by the Admin Portal and the unified Admin App."""
 import tkinter as tk
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from commitmaster import database as db
 from commitmaster.app_styles import COLORS, FONTS
