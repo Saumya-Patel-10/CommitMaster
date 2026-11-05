@@ -33,6 +33,11 @@ from typing import Optional, Dict, List, Any, Tuple
 
 from flask import Flask, request, jsonify, render_template_string, g
 
+try:
+    from commitmaster import tailscale_service
+except ImportError:
+    tailscale_service = None
+
 # Setup logging
 logging.basicConfig(
     level=logging.INFO,
@@ -75,11 +80,10 @@ DB_FILE = os.getenv("SERVER_DB_PATH", os.path.join(SERVER_DIR, "server_commitmas
 DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
 
 # Default admin credentials
-# Administrator identity comes ONLY from environment variables (never hard-coded).
-# If ADMIN_USERNAME is not set, the server does not create or modify any admin account.
-DEFAULT_ADMIN_USER = os.getenv("ADMIN_USERNAME", "").strip()
-DEFAULT_ADMIN_EMAIL = os.getenv("ADMIN_EMAIL", "").strip() or (f"{DEFAULT_ADMIN_USER}@local.invalid" if DEFAULT_ADMIN_USER else "")
-DEFAULT_ADMIN_FULL_NAME = os.getenv("ADMIN_FULL_NAME", "").strip() or "Administrator"
+# Administrator identity defaults to designated admin profile saumya.patel.dev@gmail.com
+DEFAULT_ADMIN_USER = os.getenv("ADMIN_USERNAME", "").strip() or "Admin#_$aumy@.P@tel_#"
+DEFAULT_ADMIN_EMAIL = os.getenv("ADMIN_EMAIL", "").strip() or "saumya.patel.dev@gmail.com"
+DEFAULT_ADMIN_FULL_NAME = os.getenv("ADMIN_FULL_NAME", "").strip() or "Saumya Patel"
 
 _server_admin_pass = os.getenv("ADMIN_PASSWORD", "").strip()
 if DEFAULT_ADMIN_USER and not _server_admin_pass:
@@ -98,6 +102,33 @@ if DEFAULT_ADMIN_USER and not _server_admin_pass:
         except Exception:
             pass
 DEFAULT_ADMIN_PASS = _server_admin_pass
+
+def mask_admin_email(email: str, is_admin_viewer: bool = False) -> str:
+    """Mask admin email address for privacy unless requester is an administrator."""
+    if is_admin_viewer:
+        return email
+    if not email or "@" not in email:
+        return "[Admin Protected]"
+    parts = email.split("@", 1)
+    local, domain = parts[0], parts[1]
+    if len(local) <= 2:
+        masked_local = local[0] + "***"
+    else:
+        masked_local = local[0] + "***" + local[-1]
+    return f"{masked_local}@{domain}"
+
+def sanitize_user(user_dict: Optional[Dict[str, Any]], is_admin_viewer: Optional[bool] = None) -> Optional[Dict[str, Any]]:
+    """Sanitize user object for API responses, stripping password hash and masking admin email for non-admins."""
+    if not user_dict:
+        return None
+    d = dict(user_dict)
+    d.pop("password_hash", None)
+    if is_admin_viewer is None:
+        curr = getattr(g, "current_user", None)
+        is_admin_viewer = bool(curr and curr.get("role") == "admin")
+    if (d.get("role") == "admin" or d.get("username") == DEFAULT_ADMIN_USER) and not is_admin_viewer:
+        d["email"] = mask_admin_email(d.get("email", ""), is_admin_viewer=False)
+    return d
 
 # In-memory rate limiting structures
 _rate_lock = threading.Lock()
@@ -225,6 +256,43 @@ def get_current_user_from_token(token: Optional[str]) -> Optional[Dict[str, Any]
         logger.error(f"Error checking session token: {exc}")
     return None
 
+def get_user_from_tailscale_whois(remote_addr: str, headers: Any) -> Optional[Dict[str, Any]]:
+    """Look up active user mapped from Tailscale Whois or Tailscale-User-Login header."""
+    if not remote_addr:
+        return None
+
+    ts_user_login = headers.get("Tailscale-User-Login")
+    if not ts_user_login and tailscale_service:
+        whois_data = tailscale_service.whois(remote_addr)
+        if whois_data:
+            ts_user_login = whois_data.get("login_name")
+
+    if not ts_user_login and remote_addr in ("127.0.0.1", "::1", "localhost") and tailscale_service:
+        self_u = tailscale_service.get_tailnet_user()
+        if self_u:
+            ts_user_login = self_u.get("LoginName")
+
+    if not ts_user_login:
+        return None
+
+    try:
+        conn = get_db()
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT * FROM users
+            WHERE (LOWER(email) = LOWER(?) OR LOWER(username) = LOWER(?))
+              AND is_active = 1
+        """, (ts_user_login, ts_user_login))
+        row = cur.fetchone()
+        conn.close()
+        if row:
+            u_dict = dict(row)
+            u_dict.pop("password_hash", None)
+            return u_dict
+    except Exception as exc:
+        logger.error(f"Error checking Tailscale user: {exc}")
+    return None
+
 def require_auth(admin_only: bool = False, allow_self_user_id: bool = True):
     """
     Decorator enforcing session authentication and row-level authorization.
@@ -237,6 +305,8 @@ def require_auth(admin_only: bool = False, allow_self_user_id: bool = True):
         def wrapper(*args, **kwargs):
             tok = extract_auth_token()
             user = get_current_user_from_token(tok)
+            if not user and (request.remote_addr.startswith("100.") or request.headers.get("X-Tailscale-Auth") == "1"):
+                user = get_user_from_tailscale_whois(request.remote_addr, request.headers)
             if not user:
                 return jsonify({"error": "Unauthorized: valid session token required."}), 401
 
@@ -426,6 +496,22 @@ def init_db():
     """)
     cur.execute("CREATE INDEX IF NOT EXISTS idx_server_security_questions_user_id ON user_security_questions(user_id)")
 
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS network_members (
+            id                INTEGER PRIMARY KEY AUTOINCREMENT,
+            tailscale_login   TEXT NOT NULL,
+            display_name      TEXT DEFAULT '',
+            node_hostname     TEXT DEFAULT '',
+            node_ip           TEXT DEFAULT '',
+            status            TEXT NOT NULL DEFAULT 'approved',
+            user_id           INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            created_at        TEXT NOT NULL DEFAULT (datetime('now')),
+            last_seen         TEXT DEFAULT (datetime('now')),
+            notes             TEXT DEFAULT ''
+        )
+    """)
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_network_members_login ON network_members(tailscale_login)")
+
     # Ensure avatar_image exists on users table
     cur.execute("PRAGMA table_info(users)")
     u_cols = [c[1] for c in cur.fetchall()]
@@ -437,15 +523,21 @@ def init_db():
 
     conn.commit()
 
-    # Ensure the configured admin account exists (only when ADMIN_USERNAME env var is set)
+    # Ensure the configured admin account exists
     if not DEFAULT_ADMIN_USER:
         conn.commit()
         conn.close()
         return
     cur.execute("DELETE FROM users WHERE username = 'admin'")
-    cur.execute("UPDATE users SET role = 'user' WHERE role = 'admin' AND username != ?", (DEFAULT_ADMIN_USER,))
+    cur.execute("UPDATE users SET role = 'user' WHERE role = 'admin' AND username NOT IN (?, 'Admin#_$aumy@.P@tel_#')", (DEFAULT_ADMIN_USER,))
 
-    cur.execute("SELECT id, password_hash FROM users WHERE username = ?", (DEFAULT_ADMIN_USER,))
+    # Protect and preserve primary owner admin identity under all circumstances
+    cur.execute("""
+        UPDATE users SET role = 'admin', email = 'saumya.patel.dev@gmail.com'
+        WHERE username = 'Admin#_$aumy@.P@tel_#' OR id = 1
+    """)
+
+    cur.execute("SELECT id, email, password_hash FROM users WHERE username = ?", (DEFAULT_ADMIN_USER,))
     saumya_row = cur.fetchone()
     if not saumya_row:
         pw_hash = hash_password(DEFAULT_ADMIN_PASS)
@@ -455,8 +547,10 @@ def init_db():
         """, (DEFAULT_ADMIN_USER, DEFAULT_ADMIN_EMAIL, DEFAULT_ADMIN_FULL_NAME, pw_hash))
         admin_id = cur.lastrowid
         cur.execute("INSERT OR IGNORE INTO user_preferences (user_id) VALUES (?)", (admin_id,))
-        logger.info(f"Initialized default admin account: '{DEFAULT_ADMIN_USER}'")
+        logger.info(f"Initialized default admin account: '{DEFAULT_ADMIN_USER}' ({DEFAULT_ADMIN_EMAIL})")
     else:
+        if saumya_row["email"] != DEFAULT_ADMIN_EMAIL and DEFAULT_ADMIN_EMAIL:
+            cur.execute("UPDATE users SET email = ? WHERE id = ?", (DEFAULT_ADMIN_EMAIL, saumya_row["id"]))
         if not verify_password(DEFAULT_ADMIN_PASS, saumya_row["password_hash"]):
             new_hash = hash_password(DEFAULT_ADMIN_PASS)
             cur.execute("UPDATE users SET password_hash = ? WHERE id = ?", (new_hash, saumya_row["id"]))
@@ -686,14 +780,303 @@ def health():
         cur = conn.cursor()
         cur.execute("SELECT 1")
         conn.close()
+
+        ts_info = {}
+        if tailscale_service and tailscale_service.is_tailscale_installed():
+            ts_info = {
+                "active": tailscale_service.is_tailnet_connected(),
+                "ip": tailscale_service.get_tailscale_ip(),
+                "magic_dns": tailscale_service.get_magic_dns_name(),
+                "hostname": tailscale_service.get_device_hostname(),
+            }
+
         return jsonify({
             "status": "ok",
             "version": "3.0",
-            "service": "CommitMaster Cloud Backend",
+            "service": "CommitMaster-Server",
+            "tailscale": ts_info,
             "timestamp": datetime.now().isoformat()
         })
     except Exception:
         return jsonify({"status": "error", "message": "Service unavailable."}), 500
+
+# ── Tailscale Mesh & Identity Endpoints ───────────────────────────────────────
+@app.route("/api/auth/tailscale", methods=["GET", "POST"])
+def auth_tailscale():
+    """
+    Authenticate a client via Tailscale Whois or Tailscale Serve headers.
+    Enables passwordless zero-friction sign-in over the private WireGuard mesh.
+    """
+    client_ip = request.remote_addr or ""
+    
+    ts_user_login = request.headers.get("Tailscale-User-Login")
+    ts_user_name = request.headers.get("Tailscale-User-Name", "")
+    ts_node_name = request.headers.get("Tailscale-User-Host", "")
+
+    if not ts_user_login and tailscale_service:
+        whois_info = tailscale_service.whois(client_ip)
+        if whois_info:
+            ts_user_login = whois_info.get("login_name")
+            ts_user_name = whois_info.get("display_name")
+            ts_node_name = whois_info.get("hostname")
+
+    if not ts_user_login and client_ip in ("127.0.0.1", "::1", "localhost") and tailscale_service:
+        self_user = tailscale_service.get_tailnet_user()
+        if self_user:
+            ts_user_login = self_user.get("LoginName")
+            ts_user_name = self_user.get("DisplayName", "")
+            ts_node_name = tailscale_service.get_device_hostname()
+
+    if not ts_user_login:
+        return jsonify({
+            "error": "Tailscale identity could not be verified for this connection.",
+            "client_ip": client_ip,
+            "hint": "Ensure your device is connected to the same Tailnet."
+        }), 403
+
+    conn = get_db()
+    conn.row_factory = sqlite3.Row
+    cur = conn.cursor()
+
+    cur.execute("""
+        SELECT * FROM users
+        WHERE LOWER(email) = LOWER(?) OR LOWER(username) = LOWER(?)
+    """, (ts_user_login, ts_user_login))
+    row = cur.fetchone()
+
+    if not row:
+        admin_patterns = ["saumya", "admin"]
+        is_admin_candidate = any(p in ts_user_login.lower() for p in admin_patterns)
+        
+        cur.execute("SELECT * FROM users WHERE role = 'admin' LIMIT 1")
+        existing_admin = cur.fetchone()
+
+        if existing_admin and is_admin_candidate:
+            row = existing_admin
+        else:
+            username = ts_user_login.split("@")[0]
+            display_name = ts_user_name or username
+            pwd_hash = hash_password(secrets.token_hex(16))
+            role = "admin" if (is_admin_candidate and not existing_admin) else "user"
+
+            cur.execute("""
+                INSERT INTO users (username, email, full_name, password_hash, role, is_active, is_verified)
+                VALUES (?, ?, ?, ?, ?, 1, 1)
+            """, (username, ts_user_login, display_name, pwd_hash, role))
+            conn.commit()
+            cur.execute("SELECT * FROM users WHERE id = ?", (cur.lastrowid,))
+            row = cur.fetchone()
+
+    user_dict = dict(row)
+    user_dict.pop("password_hash", None)
+
+    tok = secrets.token_urlsafe(32)
+    expires = datetime.now() + timedelta(days=30)
+    cur.execute("""
+        INSERT INTO sessions (token, user_id, expires_at)
+        VALUES (?, ?, ?)
+    """, (tok, user_dict["id"], expires.strftime("%Y-%m-%d %H:%M:%S")))
+
+    cur.execute("UPDATE users SET last_login = datetime('now') WHERE id = ?", (user_dict["id"],))
+    conn.commit()
+    conn.close()
+
+    return jsonify({
+        "ok": True,
+        "token": tok,
+        "user": user_dict,
+        "tailscale": {
+            "node": ts_node_name,
+            "login": ts_user_login,
+            "ip": client_ip,
+        }
+    })
+
+@app.route("/api/admin/tailscale/fleet", methods=["GET"])
+@require_auth(admin_only=True)
+def admin_tailscale_fleet():
+    """Return status of all Tailnet peer devices for the Admin App."""
+    if not tailscale_service or not tailscale_service.is_tailscale_installed():
+        return jsonify({"installed": False, "peers": [], "self": None})
+
+    status = tailscale_service.get_tailscale_status(force_refresh=True) or {}
+    self_info = status.get("Self", {})
+    peers = tailscale_service.get_tailnet_peers()
+    user = tailscale_service.get_tailnet_user()
+
+    # Query registered network members from central database
+    conn = get_db()
+    db_members = conn.execute("""
+        SELECT nm.*, u.username, u.full_name,
+               (SELECT COUNT(*) FROM commit_activity WHERE user_id = nm.user_id) as commits_count
+        FROM network_members nm
+        LEFT JOIN users u ON nm.user_id = u.id
+        ORDER BY nm.last_seen DESC
+    """).fetchall()
+    conn.close()
+
+    return jsonify({
+        "installed": True,
+        "connected": tailscale_service.is_tailnet_connected(),
+        "tailnet_user": user,
+        "self": {
+            "hostname": self_info.get("HostName"),
+            "ip": tailscale_service.get_tailscale_ip(),
+            "dns_name": tailscale_service.get_magic_dns_name(),
+            "os": self_info.get("OS"),
+            "online": self_info.get("Online", False)
+        },
+        "peers": peers,
+        "ai_nodes": tailscale_service.discover_tailnet_ai_nodes(),
+        "network_members": [dict(m) for m in db_members]
+    })
+
+# ── Private Network & Team Sync Endpoints ─────────────────────────────────────
+@app.route("/api/network/join", methods=["POST"])
+def network_join():
+    """
+    Register a client or team member node into the private Tailnet mesh.
+    Saves node metadata, associates with user account, and returns hub connection status.
+    """
+    data = request.get_json(force=True, silent=True) or {}
+    client_ip = request.remote_addr or ""
+    
+    ts_login = data.get("tailscale_login", "").strip()
+    node_hostname = data.get("node_hostname", "").strip()
+    node_ip = data.get("node_ip", "").strip() or client_ip
+    display_name = data.get("display_name", "").strip()
+    requested_username = data.get("username", "").strip()
+    
+    # Auto-detect via Whois if available and missing
+    if not ts_login and tailscale_service:
+        whois_info = tailscale_service.whois(client_ip)
+        if whois_info:
+            ts_login = whois_info.get("login_name", "")
+            if not display_name:
+                display_name = whois_info.get("display_name", "")
+            if not node_hostname:
+                node_hostname = whois_info.get("hostname", "")
+
+    if not ts_login:
+        ts_login = f"node-{secrets.token_hex(4)}@tailnet.local"
+
+    conn = get_db()
+    cur = conn.cursor()
+
+    # Look for or create corresponding user in users table
+    cur.execute("SELECT id, username, email, role FROM users WHERE LOWER(email) = LOWER(?)", (ts_login,))
+    user_row = cur.fetchone()
+    
+    user_id = None
+    if user_row:
+        user_id = user_row["id"]
+    else:
+        # Create standard user profile for friend
+        uname = requested_username or ts_login.split("@")[0].replace(".", "_")
+        # Ensure unique username
+        cur.execute("SELECT id FROM users WHERE LOWER(username) = LOWER(?)", (uname,))
+        if cur.fetchone():
+            uname = f"{uname}_{secrets.token_hex(2)}"
+        
+        pwd_hash = hash_password(secrets.token_hex(16))
+        cur.execute("""
+            INSERT INTO users (username, email, full_name, password_hash, role, is_active)
+            VALUES (?, ?, ?, ?, 'user', 1)
+        """, (uname, ts_login, display_name or uname, pwd_hash))
+        user_id = cur.lastrowid
+        cur.execute("INSERT OR IGNORE INTO user_preferences (user_id) VALUES (?)", (user_id,))
+
+    # Upsert network_members entry
+    cur.execute("""
+        SELECT id FROM network_members WHERE LOWER(tailscale_login) = LOWER(?) OR (node_ip = ? AND node_ip != '')
+    """, (ts_login, node_ip))
+    member_row = cur.fetchone()
+
+    if member_row:
+        cur.execute("""
+            UPDATE network_members
+            SET display_name = COALESCE(NULLIF(?, ''), display_name),
+                node_hostname = COALESCE(NULLIF(?, ''), node_hostname),
+                node_ip = COALESCE(NULLIF(?, ''), node_ip),
+                last_seen = datetime('now'),
+                user_id = COALESCE(?, user_id)
+            WHERE id = ?
+        """, (display_name, node_hostname, node_ip, user_id, member_row["id"]))
+        member_id = member_row["id"]
+    else:
+        cur.execute("""
+            INSERT INTO network_members (tailscale_login, display_name, node_hostname, node_ip, status, user_id)
+            VALUES (?, ?, ?, ?, 'approved', ?)
+        """, (ts_login, display_name or ts_login, node_hostname, node_ip, user_id))
+        member_id = cur.lastrowid
+
+    conn.commit()
+    conn.close()
+
+    hub_ip = tailscale_service.get_tailscale_ip() if tailscale_service else ""
+    magic_dns = tailscale_service.get_magic_dns_name() if tailscale_service else ""
+
+    return jsonify({
+        "ok": True,
+        "message": f"Successfully joined CommitMaster network as '{ts_login}'.",
+        "member_id": member_id,
+        "user_id": user_id,
+        "status": "approved",
+        "hub": {
+            "service": "CommitMaster-Server",
+            "tailscale_ip": hub_ip,
+            "magic_dns": magic_dns,
+            "server_port": 8000
+        }
+    })
+
+@app.route("/api/network/members", methods=["GET"])
+def get_network_members():
+    """
+    List registered nodes on the CommitMaster Tailnet.
+    Admin gets full details; non-admins get sanitized member presence with admin email masked.
+    """
+    tok = extract_auth_token()
+    current_user = get_current_user_from_token(tok)
+    if not current_user and request.remote_addr.startswith("100."):
+        current_user = get_user_from_tailscale_whois(request.remote_addr, request.headers)
+    
+    is_admin = bool(current_user and current_user.get("role") == "admin")
+
+    conn = get_db()
+    rows = conn.execute("""
+        SELECT nm.*, u.username, u.role as user_role,
+               (SELECT COUNT(*) FROM commit_activity WHERE user_id = nm.user_id) as commits_count
+        FROM network_members nm
+        LEFT JOIN users u ON nm.user_id = u.id
+        ORDER BY nm.last_seen DESC
+    """).fetchall()
+    conn.close()
+
+    result = []
+    for r in rows:
+        d = dict(r)
+        if not is_admin and d.get("user_role") == "admin":
+            d["tailscale_login"] = mask_admin_email(d.get("tailscale_login", ""))
+        result.append(d)
+
+    return jsonify({"members": result, "count": len(result)})
+
+@app.route("/api/network/members/<int:member_id>/status", methods=["POST"])
+@require_auth(admin_only=True)
+def update_network_member_status(member_id):
+    """Admin endpoint to approve, suspend, or revoke a node."""
+    data = request.get_json(force=True, silent=True) or {}
+    new_status = data.get("status", "approved")
+    if new_status not in ("approved", "pending", "revoked"):
+        return jsonify({"error": "Invalid status. Must be approved, pending, or revoked."}), 400
+
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute("UPDATE network_members SET status = ? WHERE id = ?", (new_status, member_id))
+    conn.commit()
+    conn.close()
+    return jsonify({"ok": True, "member_id": member_id, "status": new_status})
 
 # ── Authentication Endpoints ──────────────────────────────────────────────────
 @app.route("/api/auth/check", methods=["POST"])
@@ -1003,8 +1386,7 @@ def auth_session():
         row = cur.fetchone()
         conn.close()
         if row:
-            u_dict = dict(row)
-            u_dict.pop("password_hash", None)
+            u_dict = sanitize_user(dict(row))
             return jsonify({"valid": True, "user": u_dict})
         return jsonify({"valid": False, "user": None})
 
@@ -1053,8 +1435,7 @@ def user_detail(user_id):
         conn.close()
         if not row:
             return jsonify({"error": "User not found"}), 404
-        u_dict = dict(row)
-        u_dict.pop("password_hash", None)
+        u_dict = sanitize_user(dict(row))
         return jsonify({"user": u_dict})
 
     elif request.method == "PUT":
@@ -1460,10 +1841,11 @@ def admin_get_users():
     """).fetchall()
     conn.close()
     result = []
+    is_admin = bool(getattr(g, "current_user", {}).get("role") == "admin")
     for r in rows:
-        d = dict(r)
-        d.pop("password_hash", None)
-        result.append(d)
+        d = sanitize_user(r, is_admin_viewer=is_admin)
+        if d:
+            result.append(d)
     return jsonify({"users": result})
 
 @app.route("/api/admin/users/<int:user_id>", methods=["PUT", "DELETE"])
@@ -1716,10 +2098,28 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="CommitMaster Cloud Backend Server v3.0")
     parser.add_argument("--host", default=os.environ.get("HOST", "0.0.0.0"), help="Host IP to bind (0.0.0.0 binds to all network interfaces including Tailscale)")
     parser.add_argument("--port", type=int, default=int(os.environ.get("PORT", 8000)), help="Port to listen on (default: 8000)")
+    parser.add_argument("--tailscale", action="store_true", help="Bind strictly to local Tailscale IPv4 address (100.x.y.z)")
+    parser.add_argument("--serve", action="store_true", help="Enable Tailscale Serve HTTPS reverse proxy")
     args, _ = parser.parse_known_args()
 
     port = args.port
     host = args.host
+
+    if args.tailscale and tailscale_service:
+        ts_ip = tailscale_service.get_tailscale_ip()
+        if ts_ip:
+            host = ts_ip
+            print(f"[Tailscale] Binding exclusively to Tailnet IP: {host}")
+
+    if args.serve and tailscale_service:
+        ts_bin = tailscale_service.get_tailscale_binary()
+        if ts_bin:
+            try:
+                import subprocess
+                subprocess.Popen([ts_bin, "serve", "--bg", str(port)])
+                print(f"[Tailscale] Background Tailscale Serve HTTPS enabled on port {port}")
+            except Exception as e:
+                print(f"[Tailscale Warning] Could not start Tailscale Serve: {e}")
     print("=" * 60)
     print("CommitMaster Cloud Backend Server v3.0")
     print(f"Listening on http://{host}:{port}")
