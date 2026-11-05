@@ -483,6 +483,7 @@ class AdminApp:
         admin_nav = [
             ("🛡", "Admin Dashboard", "admin_dashboard"),
             ("👥", "Users",           "users"),
+            ("📡", "Tailnet Fleet",   "fleet"),
             ("📋", "Activity Log",    "activity"),
             ("📈", "Usage Charts",    "charts"),
             ("🌐", "Global Settings", "global_settings"),
@@ -592,7 +593,7 @@ class AdminApp:
     # ── Navigation ────────────────────────────────────────────────────────────
 
     _WORKSPACE_KEYS = {"overview", "git_desktop", "watched_repos", "commits", "github_accounts", "customize", "settings", "profile"}
-    _ADMIN_KEYS = {"admin_dashboard", "users", "activity",
+    _ADMIN_KEYS = {"admin_dashboard", "users", "fleet", "activity",
                    "charts", "global_settings", "my_settings"}
 
     _TITLES = {
@@ -606,6 +607,7 @@ class AdminApp:
         "profile":         "My Profile",
         "admin_dashboard": "Admin Dashboard",
         "users":           "User Management",
+        "fleet":           "Tailnet Mesh Fleet & Nodes",
         "activity":        "Activity Log",
         "charts":          "Usage Charts",
         "global_settings": "Global Settings",
@@ -657,6 +659,7 @@ class AdminApp:
             "profile":         self._page_profile,
             "admin_dashboard": self._page_admin_dashboard,
             "users":           self._page_users,
+            "fleet":           self._page_fleet,
             "activity":        self._page_activity,
             "charts":          self._page_charts,
             "global_settings": self._page_global_settings,
@@ -4223,6 +4226,372 @@ class AdminApp:
         )
 
         charts.build_admin_analytics(p, days=30)
+
+    def _page_fleet(self):
+        """Display connected Tailnet mesh peer nodes, health, and distributed GPU AI nodes."""
+        p = self._pad()
+
+        def _header_actions(parent):
+            btn_box = tk.Frame(parent, bg=COLORS["bg_card"])
+            btn_box.pack(side="right")
+
+            inv_btn = tk.Button(
+                btn_box, text="➕  Invite Friend", font=FONTS["label_bold"],
+                bg=COLORS["accent"], fg="white",
+                activebackground=COLORS["accent_hover"], activeforeground="white",
+                relief="flat", cursor="hand2", padx=12, pady=5,
+                command=self._show_invite_friend_modal
+            )
+            inv_btn.pack(side="right", padx=(6, 0))
+            self._add_hover(inv_btn, COLORS["accent_hover"], COLORS["accent"])
+
+            ref_btn = tk.Button(
+                btn_box, text="🔄  Refresh Fleet", font=FONTS["label_bold"],
+                bg=COLORS["bg_medium"], fg=COLORS["accent"],
+                activebackground=COLORS["bg_card_hover"], activeforeground=COLORS["accent"],
+                relief="flat", cursor="hand2", padx=12, pady=5,
+                command=lambda: self._go("fleet")
+            )
+            ref_btn.pack(side="right", padx=(6, 0))
+            self._add_hover(ref_btn, COLORS["bg_card_hover"], COLORS["bg_medium"])
+
+            srv_btn = tk.Button(
+                btn_box, text="🔌  Launch Server Hub", font=FONTS["label_bold"],
+                bg=COLORS["admin"], fg="white",
+                activebackground=COLORS["admin_dark"], activeforeground="white",
+                relief="flat", cursor="hand2", padx=12, pady=5,
+                command=self._launch_tailnet_hub
+            )
+            srv_btn.pack(side="right")
+            self._add_hover(srv_btn, COLORS["admin_dark"], COLORS["admin"])
+
+        self._create_page_header_panel(
+            p, "Tailnet Mesh Fleet & Nodes",
+            "Real-time topology, encrypted peer device health, MagicDNS resolution & distributed AI nodes.",
+            icon="📡",
+            actions_fn=_header_actions
+        )
+
+        from commitmaster import tailscale_service
+
+        is_installed = tailscale_service.is_tailscale_installed()
+        is_conn = tailscale_service.is_tailnet_connected() if is_installed else False
+        ts_ip = tailscale_service.get_tailscale_ip() if is_installed else "Not Installed"
+        hostname = tailscale_service.get_device_hostname()
+        ts_user = tailscale_service.get_tailnet_user() if is_installed else None
+        user_label = ts_user.get("LoginName", "N/A") if ts_user else "Local Only"
+        peers = tailscale_service.get_tailnet_peers() if is_installed else []
+        ai_nodes = tailscale_service.discover_tailnet_ai_nodes() if is_installed else []
+
+        stats_row = tk.Frame(p, bg=COLORS["bg_dark"])
+        stats_row.pack(fill="x", pady=(0, 16))
+
+        online_peers = sum(1 for pr in peers if pr.get("online"))
+        self._stat_card(stats_row, "This Machine", hostname,
+                        COLORS["accent"] if is_conn else COLORS["text_secondary"],
+                        "💻", subtitle=f"IP: {ts_ip}")
+        self._stat_card(stats_row, "Tailnet Mesh", f"{len(peers)} Peers",
+                        COLORS["info"], "🌐", subtitle=f"{online_peers} online now")
+        self._stat_card(stats_row, "Mesh Identity", user_label.split("@")[0] if "@" in user_label else user_label,
+                        COLORS["admin"], "🛡️", subtitle="Verified via Whois")
+        self._stat_card(stats_row, "AI Nodes", f"{len(ai_nodes)} Active",
+                        COLORS["warning"] if ai_nodes else COLORS["text_secondary"],
+                        "🤖", subtitle="GPU compute pooling")
+
+        peers_card = self._card(p, padx=20, pady=16)
+        peers_card.pack(fill="x", pady=(0, 16))
+
+        hdr_row = tk.Frame(peers_card, bg=COLORS["bg_card"])
+        hdr_row.pack(fill="x", pady=(0, 12))
+        tk.Label(hdr_row, text="💻  Tailnet Peer Devices & Status", font=FONTS["heading_sm"],
+                 fg=COLORS["text_primary"], bg=COLORS["bg_card"]).pack(side="left")
+
+        if not peers:
+            empty_box = tk.Frame(peers_card, bg=COLORS["bg_card"], pady=20)
+            empty_box.pack(fill="x")
+            tk.Label(empty_box, text="No peer nodes detected on this Tailnet.", font=FONTS["body_md"],
+                     fg=COLORS["text_secondary"], bg=COLORS["bg_card"]).pack()
+            tk.Label(empty_box, text="Connect other laptops or devices using the same Tailscale account to see them here.",
+                     font=FONTS["caption"], fg=COLORS["text_muted"], bg=COLORS["bg_card"]).pack(pady=(4, 0))
+        else:
+            for peer in peers:
+                p_row = tk.Frame(peers_card, bg=COLORS["bg_medium"], padx=14, pady=10,
+                                 highlightthickness=1, highlightbackground=COLORS["border"])
+                p_row.pack(fill="x", pady=4)
+
+                os_name = peer.get("os", "").lower()
+                os_icon = "💻" if "windows" in os_name else ("📱" if "ios" in os_name or "android" in os_name else "🐧")
+
+                icon_lbl = tk.Label(p_row, text=os_icon, font=("Segoe UI Emoji", 14),
+                                    bg=COLORS["bg_medium"], fg=COLORS["text_primary"])
+                icon_lbl.pack(side="left", padx=(0, 10))
+
+                info_col = tk.Frame(p_row, bg=COLORS["bg_medium"])
+                info_col.pack(side="left", fill="both", expand=True)
+
+                title_row = tk.Frame(info_col, bg=COLORS["bg_medium"])
+                title_row.pack(fill="x")
+
+                tk.Label(title_row, text=peer["hostname"], font=FONTS["label_bold"],
+                         fg=COLORS["text_primary"], bg=COLORS["bg_medium"]).pack(side="left")
+
+                dns_txt = peer.get("dns_name") or peer.get("ip")
+                tk.Label(title_row, text=f"({dns_txt})", font=FONTS["caption"],
+                         fg=COLORS["text_muted"], bg=COLORS["bg_medium"]).pack(side="left", padx=(8, 0))
+
+                sub_txt = f"OS: {peer.get('os', 'Unknown').capitalize()} • IP: {peer.get('ip')}"
+                if peer.get("last_seen"):
+                    sub_txt += f" • Last seen: {peer['last_seen'][:10]}"
+                tk.Label(info_col, text=sub_txt, font=FONTS["caption"],
+                         fg=COLORS["text_secondary"], bg=COLORS["bg_medium"]).pack(anchor="w", pady=(2, 0))
+
+                is_on = peer.get("online", False)
+                status_badge = tk.Label(
+                    p_row,
+                    text="● ONLINE" if is_on else "○ OFFLINE",
+                    font=("Segoe UI", 9, "bold"),
+                    fg=COLORS["success"] if is_on else COLORS["text_muted"],
+                    bg=COLORS["bg_medium"],
+                    padx=10, pady=4
+                )
+                status_badge.pack(side="right")
+
+        # ── Registered Team Members & Friends Card ─────────────────────────────
+        members_card = self._card(p, padx=20, pady=16)
+        members_card.pack(fill="x", pady=(0, 16))
+
+        m_hdr = tk.Frame(members_card, bg=COLORS["bg_card"])
+        m_hdr.pack(fill="x", pady=(0, 12))
+        tk.Label(m_hdr, text="👥  Registered Friends & Team Nodes", font=FONTS["heading_sm"],
+                 fg=COLORS["text_primary"], bg=COLORS["bg_card"]).pack(side="left")
+
+        # Query members from server database
+        members = []
+        try:
+            import sqlite3
+            s_db = os.path.join(APP_DIR, "server_commitmaster.db")
+            if os.path.exists(s_db):
+                s_conn = sqlite3.connect(s_db)
+                s_conn.row_factory = sqlite3.Row
+                members = s_conn.execute("""
+                    SELECT nm.*, u.username, u.full_name,
+                           (SELECT COUNT(*) FROM commit_activity WHERE user_id = nm.user_id) as commits_count
+                    FROM network_members nm
+                    LEFT JOIN users u ON nm.user_id = u.id
+                    ORDER BY nm.last_seen DESC
+                """).fetchall()
+                s_conn.close()
+        except Exception:
+            pass
+
+        if not members:
+            empty_m = tk.Frame(members_card, bg=COLORS["bg_card"], pady=16)
+            empty_m.pack(fill="x")
+            tk.Label(empty_m, text="No friends or team devices have registered with your hub yet.",
+                     font=FONTS["body_md"], fg=COLORS["text_secondary"], bg=COLORS["bg_card"]).pack()
+            tk.Label(empty_m, text="Share your CommitMaster package with friends. The app will automatically guide them through installing Tailscale and joining your network.",
+                     font=FONTS["caption"], fg=COLORS["text_muted"], bg=COLORS["bg_card"]).pack(pady=(4, 10))
+            add_friend_btn = tk.Button(
+                empty_m, text="➕  Invite Friends & View Hub Address", font=FONTS["label_bold"],
+                bg=COLORS["accent"], fg="white", activebackground=COLORS["accent_hover"],
+                relief="flat", cursor="hand2", padx=14, pady=6,
+                command=self._show_invite_friend_modal
+            )
+            add_friend_btn.pack()
+            self._add_hover(add_friend_btn, COLORS["accent_hover"], COLORS["accent"])
+        else:
+            for mem in members:
+                m_row = tk.Frame(members_card, bg=COLORS["bg_medium"], padx=14, pady=10,
+                                 highlightthickness=1, highlightbackground=COLORS["border"])
+                m_row.pack(fill="x", pady=4)
+
+                m_icon = tk.Label(m_row, text="👤", font=("Segoe UI Emoji", 14),
+                                  bg=COLORS["bg_medium"], fg=COLORS["text_primary"])
+                m_icon.pack(side="left", padx=(0, 10))
+
+                m_info = tk.Frame(m_row, bg=COLORS["bg_medium"])
+                m_info.pack(side="left", fill="both", expand=True)
+
+                m_title = tk.Frame(m_info, bg=COLORS["bg_medium"])
+                m_title.pack(fill="x")
+
+                disp_name = mem["display_name"] or mem["username"] or mem["tailscale_login"]
+                tk.Label(m_title, text=disp_name, font=FONTS["label_bold"],
+                         fg=COLORS["text_primary"], bg=COLORS["bg_medium"]).pack(side="left")
+                tk.Label(m_title, text=f"({mem['tailscale_login']})", font=FONTS["caption"],
+                         fg=COLORS["text_muted"], bg=COLORS["bg_medium"]).pack(side="left", padx=(8, 0))
+
+                sub_info = f"Host: {mem.get('node_hostname') or 'Unknown'} • IP: {mem.get('node_ip') or 'N/A'} • Synced Commits: {mem.get('commits_count', 0)} • Last seen: {str(mem.get('last_seen', ''))[:16]}"
+                tk.Label(m_info, text=sub_info, font=FONTS["caption"],
+                         fg=COLORS["text_secondary"], bg=COLORS["bg_medium"]).pack(anchor="w", pady=(2, 0))
+
+                status_val = mem.get("status", "approved")
+                status_color = COLORS["success"] if status_val == "approved" else (COLORS["warning"] if status_val == "pending" else COLORS["error"])
+
+                act_box = tk.Frame(m_row, bg=COLORS["bg_medium"])
+                act_box.pack(side="right")
+
+                tk.Label(act_box, text=status_val.upper(), font=("Segoe UI", 8, "bold"),
+                         fg=status_color, bg=COLORS["bg_medium"], padx=6).pack(side="left", padx=(0, 8))
+
+                if status_val == "approved":
+                    rev_btn = tk.Button(
+                        act_box, text="Revoke", font=FONTS["caption"],
+                        bg=COLORS["bg_dark"], fg=COLORS["error"], relief="flat", cursor="hand2",
+                        command=lambda mid=mem["id"]: self._update_network_member_status(mid, "revoked")
+                    )
+                    rev_btn.pack(side="left")
+                else:
+                    appr_btn = tk.Button(
+                        act_box, text="Approve", font=FONTS["caption"],
+                        bg=COLORS["bg_dark"], fg=COLORS["success"], relief="flat", cursor="hand2",
+                        command=lambda mid=mem["id"]: self._update_network_member_status(mid, "approved")
+                    )
+                    appr_btn.pack(side="left")
+
+        ai_card = self._card(p, padx=20, pady=16)
+        ai_card.pack(fill="x")
+
+        ai_hdr = tk.Frame(ai_card, bg=COLORS["bg_card"])
+        ai_hdr.pack(fill="x", pady=(0, 12))
+        tk.Label(ai_hdr, text="🤖  Distributed GPU AI Nodes on Mesh", font=FONTS["heading_sm"],
+                 fg=COLORS["text_primary"], bg=COLORS["bg_card"]).pack(side="left")
+
+        if not ai_nodes:
+            ai_empty = tk.Frame(ai_card, bg=COLORS["bg_card"], pady=16)
+            ai_empty.pack(fill="x")
+            tk.Label(ai_empty, text="No active Ollama (11434) or LM Studio (1234) servers detected on Tailnet peers.",
+                     font=FONTS["body_sm"], fg=COLORS["text_secondary"], bg=COLORS["bg_card"]).pack()
+            tk.Label(ai_empty, text="Start Ollama or LM Studio on any connected machine to enable zero-cloud AI commit generation for your entire fleet.",
+                     font=FONTS["caption"], fg=COLORS["text_muted"], bg=COLORS["bg_card"]).pack(pady=(4, 0))
+        else:
+            for node in ai_nodes:
+                n_row = tk.Frame(ai_card, bg=COLORS["bg_medium"], padx=14, pady=10,
+                                 highlightthickness=1, highlightbackground=COLORS["border"])
+                n_row.pack(fill="x", pady=4)
+
+                tk.Label(n_row, text="⚡", font=("Segoe UI Emoji", 13),
+                         bg=COLORS["bg_medium"], fg=COLORS["warning"]).pack(side="left", padx=(0, 10))
+
+                n_info = tk.Frame(n_row, bg=COLORS["bg_medium"])
+                n_info.pack(side="left", fill="both", expand=True)
+
+                tk.Label(n_info, text=f"{node.get('host')}  [{node.get('runtime', '').upper()}]",
+                         font=FONTS["label_bold"], fg=COLORS["text_primary"], bg=COLORS["bg_medium"]).pack(anchor="w")
+
+                models_str = ", ".join(node.get("models", [])[:3]) or "Default loaded model"
+                if len(node.get("models", [])) > 3:
+                    models_str += f" (+{len(node['models']) - 3} more)"
+                tk.Label(n_info, text=f"Models: {models_str} • URL: {node.get('base_url')} • Latency: {node.get('latency_ms', 0)}ms",
+                         font=FONTS["caption"], fg=COLORS["text_secondary"], bg=COLORS["bg_medium"]).pack(anchor="w", pady=(2, 0))
+
+                use_btn = tk.Button(
+                    n_row, text="Use for AI", font=FONTS["caption_bold"],
+                    bg=COLORS["accent"], fg="white",
+                    activebackground=COLORS["accent_dark"], activeforeground="white",
+                    relief="flat", cursor="hand2", padx=10, pady=4,
+                    command=lambda u=node.get("base_url"): self._set_primary_ai_url(u)
+                )
+                use_btn.pack(side="right")
+                self._add_hover(use_btn, COLORS["accent_dark"], COLORS["accent"])
+
+    def _launch_tailnet_hub(self):
+        """Launch the local server hub in the background."""
+        import subprocess
+        bat = os.path.join(APP_DIR, "Launch_Server.bat")
+        if os.name == "nt" and os.path.exists(bat):
+            try:
+                subprocess.Popen(["cmd.exe", "/c", "start", "", bat], cwd=APP_DIR)
+                messagebox.showinfo("Tailnet Hub", "Launching CommitMaster Central Server Hub in background!", parent=self.root)
+            except Exception as e:
+                messagebox.showerror("Error", f"Could not launch server: {e}", parent=self.root)
+
+    def _set_primary_ai_url(self, base_url: str):
+        """Configure the active AI base URL in config.json to point to the selected Tailnet node."""
+        if not base_url:
+            return
+        from commitmaster.config import load_config, save_config
+        cfg = load_config()
+        if "ai" not in cfg:
+            cfg["ai"] = {}
+        cfg["ai"]["base_url"] = base_url
+        save_config(cfg)
+        messagebox.showinfo("AI Node Connected", f"CommitMaster AI base URL updated to:\n{base_url}\n\nAll commit messages will now be generated via this Tailnet node!", parent=self.root)
+
+    def _show_invite_friend_modal(self):
+        """Display network hub connection details and invite instructions for friends."""
+        from commitmaster import tailscale_service
+        hub_ip = tailscale_service.get_tailscale_ip() or "100.64.108.92"
+        magic_dns = tailscale_service.get_magic_dns_name() or "saumya-pc.tail9690b8.ts.net"
+
+        dlg = tk.Toplevel(self.root)
+        dlg.title("Invite Friends to CommitMaster Network")
+        dlg.geometry("560x440")
+        dlg.configure(bg=COLORS["bg_darkest"])
+        dlg.transient(self.root)
+        dlg.grab_set()
+
+        card = tk.Frame(dlg, bg=COLORS["bg_card"], padx=24, pady=24)
+        card.pack(fill="both", expand=True, padx=20, pady=20)
+
+        tk.Label(card, text="🛡️  Invite Friends & Connect Team Devices", font=FONTS["heading_sm"],
+                 fg=COLORS["text_primary"], bg=COLORS["bg_card"]).pack(anchor="w", pady=(0, 10))
+
+        info_txt = (
+            "Friends downloading your CommitMaster package will automatically be prompted "
+            "to install Tailscale and join your private cloud network.\n\n"
+            "To connect their device, they simply:\n"
+            "  1. Launch CommitMaster and click 'Join Team Network'.\n"
+            "  2. Confirm the Tailscale download & create their Tailscale account.\n"
+            "  3. Enter your Hub Address below and their Tailscale account email.\n\n"
+            "Once connected, their commit history, productivity stats, and activity will "
+            "synchronize directly into your central network database!"
+        )
+        tk.Label(card, text=info_txt, font=FONTS["body_sm"], fg=COLORS["text_secondary"],
+                 bg=COLORS["bg_card"], justify="left", wraplength=480).pack(anchor="w", pady=(0, 16))
+
+        box = tk.Frame(card, bg=COLORS["bg_medium"], padx=14, pady=12,
+                       highlightthickness=1, highlightbackground=COLORS["border"])
+        box.pack(fill="x", pady=(0, 16))
+
+        tk.Label(box, text="Your Central Hub Address (Share with friends):", font=FONTS["caption"],
+                 fg=COLORS["text_muted"], bg=COLORS["bg_medium"]).pack(anchor="w")
+
+        hub_display = f"http://{hub_ip}:8000"
+        addr_lbl = tk.Label(box, text=hub_display, font=("Consolas", 12, "bold"),
+                            fg=COLORS["accent"], bg=COLORS["bg_medium"])
+        addr_lbl.pack(anchor="w", pady=(4, 0))
+
+        def copy_addr():
+            self.root.clipboard_clear()
+            self.root.clipboard_append(f"{hub_ip}:8000")
+            messagebox.showinfo("Copied", f"Hub address '{hub_ip}:8000' copied to clipboard!", parent=dlg)
+
+        copy_btn = tk.Button(card, text="📋  Copy Hub Address", font=FONTS["label_bold"],
+                             bg=COLORS["bg_medium"], fg=COLORS["text_primary"],
+                             activebackground=COLORS["bg_card_hover"], relief="flat",
+                             cursor="hand2", padx=12, pady=6, command=copy_addr)
+        copy_btn.pack(side="left")
+
+        close_btn = tk.Button(card, text="Done", font=FONTS["label_bold"],
+                              bg=COLORS["accent"], fg="white", activebackground=COLORS["accent_hover"],
+                              relief="flat", cursor="hand2", padx=18, pady=6, command=dlg.destroy)
+        close_btn.pack(side="right")
+
+    def _update_network_member_status(self, member_id: int, new_status: str):
+        """Update approval status for a registered network node in server_commitmaster.db."""
+        import sqlite3
+        s_db = os.path.join(APP_DIR, "server_commitmaster.db")
+        if os.path.exists(s_db):
+            try:
+                s_conn = sqlite3.connect(s_db)
+                s_conn.execute("UPDATE network_members SET status = ? WHERE id = ?", (new_status, member_id))
+                s_conn.commit()
+                s_conn.close()
+                messagebox.showinfo("Status Updated", f"Member status updated to '{new_status}'.", parent=self.root)
+                self._go("fleet")
+            except Exception as e:
+                messagebox.showerror("Error", f"Failed to update status: {e}", parent=self.root)
 
     def _page_global_settings(self):
         p = self._pad()
