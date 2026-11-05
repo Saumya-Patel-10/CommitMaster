@@ -52,9 +52,11 @@ def get_data_dir() -> str:
         # Also ensure %LOCALAPPDATA%\CommitMaster is initialized as a backup
         try:
             os.makedirs(local_commitmaster_dir, exist_ok=True)
-            local_db = os.path.join(local_commitmaster_dir, "commitmaster.db")
-            if not os.path.exists(local_db):
-                shutil.copy2(workspace_db, local_db)
+            for fname in ["commitmaster.db", "server_commitmaster.db", ".commitmaster_accounts.json", ".session_token", ".admin_session", ".admin_initial_secret", "config.json", "commitmaster.log"]:
+                src = os.path.join(_WORKSPACE_DIR, fname)
+                dst = os.path.join(local_commitmaster_dir, fname)
+                if os.path.exists(src) and not os.path.exists(dst):
+                    shutil.copy2(src, dst)
         except Exception:
             pass
         return _WORKSPACE_DIR
@@ -78,7 +80,7 @@ def get_data_dir() -> str:
     if (not getattr(sys, "frozen", False)) and not os.path.exists(local_db) and os.path.exists(workspace_db):
         try:
             shutil.copy2(workspace_db, local_db)
-            for fname in [".commitmaster_accounts.json", ".session_token", ".admin_session", "config.json"]:
+            for fname in ["commitmaster.db", "server_commitmaster.db", ".commitmaster_accounts.json", ".session_token", ".admin_session", ".admin_initial_secret", "config.json", "commitmaster.log"]:
                 src = os.path.join(_WORKSPACE_DIR, fname)
                 dst = os.path.join(local_commitmaster_dir, fname)
                 if os.path.exists(src) and not os.path.exists(dst):
