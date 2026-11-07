@@ -143,6 +143,7 @@ class AdminApp:
         )
 
         self.root = tk.Tk()
+        tk._default_root = self.root
 
         # Git Desktop state
         self._gd_selected_repo: Optional[str] = None
@@ -150,18 +151,18 @@ class AdminApp:
         self._gd_staged_vars: dict = {}
         self._gd_file_comments: dict = {}
         self._gd_file_comment_vars: dict = {}
-        self._gd_commit_mode_var: tk.StringVar = tk.StringVar(value="individual")
+        self._gd_commit_mode_var: tk.StringVar = tk.StringVar(master=self.root, value="individual")
         self._gd_active_file: Optional[str] = None
-        self._gd_headline_var: tk.StringVar = tk.StringVar()
-        self._gd_ask_push_var: tk.BooleanVar = tk.BooleanVar(value=bool(prefs.get("ask_before_push", 1)))
-        self._gd_comment_var: tk.StringVar = tk.StringVar()
+        self._gd_headline_var: tk.StringVar = tk.StringVar(master=self.root)
+        self._gd_ask_push_var: tk.BooleanVar = tk.BooleanVar(master=self.root, value=bool(prefs.get("ask_before_push", 1)))
+        self._gd_comment_var: tk.StringVar = tk.StringVar(master=self.root)
         self._gd_diff_text = None
         self._gd_desc_text = None
         self._gd_comment_entry = None
         self._gd_ai_status_lbl = None
 
         # Watched Repos state
-        self._wr_search_var: tk.StringVar = tk.StringVar()
+        self._wr_search_var: tk.StringVar = tk.StringVar(master=self.root)
         self._wr_filter_mode: str = "all"
         self._wr_sub_tab: str = "repos"
         self._wr_selected_status_repo: Optional[str] = None
@@ -169,7 +170,7 @@ class AdminApp:
         # Multi-select User Management state
         self._selected_users: set = set()
         self._user_check_vars: dict = {}
-        self._select_all_var: tk.BooleanVar = tk.BooleanVar(value=False)
+        self._select_all_var: tk.BooleanVar = tk.BooleanVar(master=self.root, value=False)
 
         self._setup_window()
         self._build_layout()
@@ -296,6 +297,8 @@ class AdminApp:
         self._build_header()
 
         # Scrollable content area
+        self._last_canvas_width = None
+        self._last_scrollregion = None
         outer = tk.Frame(self._main, bg=COLORS["bg_dark"])
         outer.pack(fill="both", expand=True)
         self._canvas = tk.Canvas(outer, bg=COLORS["bg_dark"], highlightthickness=0)
@@ -305,6 +308,9 @@ class AdminApp:
         self._canvas.pack(side="left", fill="both", expand=True)
         self._cf = tk.Frame(self._canvas, bg=COLORS["bg_dark"])
         self._cw = self._canvas.create_window((0, 0), window=self._cf, anchor="nw")
+        init_w = self._canvas.winfo_width()
+        if init_w > 1:
+            self._canvas.itemconfig(self._cw, width=init_w)
         self._cf.bind("<Configure>", self._on_frame_configure)
         self._canvas.bind("<Configure>", self._on_canvas_configure)
         self._navigator = navigation.PageNavigator(self.root, self._canvas, self._cf, self._cw)
@@ -324,9 +330,8 @@ class AdminApp:
             self._canvas.configure(scrollregion=(0, 0, max(event.width, self._canvas.winfo_width()), event.height))
 
     def _on_canvas_configure(self, event):
-        if getattr(self, "_last_canvas_width", None) != event.width:
-            self._last_canvas_width = event.width
-            self._canvas.itemconfig(self._cw, width=event.width)
+        self._canvas.itemconfig(self._cw, width=event.width)
+        self._last_canvas_width = event.width
         bbox = self._canvas.bbox("all")
         if bbox and (bbox[2] > 1 or bbox[3] > 1):
             self._canvas.configure(scrollregion=bbox)
@@ -594,7 +599,7 @@ class AdminApp:
 
     _WORKSPACE_KEYS = {"overview", "git_desktop", "watched_repos", "commits", "github_accounts", "customize", "settings", "profile"}
     _ADMIN_KEYS = {"admin_dashboard", "users", "fleet", "activity",
-                   "charts", "global_settings", "my_settings"}
+                   "charts", "global_settings", "my_settings", "account"}
 
     _TITLES = {
         "overview":        "Overview",
@@ -612,14 +617,22 @@ class AdminApp:
         "charts":          "Usage Charts",
         "global_settings": "Global Settings",
         "my_settings":     "My Account",
+        "account":         "My Account",
     }
 
     def _rebuild_ui(self, nav_to: str = "customize"):
         """Tear down and recreate UI with new theme/tokens."""
+        self._last_canvas_width = None
+        self._last_scrollregion = None
         for w in self.root.winfo_children():
             w.destroy()
         self.root.configure(bg=COLORS["bg_darkest"])
         self._build_layout()
+        self.root.update_idletasks()
+        if hasattr(self, "_canvas") and hasattr(self, "_cw"):
+            c_w = self._canvas.winfo_width()
+            if c_w > 1:
+                self._canvas.itemconfig(self._cw, width=c_w)
         self._nav_to(nav_to)
 
     def _go(self, key=None):
@@ -664,6 +677,7 @@ class AdminApp:
             "charts":          self._page_charts,
             "global_settings": self._page_global_settings,
             "my_settings":     self._page_my_settings,
+            "account":         self._page_my_settings,
         }
         if key in pages:
             self._navigator.show(key, pages[key], record=record)
@@ -1276,55 +1290,91 @@ class AdminApp:
                      font=FONTS["body_md"], fg=COLORS["text_muted"],
                      bg=COLORS["bg_dark"]).pack(anchor="w", pady=20)
             return
-        hdr = tk.Frame(p, bg=COLORS["bg_medium"])
-        hdr.pack(fill="x")
-        for col, w in [("Repository", 16), ("Commit Message", 42),
-                       ("Files", 6), ("Status", 10), ("Date", 14)]:
-            tk.Label(hdr, text=col, font=FONTS["label_bold"],
-                     fg=COLORS["text_secondary"], bg=COLORS["bg_medium"],
-                     width=w, anchor="w", padx=8, pady=6).pack(side="left")
-        tk.Label(hdr, text="Actions", font=FONTS["label_bold"],
-                 fg=COLORS["text_secondary"], bg=COLORS["bg_medium"],
-                 width=14, anchor="w", padx=8, pady=6).pack(side="right")
+        table_card = tk.Frame(p, bg=COLORS["bg_card"], highlightthickness=1, highlightbackground=COLORS["border"])
+        table_card.pack(fill="x", pady=(0, 20))
 
+        table_card.grid_columnconfigure(0, weight=2, minsize=140)  # Repository
+        table_card.grid_columnconfigure(1, weight=6, minsize=260)  # Commit Message
+        table_card.grid_columnconfigure(2, weight=1, minsize=70)   # Files
+        table_card.grid_columnconfigure(3, weight=1, minsize=90)   # Status
+        table_card.grid_columnconfigure(4, weight=2, minsize=130)  # Date
+        table_card.grid_columnconfigure(5, weight=1, minsize=120)  # Actions
+
+        cols = [
+            (0, "Repository", "w", 14),
+            (1, "Commit Message", "w", 10),
+            (2, "Files", "center", 8),
+            (3, "Status", "w", 8),
+            (4, "Date", "w", 10),
+            (5, "Actions", "e", 14),
+        ]
+
+        for col_idx, col_name, anch, pl in cols:
+            h_lbl = tk.Label(table_card, text=col_name, font=FONTS["label_bold"],
+                             fg=COLORS["text_secondary"], bg=COLORS["bg_medium"],
+                             anchor=anch, padx=pl, pady=8)
+            h_lbl.grid(row=0, column=col_idx, sticky="nsew", padx=0, pady=0)
+
+        h_sep = tk.Frame(table_card, height=1, bg=COLORS["border"])
+        h_sep.grid(row=1, column=0, columnspan=6, sticky="ew")
+
+        grid_row = 2
         for entry in activity:
-            row = tk.Frame(p, bg=COLORS["bg_card"], cursor="hand2")
-            row.pack(fill="x")
-            tk.Frame(p, height=1, bg=COLORS["border"]).pack(fill="x")
+            row_bg = COLORS["bg_card"]
+            status_val = entry.get("status", "committed")
             status_color = {
                 "committed": COLORS["success"],
                 "skipped":   COLORS["warning"],
                 "failed":    COLORS["error"],
-            }.get(entry.get("status", "committed"), COLORS["text_secondary"])
-            for text, w, fc in [
-                (entry["repo_name"][:16], 16, COLORS["accent"]),
-                (entry["commit_msg"][:42], 42, COLORS["text_primary"]),
-                (str(entry.get("files_count", 0)), 6, COLORS["text_secondary"]),
-                (entry.get("status", "committed"), 10, status_color),
-                (entry["committed_at"][:14], 14, COLORS["text_muted"]),
-            ]:
-                lbl = tk.Label(row, text=text, font=FONTS["body_sm"],
-                               fg=fc, bg=COLORS["bg_card"],
-                               width=w, anchor="w", padx=8, pady=8)
-                lbl.pack(side="left")
-                lbl.bind("<Button-1>", lambda e, ent=entry: self._show_commit_diff_modal(ent))
+            }.get(status_val, COLORS["text_secondary"])
 
+            # Col 0: Repository
+            lbl_repo = tk.Label(table_card, text=entry["repo_name"][:20], font=FONTS["body_sm"],
+                                fg=COLORS["accent"], bg=row_bg, anchor="w", padx=14, pady=7, cursor="hand2")
+            lbl_repo.grid(row=grid_row, column=0, sticky="nsew", padx=0, pady=0)
+            lbl_repo.bind("<Button-1>", lambda e, ent=entry: self._show_commit_diff_modal(ent))
+
+            # Col 1: Commit message
+            cmsg = entry.get("commit_msg", "")
+            if len(cmsg) > 75:
+                cmsg = cmsg[:72] + "..."
+            lbl_msg = tk.Label(table_card, text=cmsg, font=FONTS["body_sm"],
+                               fg=COLORS["text_primary"], bg=row_bg, anchor="w", padx=10, pady=7, cursor="hand2")
+            lbl_msg.grid(row=grid_row, column=1, sticky="nsew", padx=0, pady=0)
+            lbl_msg.bind("<Button-1>", lambda e, ent=entry: self._show_commit_diff_modal(ent))
+
+            # Col 2: Files
+            lbl_files = tk.Label(table_card, text=str(entry.get("files_count", 0)), font=FONTS["body_sm"],
+                                 fg=COLORS["text_secondary"], bg=row_bg, anchor="center", padx=8, pady=7)
+            lbl_files.grid(row=grid_row, column=2, sticky="nsew", padx=0, pady=0)
+
+            # Col 3: Status
+            lbl_status = tk.Label(table_card, text=status_val, font=FONTS["body_sm"],
+                                  fg=status_color, bg=row_bg, anchor="w", padx=8, pady=7)
+            lbl_status.grid(row=grid_row, column=3, sticky="nsew", padx=0, pady=0)
+
+            # Col 4: Date
+            lbl_date = tk.Label(table_card, text=(entry.get("committed_at") or "")[:16], font=FONTS["caption"],
+                                fg=COLORS["text_muted"], bg=row_bg, anchor="w", padx=10, pady=7)
+            lbl_date.grid(row=grid_row, column=4, sticky="nsew", padx=0, pady=0)
+
+            # Col 5: Actions
+            act_box = tk.Frame(table_card, bg=row_bg)
+            act_box.grid(row=grid_row, column=5, sticky="nsew", padx=0, pady=0)
             diff_btn = tk.Button(
-                row, text="👁 View Diff →", font=("Segoe UI", 8, "bold"),
+                act_box, text="👁 View Diff →", font=("Segoe UI", 8, "bold"),
                 fg=COLORS["accent"], bg=COLORS["bg_medium"], relief="flat", bd=0,
                 cursor="hand2", padx=8, pady=3,
                 command=lambda ent=entry: self._show_commit_diff_modal(ent)
             )
-            diff_btn.pack(side="right", padx=8, pady=6)
+            diff_btn.pack(side="right", padx=(0, 14), pady=5)
             self._add_hover(diff_btn, COLORS["bg_card_hover"], COLORS["bg_medium"])
 
-            def _r_enter(e, r=row):
-                r.config(bg=COLORS["bg_card_hover"])
-            def _r_leave(e, r=row):
-                r.config(bg=COLORS["bg_card"])
-            row.bind("<Enter>", _r_enter)
-            row.bind("<Leave>", _r_leave)
-            row.bind("<Button-1>", lambda e, ent=entry: self._show_commit_diff_modal(ent))
+            grid_row += 1
+            # Divider between rows
+            rsep = tk.Frame(table_card, height=1, bg=COLORS["border"])
+            rsep.grid(row=grid_row, column=0, columnspan=6, sticky="ew")
+            grid_row += 1
 
     def _show_commit_diff_modal(self, entry: dict):
         """Open a dedicated modal displaying commit diff with full color coordination legend."""
@@ -4138,84 +4188,90 @@ class AdminApp:
             icon="📋"
         )
         activity = db.get_activity_log(limit=200)
-        hdr = tk.Frame(p, bg=COLORS["bg_medium"])
-        hdr.pack(fill="x")
-        hdr.grid_columnconfigure(0, weight=2, minsize=140)  # User
-        hdr.grid_columnconfigure(1, weight=2, minsize=140)  # Repository
-        hdr.grid_columnconfigure(2, weight=5, minsize=180)  # Commit Message
-        hdr.grid_columnconfigure(3, weight=1, minsize=60)   # Files
-        hdr.grid_columnconfigure(4, weight=2, minsize=130)  # Date
-
-        for col_idx, col_name, sticky, px in [
-            (0, "User", "w", (12, 6)),
-            (1, "Repository", "w", (6, 6)),
-            (2, "Commit Message", "w", (6, 6)),
-            (3, "Files", "w", (6, 6)),
-            (4, "Date", "e", (6, 14)),
-        ]:
-            tk.Label(hdr, text=col_name, font=FONTS["label_bold"],
-                     fg=COLORS["text_secondary"], bg=COLORS["bg_medium"]).grid(
-                row=0, column=col_idx, sticky=sticky, padx=px, pady=6
-            )
-
         if not activity:
             tk.Label(p, text="No activity yet.",
                      font=FONTS["body_md"], fg=COLORS["text_muted"],
                      bg=COLORS["bg_dark"]).pack(anchor="w", pady=20)
             return
 
+        table_card = tk.Frame(p, bg=COLORS["bg_card"], highlightthickness=1, highlightbackground=COLORS["border"])
+        table_card.pack(fill="x", pady=(0, 20))
+
+        table_card.grid_columnconfigure(0, weight=2, minsize=180)  # User
+        table_card.grid_columnconfigure(1, weight=2, minsize=140)  # Repository
+        table_card.grid_columnconfigure(2, weight=6, minsize=260)  # Commit Message
+        table_card.grid_columnconfigure(3, weight=1, minsize=80)   # Files
+        table_card.grid_columnconfigure(4, weight=2, minsize=140)  # Date
+
+        # Header Row (row 0)
+        for col_idx, col_name, anch, pl in [
+            (0, "User", "w", 16),
+            (1, "Repository", "w", 10),
+            (2, "Commit Message", "w", 10),
+            (3, "Files", "center", 8),
+            (4, "Date", "w", 10),
+        ]:
+            h_lbl = tk.Label(table_card, text=col_name, font=FONTS["label_bold"],
+                             fg=COLORS["text_secondary"], bg=COLORS["bg_medium"],
+                             anchor=anch, padx=pl, pady=8)
+            h_lbl.grid(row=0, column=col_idx, sticky="nsew", padx=0, pady=0)
+
+        # Header divider line
+        h_sep = tk.Frame(table_card, height=1, bg=COLORS["border"])
+        h_sep.grid(row=1, column=0, columnspan=5, sticky="ew")
+
+        # Data Rows
+        grid_row = 2
         for entry in activity:
-            row = tk.Frame(p, bg=COLORS["bg_card"])
-            row.pack(fill="x")
-            tk.Frame(p, height=1, bg=COLORS["border"]).pack(fill="x")
+            row_bg = COLORS["bg_card"]
 
-            row.grid_columnconfigure(0, weight=2, minsize=140)
-            row.grid_columnconfigure(1, weight=2, minsize=140)
-            row.grid_columnconfigure(2, weight=5, minsize=180)
-            row.grid_columnconfigure(3, weight=1, minsize=60)
-            row.grid_columnconfigure(4, weight=2, minsize=130)
-
-            row.bind("<Enter>", lambda e, r=row: r.config(bg=COLORS["bg_card_hover"]))
-            row.bind("<Leave>", lambda e, r=row: r.config(bg=COLORS["bg_card"]))
-
-            # Col 0: User (avatar + name)
-            ucell = tk.Frame(row, bg=COLORS["bg_card"])
-            ucell.grid(row=0, column=0, sticky="w", padx=(12, 6), pady=6)
+            # Col 0: User (Avatar + Name)
+            ucell = tk.Frame(table_card, bg=row_bg)
+            ucell.grid(row=grid_row, column=0, sticky="nsew", padx=0, pady=0)
+            inner_u = tk.Frame(ucell, bg=row_bg)
+            inner_u.pack(side="left", padx=(16, 8), pady=7)
             color = entry.get("avatar_color", AVATAR_COLORS[0])
-            av = tk.Label(ucell, text=(entry.get("username") or "?")[:2].upper(),
+            uname = entry.get("username", "") or "?"
+            av = tk.Label(inner_u, text=uname[:2].upper(),
                           bg=color, fg="white", font=FONTS["caption"],
                           width=2, padx=3, pady=3)
             av.pack(side="left", padx=(0, 6))
-            tk.Label(ucell, text=entry.get("username", ""), font=FONTS["body_sm"],
-                     fg=COLORS["text_primary"], bg=COLORS["bg_card"]).pack(side="left")
+            tk.Label(inner_u, text=uname, font=FONTS["body_sm"],
+                     fg=COLORS["text_primary"], bg=row_bg).pack(side="left")
 
             # Col 1: Repository
-            tk.Label(row, text=entry["repo_name"][:24], font=FONTS["body_sm"],
-                     fg=COLORS["accent"], bg=COLORS["bg_card"]).grid(
-                row=0, column=1, sticky="w", padx=6, pady=6
+            tk.Label(table_card, text=entry.get("repo_name", "")[:24], font=FONTS["body_sm"],
+                     fg=COLORS["accent"], bg=row_bg, anchor="w", padx=10, pady=7).grid(
+                row=grid_row, column=1, sticky="nsew", padx=0, pady=0
             )
 
-            # Col 2: Commit message (dynamic width, up to 100 chars)
+            # Col 2: Commit message
             cmsg = entry.get("commit_msg", "")
-            if len(cmsg) > 100:
-                cmsg = cmsg[:97] + "..."
-            tk.Label(row, text=cmsg, font=FONTS["body_sm"],
-                     fg=COLORS["text_primary"], bg=COLORS["bg_card"], anchor="w").grid(
-                row=0, column=2, sticky="w", padx=6, pady=6
+            if len(cmsg) > 95:
+                cmsg = cmsg[:92] + "..."
+            tk.Label(table_card, text=cmsg, font=FONTS["body_sm"],
+                     fg=COLORS["text_primary"], bg=row_bg, anchor="w", padx=10, pady=7).grid(
+                row=grid_row, column=2, sticky="nsew", padx=0, pady=0
             )
 
             # Col 3: Files count
-            tk.Label(row, text=str(entry.get("files_count", 0)), font=FONTS["body_sm"],
-                     fg=COLORS["text_secondary"], bg=COLORS["bg_card"]).grid(
-                row=0, column=3, sticky="w", padx=6, pady=6
+            tk.Label(table_card, text=str(entry.get("files_count", 0)), font=FONTS["body_sm"],
+                     fg=COLORS["text_secondary"], bg=row_bg, anchor="center", padx=8, pady=7).grid(
+                row=grid_row, column=3, sticky="nsew", padx=0, pady=0
             )
 
             # Col 4: Date
             date_str = (entry.get("committed_at") or "")[:16]
-            tk.Label(row, text=date_str, font=FONTS["caption"],
-                     fg=COLORS["text_muted"], bg=COLORS["bg_card"]).grid(
-                row=0, column=4, sticky="e", padx=(6, 14), pady=6
+            tk.Label(table_card, text=date_str, font=FONTS["caption"],
+                     fg=COLORS["text_muted"], bg=row_bg, anchor="w", padx=10, pady=7).grid(
+                row=grid_row, column=4, sticky="nsew", padx=0, pady=0
             )
+
+            grid_row += 1
+            # Divider between rows
+            rsep = tk.Frame(table_card, height=1, bg=COLORS["border"])
+            rsep.grid(row=grid_row, column=0, columnspan=5, sticky="ew")
+            grid_row += 1
 
     def _page_charts(self):
         p = self._pad()
@@ -4234,6 +4290,16 @@ class AdminApp:
         def _header_actions(parent):
             btn_box = tk.Frame(parent, bg=COLORS["bg_card"])
             btn_box.pack(side="right")
+
+            pass_btn = tk.Button(
+                btn_box, text="🎫  Create Temporary Pass", font=FONTS["label_bold"],
+                bg=COLORS["admin"], fg="white",
+                activebackground=COLORS["admin_dark"], activeforeground="white",
+                relief="flat", cursor="hand2", padx=12, pady=5,
+                command=self._show_create_temporary_pass_modal
+            )
+            pass_btn.pack(side="right", padx=(6, 0))
+            self._add_hover(pass_btn, COLORS["admin_dark"], COLORS["admin"])
 
             inv_btn = tk.Button(
                 btn_box, text="➕  Invite Friend", font=FONTS["label_bold"],
@@ -4365,22 +4431,36 @@ class AdminApp:
         tk.Label(m_hdr, text="👥  Registered Friends & Team Nodes", font=FONTS["heading_sm"],
                  fg=COLORS["text_primary"], bg=COLORS["bg_card"]).pack(side="left")
 
-        # Query members from server database
+        # Query members from database
         members = []
+        active_invites = []
         try:
             import sqlite3
-            s_db = os.path.join(APP_DIR, "server_commitmaster.db")
-            if os.path.exists(s_db):
-                s_conn = sqlite3.connect(s_db)
-                s_conn.row_factory = sqlite3.Row
-                members = s_conn.execute("""
-                    SELECT nm.*, u.username, u.full_name,
-                           (SELECT COUNT(*) FROM commit_activity WHERE user_id = nm.user_id) as commits_count
-                    FROM network_members nm
-                    LEFT JOIN users u ON nm.user_id = u.id
-                    ORDER BY nm.last_seen DESC
-                """).fetchall()
-                s_conn.close()
+            for db_cand in [os.path.join(APP_DIR, "server_commitmaster.db"), os.path.join(APP_DIR, "commitmaster.db")]:
+                if os.path.exists(db_cand):
+                    s_conn = sqlite3.connect(db_cand)
+                    s_conn.row_factory = sqlite3.Row
+                    if not members:
+                        try:
+                            members = s_conn.execute("""
+                                SELECT nm.*, u.username, u.full_name,
+                                       (SELECT COUNT(*) FROM commit_activity WHERE user_id = nm.user_id) as commits_count
+                                FROM network_members nm
+                                LEFT JOIN users u ON nm.user_id = u.id
+                                ORDER BY nm.last_seen DESC
+                            """).fetchall()
+                        except Exception:
+                            pass
+                    if not active_invites:
+                        try:
+                            active_invites = s_conn.execute("""
+                                SELECT * FROM network_invites
+                                WHERE status = 'active'
+                                ORDER BY created_at DESC LIMIT 20
+                            """).fetchall()
+                        except Exception:
+                            pass
+                    s_conn.close()
         except Exception:
             pass
 
@@ -4425,29 +4505,134 @@ class AdminApp:
                 tk.Label(m_info, text=sub_info, font=FONTS["caption"],
                          fg=COLORS["text_secondary"], bg=COLORS["bg_medium"]).pack(anchor="w", pady=(2, 0))
 
-                status_val = mem.get("status", "approved")
-                status_color = COLORS["success"] if status_val == "approved" else (COLORS["warning"] if status_val == "pending" else COLORS["error"])
+                access_type = mem.get("access_type") or "temporary"
+                expires_at = mem.get("expires_at")
+                status_val = mem.get("status", "pending")
+
+                time_remaining_str = ""
+                if access_type == "temporary" and expires_at and status_val == "approved":
+                    try:
+                        from datetime import datetime
+                        exp_dt = datetime.strptime(expires_at, "%Y-%m-%d %H:%M:%S")
+                        now_dt = datetime.now()
+                        if now_dt > exp_dt:
+                            status_val = "expired"
+                        else:
+                            diff = exp_dt - now_dt
+                            hours_left = int(diff.total_seconds() // 3600)
+                            mins_left = int((diff.total_seconds() % 3600) // 60)
+                            if hours_left >= 24:
+                                days = hours_left // 24
+                                time_remaining_str = f"{days}d {hours_left % 24}h left"
+                            elif hours_left > 0:
+                                time_remaining_str = f"{hours_left}h {mins_left}m left"
+                            else:
+                                time_remaining_str = f"{mins_left}m left"
+                    except Exception:
+                        pass
+
+                if status_val == "approved":
+                    if access_type == "permanent":
+                        status_text = "● APPROVED (Permanent)"
+                        status_color = COLORS["success"]
+                    else:
+                        status_text = f"⏱ TEMPORARY ({time_remaining_str})"
+                        status_color = "#38bdf8"
+                elif status_val == "pending":
+                    status_text = "⏳ PENDING APPROVAL"
+                    status_color = COLORS["warning"]
+                elif status_val == "expired":
+                    status_text = "🔒 EXPIRED"
+                    status_color = COLORS["error"]
+                else:
+                    status_text = "🚫 REVOKED"
+                    status_color = COLORS["error"]
 
                 act_box = tk.Frame(m_row, bg=COLORS["bg_medium"])
                 act_box.pack(side="right")
 
-                tk.Label(act_box, text=status_val.upper(), font=("Segoe UI", 8, "bold"),
+                tk.Label(act_box, text=status_text, font=("Segoe UI", 8, "bold"),
                          fg=status_color, bg=COLORS["bg_medium"], padx=6).pack(side="left", padx=(0, 8))
 
-                if status_val == "approved":
+                temp_btn = tk.Button(
+                    act_box, text="⏱ Grant Temporary", font=FONTS["caption"],
+                    bg=COLORS["bg_dark"], fg="#38bdf8", relief="flat", cursor="hand2", padx=8, pady=3,
+                    command=lambda m=dict(mem): self._grant_temporary_access_modal(m)
+                )
+                temp_btn.pack(side="left", padx=(0, 4))
+
+                if access_type != "permanent" or status_val != "approved":
+                    perm_btn = tk.Button(
+                        act_box, text="✔ Permanent", font=FONTS["caption"],
+                        bg=COLORS["bg_dark"], fg=COLORS["success"], relief="flat", cursor="hand2", padx=8, pady=3,
+                        command=lambda mid=mem["id"]: self._grant_permanent_access(mid)
+                    )
+                    perm_btn.pack(side="left", padx=(0, 4))
+
+                if status_val != "revoked":
                     rev_btn = tk.Button(
-                        act_box, text="Revoke", font=FONTS["caption"],
-                        bg=COLORS["bg_dark"], fg=COLORS["error"], relief="flat", cursor="hand2",
-                        command=lambda mid=mem["id"]: self._update_network_member_status(mid, "revoked")
+                        act_box, text="🔒 Revoke", font=FONTS["caption"],
+                        bg=COLORS["bg_dark"], fg=COLORS["error"], relief="flat", cursor="hand2", padx=8, pady=3,
+                        command=lambda mid=mem["id"]: self._update_network_member_access(mid, "revoked")
                     )
                     rev_btn.pack(side="left")
-                else:
-                    appr_btn = tk.Button(
-                        act_box, text="Approve", font=FONTS["caption"],
-                        bg=COLORS["bg_dark"], fg=COLORS["success"], relief="flat", cursor="hand2",
-                        command=lambda mid=mem["id"]: self._update_network_member_status(mid, "approved")
-                    )
-                    appr_btn.pack(side="left")
+
+        # ── Active Temporary Guest Passes Card ─────────────────────────────
+        inv_card = self._card(p, padx=20, pady=16)
+        inv_card.pack(fill="x", pady=(0, 16))
+
+        inv_hdr = tk.Frame(inv_card, bg=COLORS["bg_card"])
+        inv_hdr.pack(fill="x", pady=(0, 12))
+        tk.Label(inv_hdr, text="🎫  Active Temporary Guest Passes", font=FONTS["heading_sm"],
+                 fg=COLORS["text_primary"], bg=COLORS["bg_card"]).pack(side="left")
+
+        new_pass_btn = tk.Button(
+            inv_hdr, text="＋ New Temporary Pass", font=FONTS["caption"],
+            bg=COLORS["admin"], fg="white", activebackground=COLORS["admin_dark"],
+            relief="flat", cursor="hand2", padx=10, pady=4,
+            command=self._show_create_temporary_pass_modal
+        )
+        new_pass_btn.pack(side="right")
+        self._add_hover(new_pass_btn, COLORS["admin_dark"], COLORS["admin"])
+
+        if not active_invites:
+            empty_inv = tk.Frame(inv_card, bg=COLORS["bg_card"], pady=10)
+            empty_inv.pack(fill="x")
+            tk.Label(empty_inv, text="No active temporary passes. Click 'New Temporary Pass' to generate one.",
+                     font=FONTS["body_sm"], fg=COLORS["text_secondary"], bg=COLORS["bg_card"]).pack()
+        else:
+            for inv in active_invites:
+                i_row = tk.Frame(inv_card, bg=COLORS["bg_medium"], padx=14, pady=8,
+                                 highlightthickness=1, highlightbackground=COLORS["border"])
+                i_row.pack(fill="x", pady=3)
+
+                tk.Label(i_row, text="🎫", font=("Segoe UI Emoji", 12), bg=COLORS["bg_medium"]).pack(side="left", padx=(0, 8))
+                code_lbl = tk.Label(i_row, text=inv["invite_code"], font=("Consolas", 10, "bold"),
+                                    fg=COLORS["accent"], bg=COLORS["bg_medium"])
+                code_lbl.pack(side="left", padx=(0, 12))
+
+                dur_txt = f"Access Duration: {inv['duration_hours']}h • Uses: {inv['uses_count']}/{inv['max_uses']} • Valid until: {inv['expires_at'][:10]}"
+                if inv.get("notes"):
+                    dur_txt += f" ({inv['notes']})"
+                tk.Label(i_row, text=dur_txt, font=FONTS["caption"],
+                         fg=COLORS["text_secondary"], bg=COLORS["bg_medium"]).pack(side="left")
+
+                def make_copy(c=inv["invite_code"]):
+                    self.root.clipboard_clear()
+                    self.root.clipboard_append(c)
+                    messagebox.showinfo("Copied", f"Pass code '{c}' copied to clipboard!", parent=self.root)
+
+                i_act = tk.Frame(i_row, bg=COLORS["bg_medium"])
+                i_act.pack(side="right")
+                cp_btn = tk.Button(i_act, text="📋 Copy", font=FONTS["caption"],
+                                   bg=COLORS["bg_dark"], fg=COLORS["text_primary"], relief="flat", cursor="hand2",
+                                   command=make_copy)
+                cp_btn.pack(side="left", padx=(0, 6))
+
+                rv_btn = tk.Button(i_act, text="Revoke", font=FONTS["caption"],
+                                   bg=COLORS["bg_dark"], fg=COLORS["error"], relief="flat", cursor="hand2",
+                                   command=lambda iid=inv["id"]: self._revoke_temporary_pass(iid))
+                rv_btn.pack(side="left")
 
         ai_card = self._card(p, padx=20, pady=16)
         ai_card.pack(fill="x")
@@ -4579,19 +4764,205 @@ class AdminApp:
         close_btn.pack(side="right")
 
     def _update_network_member_status(self, member_id: int, new_status: str):
-        """Update approval status for a registered network node in server_commitmaster.db."""
+        self._update_network_member_access(member_id, new_status)
+
+    def _update_network_member_access(self, member_id: int, new_status: str, access_type: str = "permanent", duration_hours: int = 24):
+        """Update approval and access period for a registered network node across databases."""
         import sqlite3
-        s_db = os.path.join(APP_DIR, "server_commitmaster.db")
-        if os.path.exists(s_db):
-            try:
-                s_conn = sqlite3.connect(s_db)
-                s_conn.execute("UPDATE network_members SET status = ? WHERE id = ?", (new_status, member_id))
-                s_conn.commit()
-                s_conn.close()
-                messagebox.showinfo("Status Updated", f"Member status updated to '{new_status}'.", parent=self.root)
-                self._go("fleet")
-            except Exception as e:
-                messagebox.showerror("Error", f"Failed to update status: {e}", parent=self.root)
+        from datetime import datetime, timedelta
+
+        expires_at = None
+        if new_status == "approved" and access_type == "temporary":
+            expires_at = (datetime.now() + timedelta(hours=duration_hours)).strftime("%Y-%m-%d %H:%M:%S")
+
+        updated = False
+        for db_file in [os.path.join(APP_DIR, "server_commitmaster.db"), os.path.join(APP_DIR, "commitmaster.db")]:
+            if os.path.exists(db_file):
+                try:
+                    s_conn = sqlite3.connect(db_file)
+                    s_conn.execute("""
+                        UPDATE network_members
+                        SET status = ?, access_type = ?, expires_at = ?, approved_by = 'saumya.patel.dev@gmail.com'
+                        WHERE id = ?
+                    """, (new_status, access_type, expires_at, member_id))
+                    s_conn.commit()
+                    s_conn.close()
+                    updated = True
+                except Exception:
+                    pass
+
+        if updated:
+            desc = f"Temporary access ({duration_hours}h)" if (new_status == "approved" and access_type == "temporary") else f"'{new_status}'"
+            messagebox.showinfo("Access Updated", f"Member access updated to {desc}.", parent=self.root)
+            self._go("fleet")
+        else:
+            messagebox.showerror("Error", "Could not locate database to update member access.", parent=self.root)
+
+    def _grant_permanent_access(self, member_id: int):
+        self._update_network_member_access(member_id, "approved", access_type="permanent")
+
+    def _grant_temporary_access_modal(self, member: dict):
+        """Modal dialog for admin to grant a temporary period of access to a node."""
+        dlg = tk.Toplevel(self.root)
+        dlg.title("Grant Temporary Access Period")
+        dlg.geometry("480x380")
+        dlg.configure(bg=COLORS["bg_darkest"])
+        dlg.transient(self.root)
+        dlg.grab_set()
+
+        card = tk.Frame(dlg, bg=COLORS["bg_card"], padx=20, pady=20)
+        card.pack(fill="both", expand=True, padx=16, pady=16)
+
+        tk.Label(card, text="⏱ Grant Temporary Access Period", font=FONTS["heading_sm"],
+                 fg=COLORS["text_primary"], bg=COLORS["bg_card"]).pack(anchor="w", pady=(0, 6))
+
+        m_name = member.get("display_name") or member.get("username") or member.get("tailscale_login", "")
+        tk.Label(card, text=f"Configure allowed network access duration for:\n{m_name} ({member.get('tailscale_login')})",
+                 font=FONTS["body_sm"], fg=COLORS["text_secondary"], bg=COLORS["bg_card"], justify="left").pack(anchor="w", pady=(0, 16))
+
+        dur_var = tk.IntVar(value=24)
+        options = [
+            ("1 Hour (Quick Verification)", 1),
+            ("6 Hours (Working Session)", 6),
+            ("24 Hours (1 Day Access)", 24),
+            ("3 Days (72 Hours)", 72),
+            ("7 Days (1 Week Pass)", 168),
+            ("30 Days (1 Month)", 720),
+        ]
+
+        for text, val in options:
+            rb = tk.Radiobutton(
+                card, text=text, variable=dur_var, value=val,
+                font=FONTS["body_sm"], fg=COLORS["text_primary"], bg=COLORS["bg_card"],
+                selectcolor=COLORS["bg_input"], activebackground=COLORS["bg_card"],
+                activeforeground=COLORS["text_primary"], cursor="hand2"
+            )
+            rb.pack(anchor="w", pady=2)
+
+        def apply_temp():
+            selected_h = dur_var.get()
+            dlg.destroy()
+            self._update_network_member_access(member["id"], "approved", access_type="temporary", duration_hours=selected_h)
+
+        btn_row = tk.Frame(card, bg=COLORS["bg_card"])
+        btn_row.pack(fill="x", side="bottom", pady=(16, 0))
+
+        cancel_btn = tk.Button(btn_row, text="Cancel", font=FONTS["label"],
+                               bg=COLORS["bg_medium"], fg=COLORS["text_secondary"],
+                               relief="flat", cursor="hand2", padx=12, pady=6, command=dlg.destroy)
+        cancel_btn.pack(side="left")
+
+        save_btn = tk.Button(btn_row, text="✔ Grant Temporary Access", font=FONTS["label_bold"],
+                             bg=COLORS["accent"], fg="white", activebackground=COLORS["accent_hover"],
+                             relief="flat", cursor="hand2", padx=16, pady=6, command=apply_temp)
+        save_btn.pack(side="right")
+        self._add_hover(save_btn, COLORS["accent_hover"], COLORS["accent"])
+
+    def _show_create_temporary_pass_modal(self):
+        """Modal dialog to generate a temporary guest pass code."""
+        import secrets
+        dlg = tk.Toplevel(self.root)
+        dlg.title("Create Temporary Guest Pass")
+        dlg.geometry("520x460")
+        dlg.configure(bg=COLORS["bg_darkest"])
+        dlg.transient(self.root)
+        dlg.grab_set()
+
+        card = tk.Frame(dlg, bg=COLORS["bg_card"], padx=20, pady=20)
+        card.pack(fill="both", expand=True, padx=16, pady=16)
+
+        tk.Label(card, text="🎫  Create Temporary Guest Pass", font=FONTS["heading_sm"],
+                 fg=COLORS["text_primary"], bg=COLORS["bg_card"]).pack(anchor="w", pady=(0, 6))
+
+        tk.Label(card, text="Generate a secure temporary pass. Anyone who enters this pass when connecting via Tailscale will be granted access strictly for the selected period.",
+                 font=FONTS["body_sm"], fg=COLORS["text_secondary"], bg=COLORS["bg_card"], justify="left", wraplength=460).pack(anchor="w", pady=(0, 14))
+
+        tk.Label(card, text="Pass Access Duration:", font=FONTS["label_bold"], fg=COLORS["text_primary"], bg=COLORS["bg_card"]).pack(anchor="w", pady=(0, 4))
+        dur_var = tk.IntVar(value=24)
+        options = [
+            ("1 Hour (Brief Access)", 1),
+            ("6 Hours (Working Session)", 6),
+            ("24 Hours (1 Day Access)", 24),
+            ("3 Days (72 Hours)", 72),
+            ("7 Days (1 Week)", 168),
+            ("30 Days (1 Month)", 720),
+        ]
+        opts_f = tk.Frame(card, bg=COLORS["bg_card"])
+        opts_f.pack(fill="x", pady=(0, 10))
+        for idx, (text, val) in enumerate(options):
+            rb = tk.Radiobutton(
+                opts_f, text=text, variable=dur_var, value=val,
+                font=FONTS["caption"], fg=COLORS["text_primary"], bg=COLORS["bg_card"],
+                selectcolor=COLORS["bg_input"], activebackground=COLORS["bg_card"],
+                cursor="hand2"
+            )
+            rb.grid(row=idx // 2, column=idx % 2, sticky="w", padx=6, pady=2)
+
+        tk.Label(card, text="Note / Purpose (e.g. Guest testing, Contractor pass):", font=FONTS["label_bold"], fg=COLORS["text_primary"], bg=COLORS["bg_card"]).pack(anchor="w", pady=(8, 4))
+        note_var = tk.StringVar(value="Guest Access")
+        note_entry = tk.Entry(card, textvariable=note_var, font=FONTS["body_sm"],
+                              bg=COLORS["bg_input"], fg=COLORS["text_primary"], relief="flat", highlightthickness=1, highlightbackground=COLORS["border"])
+        note_entry.pack(fill="x", ipady=4, pady=(0, 14))
+
+        def create_pass():
+            duration = dur_var.get()
+            note = note_var.get().strip() or "Guest Pass"
+            code = f"CM-PASS-{secrets.token_hex(4).upper()}"
+            from datetime import datetime, timedelta
+            exp = (datetime.now() + timedelta(days=7)).strftime("%Y-%m-%d %H:%M:%S")
+
+            import sqlite3
+            for db_file in [os.path.join(APP_DIR, "server_commitmaster.db"), os.path.join(APP_DIR, "commitmaster.db")]:
+                if os.path.exists(db_file):
+                    try:
+                        s_conn = sqlite3.connect(db_file)
+                        s_conn.execute("""
+                            INSERT INTO network_invites (invite_code, duration_hours, expires_at, max_uses, uses_count, status, created_by, notes)
+                            VALUES (?, ?, ?, 1, 0, 'active', 'saumya.patel.dev@gmail.com', ?)
+                        """, (code, duration, exp, note))
+                        s_conn.commit()
+                        s_conn.close()
+                    except Exception:
+                        pass
+
+            self.root.clipboard_clear()
+            self.root.clipboard_append(code)
+            dlg.destroy()
+            messagebox.showinfo(
+                "Pass Created & Copied!",
+                f"Temporary Pass Created:\n\n{code}\n\n"
+                f"Duration: {duration} hours\n"
+                "The pass code has been copied to your clipboard!\n"
+                "Share this code with your guest to allow them to join your private network.",
+                parent=self.root
+            )
+            self._go("fleet")
+
+        btn_row = tk.Frame(card, bg=COLORS["bg_card"])
+        btn_row.pack(fill="x", side="bottom")
+
+        tk.Button(btn_row, text="Cancel", font=FONTS["label"], bg=COLORS["bg_medium"], fg=COLORS["text_secondary"],
+                  relief="flat", cursor="hand2", padx=12, pady=6, command=dlg.destroy).pack(side="left")
+
+        gen_btn = tk.Button(btn_row, text="✨ Generate & Copy Pass", font=FONTS["label_bold"],
+                            bg=COLORS["admin"], fg="white", activebackground=COLORS["admin_dark"],
+                            relief="flat", cursor="hand2", padx=16, pady=6, command=create_pass)
+        gen_btn.pack(side="right")
+        self._add_hover(gen_btn, COLORS["admin_dark"], COLORS["admin"])
+
+    def _revoke_temporary_pass(self, invite_id: int):
+        import sqlite3
+        for db_file in [os.path.join(APP_DIR, "server_commitmaster.db"), os.path.join(APP_DIR, "commitmaster.db")]:
+            if os.path.exists(db_file):
+                try:
+                    s_conn = sqlite3.connect(db_file)
+                    s_conn.execute("UPDATE network_invites SET status = 'revoked' WHERE id = ?", (invite_id,))
+                    s_conn.commit()
+                    s_conn.close()
+                except Exception:
+                    pass
+        messagebox.showinfo("Pass Revoked", "Temporary guest pass has been revoked.", parent=self.root)
+        self._go("fleet")
 
     def _page_global_settings(self):
         p = self._pad()
@@ -4713,7 +5084,7 @@ class AdminApp:
         self._acct_bio.pack(side="left", fill="x", expand=True)
         self._primary_btn(p, "  💾  Save Profile Info",
                           self._save_acct_profile,
-                          color=COLORS["admin"]).pack(anchor="w", pady=(0, 20))
+                          color=COLORS["admin"]).pack(anchor="w", pady=(0, 60))
 
     def _change_username(self):
         new_uname = self._new_uname_var.get().strip()
