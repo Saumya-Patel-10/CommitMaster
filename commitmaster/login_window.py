@@ -792,17 +792,21 @@ class LoginWindow:
             return
 
         login_name = ts_user["LoginName"].strip().lower()
-        matched_user = db.get_user_by_username_or_email(login_name)
-        if not matched_user:
-            # Check if this machine belongs to the designated admin
-            admin_user = db.get_user(1)
-            if admin_user and any(p in login_name for p in ["saumya", "admin"]):
-                matched_user = admin_user
-            else:
-                # Create local account for this Tailscale developer
+        if login_name == "saumya.patel.dev@gmail.com":
+            matched_user = db.get_user_by_username_or_email("saumya.patel.dev@gmail.com") or db.get_user(1)
+        else:
+            if getattr(self, "app_type", "user") == "admin":
+                self._err_label.config(
+                    text="Access denied: Only saumya.patel.dev@gmail.com has administrator access.",
+                    fg=COLORS["error"]
+                )
+                return
+            matched_user = db.get_user_by_username_or_email(login_name)
+            if not matched_user:
+                # Create standard local user account for this Tailscale developer
                 username = login_name.split("@")[0]
                 full_name = ts_user.get("DisplayName") or username
-                uid = db.create_user(username, login_name, secrets.token_hex(16), full_name=full_name)
+                uid = db.create_user(username=username, email=login_name, full_name=full_name, password=secrets.token_hex(16), role="user")
                 matched_user = db.get_user(uid)
 
         if matched_user:
