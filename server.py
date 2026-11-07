@@ -81,7 +81,7 @@ DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
 
 # Default admin credentials
 # Administrator identity defaults to designated admin profile saumya.patel.dev@gmail.com
-DEFAULT_ADMIN_USER = os.getenv("ADMIN_USERNAME", "").strip() or "Admin#_$aumy@.P@tel_#"
+DEFAULT_ADMIN_USER = os.getenv("ADMIN_USERNAME", "").strip() or "saumya"
 DEFAULT_ADMIN_EMAIL = os.getenv("ADMIN_EMAIL", "").strip() or "saumya.patel.dev@gmail.com"
 DEFAULT_ADMIN_FULL_NAME = os.getenv("ADMIN_FULL_NAME", "").strip() or "Saumya Patel"
 
@@ -503,7 +503,11 @@ def init_db():
             display_name      TEXT DEFAULT '',
             node_hostname     TEXT DEFAULT '',
             node_ip           TEXT DEFAULT '',
-            status            TEXT NOT NULL DEFAULT 'approved',
+            status            TEXT NOT NULL DEFAULT 'pending',
+            access_type       TEXT NOT NULL DEFAULT 'temporary',
+            expires_at        TEXT DEFAULT NULL,
+            approved_by       TEXT DEFAULT 'saumya.patel.dev@gmail.com',
+            invite_code       TEXT DEFAULT '',
             user_id           INTEGER REFERENCES users(id) ON DELETE SET NULL,
             created_at        TEXT NOT NULL DEFAULT (datetime('now')),
             last_seen         TEXT DEFAULT (datetime('now')),
@@ -511,6 +515,46 @@ def init_db():
         )
     """)
     cur.execute("CREATE INDEX IF NOT EXISTS idx_network_members_login ON network_members(tailscale_login)")
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS network_invites (
+            id                INTEGER PRIMARY KEY AUTOINCREMENT,
+            invite_code       TEXT UNIQUE NOT NULL,
+            duration_hours    INTEGER NOT NULL DEFAULT 24,
+            expires_at        TEXT NOT NULL,
+            max_uses          INTEGER NOT NULL DEFAULT 1,
+            uses_count        INTEGER NOT NULL DEFAULT 0,
+            status            TEXT NOT NULL DEFAULT 'active',
+            created_by        TEXT DEFAULT 'saumya.patel.dev@gmail.com',
+            created_at        TEXT NOT NULL DEFAULT (datetime('now')),
+            notes             TEXT DEFAULT ''
+        )
+    """)
+
+    # Ensure view alias for analytics_events pointing to app_events exists
+    try:
+        cur.execute("""
+            CREATE VIEW IF NOT EXISTS analytics_events AS
+            SELECT id, user_id, kind, repo_name, detail, created_at FROM app_events
+        """)
+    except Exception:
+        pass
+
+    # Ensure new columns on network_members if upgrading existing db
+    cur.execute("PRAGMA table_info(network_members)")
+    nm_cols = [c[1] for c in cur.fetchall()]
+    member_column_ddls = {
+        "access_type": "ALTER TABLE network_members ADD COLUMN access_type TEXT DEFAULT 'permanent'",
+        "expires_at": "ALTER TABLE network_members ADD COLUMN expires_at TEXT DEFAULT NULL",
+        "approved_by": "ALTER TABLE network_members ADD COLUMN approved_by TEXT DEFAULT 'saumya.patel.dev@gmail.com'",
+        "invite_code": "ALTER TABLE network_members ADD COLUMN invite_code TEXT DEFAULT ''",
+    }
+    for col, alter_sql in member_column_ddls.items():
+        if col not in nm_cols:
+            try:
+                cur.execute(alter_sql)
+            except Exception:
+                pass
 
     # Ensure avatar_image exists on users table
     cur.execute("PRAGMA table_info(users)")
@@ -529,15 +573,23 @@ def init_db():
         conn.close()
         return
     cur.execute("DELETE FROM users WHERE username = 'admin'")
-    cur.execute("UPDATE users SET role = 'user' WHERE role = 'admin' AND username NOT IN (?, 'Admin#_$aumy@.P@tel_#')", (DEFAULT_ADMIN_USER,))
 
-    # Protect and preserve primary owner admin identity under all circumstances
-    cur.execute("""
-        UPDATE users SET role = 'admin', email = 'saumya.patel.dev@gmail.com'
-        WHERE username = 'Admin#_$aumy@.P@tel_#' OR id = 1
-    """)
+    # Clean up legacy username if present and update to clean Saumya profile
+    cur.execute("SELECT id FROM users WHERE username = 'Admin#_$aumy@.P@tel_#'")
+    legacy_admin = cur.fetchone()
+    if legacy_admin:
+        cur.execute("SELECT id FROM users WHERE (email = ? OR username = ?) AND id != ?", (DEFAULT_ADMIN_EMAIL, DEFAULT_ADMIN_USER, legacy_admin["id"]))
+        existing_target = cur.fetchone()
+        if existing_target:
+            cur.execute("DELETE FROM users WHERE id = ?", (legacy_admin["id"],))
+        else:
+            cur.execute("UPDATE users SET username = ?, full_name = ?, role = 'admin', email = ? WHERE id = ?",
+                        (DEFAULT_ADMIN_USER, DEFAULT_ADMIN_FULL_NAME, DEFAULT_ADMIN_EMAIL, legacy_admin["id"]))
 
-    cur.execute("SELECT id, email, password_hash FROM users WHERE username = ?", (DEFAULT_ADMIN_USER,))
+    # Demote any other unauthorized accounts claiming admin role
+    cur.execute("UPDATE users SET role = 'user' WHERE role = 'admin' AND email != ? AND username != ?", (DEFAULT_ADMIN_EMAIL, DEFAULT_ADMIN_USER))
+
+    cur.execute("SELECT id, email, password_hash FROM users WHERE username = ? OR email = ?", (DEFAULT_ADMIN_USER, DEFAULT_ADMIN_EMAIL))
     saumya_row = cur.fetchone()
     if not saumya_row:
         pw_hash = hash_password(DEFAULT_ADMIN_PASS)
@@ -844,25 +896,61 @@ def auth_tailscale():
     """, (ts_user_login, ts_user_login))
     row = cur.fetchone()
 
-    if not row:
-        admin_patterns = ["saumya", "admin"]
-        is_admin_candidate = any(p in ts_user_login.lower() for p in admin_patterns)
-        
-        cur.execute("SELECT * FROM users WHERE role = 'admin' LIMIT 1")
-        existing_admin = cur.fetchone()
+    is_admin = (ts_user_login.strip().lower() == DEFAULT_ADMIN_EMAIL.lower())
 
-        if existing_admin and is_admin_candidate:
-            row = existing_admin
-        else:
+    if is_admin:
+        # Sole authoritative administrator
+        cur.execute("SELECT * FROM users WHERE role = 'admin' OR LOWER(email) = LOWER(?) LIMIT 1", (DEFAULT_ADMIN_EMAIL,))
+        row = cur.fetchone()
+        if not row:
+            pw_hash = hash_password(DEFAULT_ADMIN_PASS)
+            cur.execute("""
+                INSERT INTO users (username, email, full_name, password_hash, role, is_active, is_verified)
+                VALUES (?, ?, ?, ?, 'admin', 1, 1)
+            """, (DEFAULT_ADMIN_USER, DEFAULT_ADMIN_EMAIL, DEFAULT_ADMIN_FULL_NAME, pw_hash))
+            conn.commit()
+            cur.execute("SELECT * FROM users WHERE id = ?", (cur.lastrowid,))
+            row = cur.fetchone()
+    else:
+        # Non-admin user: network access is private and requires approval or temporary invite
+        cur.execute("""
+            SELECT * FROM network_members
+            WHERE LOWER(tailscale_login) = LOWER(?) OR (node_ip = ? AND node_ip != '')
+        """, (ts_user_login, client_ip))
+        nm = cur.fetchone()
+        if not nm or nm["status"] != "approved":
+            status_text = nm["status"] if nm else "unregistered"
+            conn.close()
+            return jsonify({
+                "error": f"CommitMaster network is private. Access is currently {status_text}. Approval from administrator ({DEFAULT_ADMIN_EMAIL}) is required.",
+                "status": status_text,
+                "admin": DEFAULT_ADMIN_EMAIL
+            }), 403
+
+        # Check temporary expiration
+        if nm.get("access_type") == "temporary" and nm.get("expires_at"):
+            try:
+                exp_dt = datetime.strptime(nm["expires_at"], "%Y-%m-%d %H:%M:%S")
+                if datetime.now() > exp_dt:
+                    cur.execute("UPDATE network_members SET status = 'expired' WHERE id = ?", (nm["id"],))
+                    conn.commit()
+                    conn.close()
+                    return jsonify({
+                        "error": f"Your temporary network access period has expired. Please contact {DEFAULT_ADMIN_EMAIL} for renewal.",
+                        "status": "expired",
+                        "admin": DEFAULT_ADMIN_EMAIL
+                    }), 403
+            except Exception:
+                pass
+
+        if not row:
             username = ts_user_login.split("@")[0]
             display_name = ts_user_name or username
             pwd_hash = hash_password(secrets.token_hex(16))
-            role = "admin" if (is_admin_candidate and not existing_admin) else "user"
-
             cur.execute("""
                 INSERT INTO users (username, email, full_name, password_hash, role, is_active, is_verified)
-                VALUES (?, ?, ?, ?, ?, 1, 1)
-            """, (username, ts_user_login, display_name, pwd_hash, role))
+                VALUES (?, ?, ?, ?, 'user', 1, 1)
+            """, (username, ts_user_login, display_name, pwd_hash))
             conn.commit()
             cur.execute("SELECT * FROM users WHERE id = ?", (cur.lastrowid,))
             row = cur.fetchone()
@@ -946,6 +1034,7 @@ def network_join():
     node_ip = data.get("node_ip", "").strip() or client_ip
     display_name = data.get("display_name", "").strip()
     requested_username = data.get("username", "").strip()
+    invite_code = (data.get("invite_code") or "").strip().upper()
     
     # Auto-detect via Whois if available and missing
     if not ts_login and tailscale_service:
@@ -963,6 +1052,33 @@ def network_join():
     conn = get_db()
     cur = conn.cursor()
 
+    is_admin_user = (ts_login.lower() == DEFAULT_ADMIN_EMAIL.lower())
+    initial_status = "pending"
+    access_type = "temporary"
+    expires_at = None
+
+    if is_admin_user:
+        initial_status = "approved"
+        access_type = "permanent"
+    elif invite_code:
+        cur.execute("""
+            SELECT * FROM network_invites
+            WHERE UPPER(invite_code) = ? AND status = 'active'
+        """, (invite_code,))
+        inv = cur.fetchone()
+        if inv:
+            try:
+                exp_dt = datetime.strptime(inv["expires_at"], "%Y-%m-%d %H:%M:%S")
+                if datetime.now() <= exp_dt:
+                    initial_status = "approved"
+                    access_type = "temporary"
+                    expires_at = (datetime.now() + timedelta(hours=inv["duration_hours"])).strftime("%Y-%m-%d %H:%M:%S")
+                    new_uses = inv["uses_count"] + 1
+                    new_st = "used" if new_uses >= inv["max_uses"] else "active"
+                    cur.execute("UPDATE network_invites SET uses_count = ?, status = ? WHERE id = ?", (new_uses, new_st, inv["id"]))
+            except Exception:
+                pass
+
     # Look for or create corresponding user in users table
     cur.execute("SELECT id, username, email, role FROM users WHERE LOWER(email) = LOWER(?)", (ts_login,))
     user_row = cur.fetchone()
@@ -973,42 +1089,62 @@ def network_join():
     else:
         # Create standard user profile for friend
         uname = requested_username or ts_login.split("@")[0].replace(".", "_")
-        # Ensure unique username
         cur.execute("SELECT id FROM users WHERE LOWER(username) = LOWER(?)", (uname,))
         if cur.fetchone():
             uname = f"{uname}_{secrets.token_hex(2)}"
         
         pwd_hash = hash_password(secrets.token_hex(16))
+        u_role = "admin" if is_admin_user else "user"
         cur.execute("""
             INSERT INTO users (username, email, full_name, password_hash, role, is_active)
-            VALUES (?, ?, ?, ?, 'user', 1)
-        """, (uname, ts_login, display_name or uname, pwd_hash))
+            VALUES (?, ?, ?, ?, ?, 1)
+        """, (uname, ts_login, display_name or uname, pwd_hash, u_role))
         user_id = cur.lastrowid
         cur.execute("INSERT OR IGNORE INTO user_preferences (user_id) VALUES (?)", (user_id,))
 
     # Upsert network_members entry
     cur.execute("""
-        SELECT id FROM network_members WHERE LOWER(tailscale_login) = LOWER(?) OR (node_ip = ? AND node_ip != '')
+        SELECT * FROM network_members WHERE LOWER(tailscale_login) = LOWER(?) OR (node_ip = ? AND node_ip != '')
     """, (ts_login, node_ip))
     member_row = cur.fetchone()
 
     if member_row:
+        # If already approved or redeeming invite, update access
+        if is_admin_user:
+            final_status = "approved"
+            final_access = "permanent"
+            final_expires = None
+        elif invite_code and initial_status == "approved":
+            final_status = "approved"
+            final_access = "temporary"
+            final_expires = expires_at
+        else:
+            final_status = member_row["status"]
+            final_access = member_row["access_type"] or "temporary"
+            final_expires = member_row["expires_at"]
+
         cur.execute("""
             UPDATE network_members
             SET display_name = COALESCE(NULLIF(?, ''), display_name),
                 node_hostname = COALESCE(NULLIF(?, ''), node_hostname),
                 node_ip = COALESCE(NULLIF(?, ''), node_ip),
                 last_seen = datetime('now'),
-                user_id = COALESCE(?, user_id)
+                user_id = COALESCE(?, user_id),
+                status = ?,
+                access_type = ?,
+                expires_at = ?
             WHERE id = ?
-        """, (display_name, node_hostname, node_ip, user_id, member_row["id"]))
+        """, (display_name, node_hostname, node_ip, user_id, final_status, final_access, final_expires, member_row["id"]))
         member_id = member_row["id"]
     else:
         cur.execute("""
-            INSERT INTO network_members (tailscale_login, display_name, node_hostname, node_ip, status, user_id)
-            VALUES (?, ?, ?, ?, 'approved', ?)
-        """, (ts_login, display_name or ts_login, node_hostname, node_ip, user_id))
+            INSERT INTO network_members (tailscale_login, display_name, node_hostname, node_ip, status, access_type, expires_at, approved_by, invite_code, user_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (ts_login, display_name or ts_login, node_hostname, node_ip, initial_status, access_type, expires_at, DEFAULT_ADMIN_EMAIL, invite_code, user_id))
         member_id = cur.lastrowid
+        final_status = initial_status
+        final_access = access_type
+        final_expires = expires_at
 
     conn.commit()
     conn.close()
@@ -1016,19 +1152,27 @@ def network_join():
     hub_ip = tailscale_service.get_tailscale_ip() if tailscale_service else ""
     magic_dns = tailscale_service.get_magic_dns_name() if tailscale_service else ""
 
+    is_approved = (final_status == "approved")
+    msg = (f"Successfully connected to CommitMaster private Tailnet. Access: {final_access.upper()} (Valid until: {final_expires or 'Permanent'})."
+           if is_approved else
+           f"Connection registered. This private network requires approval from administrator ({DEFAULT_ADMIN_EMAIL}).")
+
     return jsonify({
-        "ok": True,
-        "message": f"Successfully joined CommitMaster network as '{ts_login}'.",
+        "ok": is_approved,
+        "message": msg,
         "member_id": member_id,
         "user_id": user_id,
-        "status": "approved",
+        "status": final_status,
+        "access_type": final_access,
+        "expires_at": final_expires,
+        "admin": DEFAULT_ADMIN_EMAIL,
         "hub": {
             "service": "CommitMaster-Server",
             "tailscale_ip": hub_ip,
             "magic_dns": magic_dns,
             "server_port": 8000
         }
-    })
+    }), (200 if is_approved else 202)
 
 @app.route("/api/network/members", methods=["GET"])
 def get_network_members():
@@ -1077,6 +1221,106 @@ def update_network_member_status(member_id):
     conn.commit()
     conn.close()
     return jsonify({"ok": True, "member_id": member_id, "status": new_status})
+
+@app.route("/api/network/members/<int:member_id>/access", methods=["POST"])
+@require_auth(admin_only=True)
+def update_network_member_access(member_id):
+    """
+    Admin endpoint to grant permanent or temporary access, or revoke access:
+    Payload:
+      {
+        "status": "approved" | "revoked" | "pending",
+        "access_type": "permanent" | "temporary",
+        "duration_hours": 24  (required if temporary)
+      }
+    """
+    data = request.get_json(force=True, silent=True) or {}
+    status = data.get("status", "approved")
+    access_type = data.get("access_type", "permanent")
+    duration_hours = int(data.get("duration_hours") or 24)
+
+    expires_at = None
+    if status == "approved":
+        if access_type == "temporary":
+            expires_at = (datetime.now() + timedelta(hours=duration_hours)).strftime("%Y-%m-%d %H:%M:%S")
+        else:
+            access_type = "permanent"
+            expires_at = None
+    elif status == "revoked":
+        access_type = "revoked"
+        expires_at = None
+
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute("""
+        UPDATE network_members
+        SET status = ?, access_type = ?, expires_at = ?, approved_by = ?
+        WHERE id = ?
+    """, (status, access_type, expires_at, DEFAULT_ADMIN_EMAIL, member_id))
+    conn.commit()
+    conn.close()
+
+    return jsonify({
+        "ok": True,
+        "member_id": member_id,
+        "status": status,
+        "access_type": access_type,
+        "expires_at": expires_at,
+        "approved_by": DEFAULT_ADMIN_EMAIL
+    })
+
+@app.route("/api/network/invites", methods=["GET", "POST"])
+@require_auth(admin_only=True)
+def manage_network_invites():
+    """Admin endpoint to create and list temporary guest passes."""
+    conn = get_db()
+    cur = conn.cursor()
+    if request.method == "POST":
+        data = request.get_json(force=True, silent=True) or {}
+        duration_hours = int(data.get("duration_hours") or 24)
+        max_uses = int(data.get("max_uses") or 1)
+        notes = (data.get("notes") or "").strip()
+
+        invite_code = f"CM-PASS-{secrets.token_hex(4).upper()}"
+        invite_validity_days = int(data.get("validity_days") or 7)
+        invite_expiration = (datetime.now() + timedelta(days=invite_validity_days)).strftime("%Y-%m-%d %H:%M:%S")
+
+        cur.execute("""
+            INSERT INTO network_invites (invite_code, duration_hours, expires_at, max_uses, uses_count, status, created_by, notes)
+            VALUES (?, ?, ?, ?, 0, 'active', ?, ?)
+        """, (invite_code, duration_hours, invite_expiration, max_uses, DEFAULT_ADMIN_EMAIL, notes))
+        conn.commit()
+        inv_id = cur.lastrowid
+        conn.close()
+
+        return jsonify({
+            "ok": True,
+            "invite": {
+                "id": inv_id,
+                "invite_code": invite_code,
+                "duration_hours": duration_hours,
+                "expires_at": invite_expiration,
+                "max_uses": max_uses,
+                "status": "active",
+                "notes": notes
+            }
+        }), 201
+
+    # GET: return all invites
+    rows = cur.execute("SELECT * FROM network_invites ORDER BY created_at DESC LIMIT 100").fetchall()
+    conn.close()
+    return jsonify({"invites": [dict(r) for r in rows]})
+
+@app.route("/api/network/invites/<int:invite_id>", methods=["DELETE"])
+@require_auth(admin_only=True)
+def revoke_network_invite(invite_id):
+    """Admin endpoint to immediately revoke a temporary invite pass."""
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute("UPDATE network_invites SET status = 'revoked' WHERE id = ?", (invite_id,))
+    conn.commit()
+    conn.close()
+    return jsonify({"ok": True, "message": "Temporary invite pass revoked."})
 
 # ── Authentication Endpoints ──────────────────────────────────────────────────
 @app.route("/api/auth/check", methods=["POST"])
