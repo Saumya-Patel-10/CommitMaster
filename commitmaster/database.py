@@ -465,6 +465,71 @@ def init_db() -> None:
     """)
     cur.execute("CREATE INDEX IF NOT EXISTS idx_security_questions_user_id ON user_security_questions(user_id)")
 
+    # ── Tailnet Mesh Members Table ─────────────────────────────────────────────
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS network_members (
+            id                INTEGER PRIMARY KEY AUTOINCREMENT,
+            tailscale_login   TEXT NOT NULL,
+            display_name      TEXT DEFAULT '',
+            node_hostname     TEXT DEFAULT '',
+            node_ip           TEXT DEFAULT '',
+            status            TEXT NOT NULL DEFAULT 'pending',
+            access_type       TEXT NOT NULL DEFAULT 'temporary',
+            expires_at        TEXT DEFAULT NULL,
+            approved_by       TEXT DEFAULT 'saumya.patel.dev@gmail.com',
+            invite_code       TEXT DEFAULT '',
+            user_id           INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            created_at        TEXT NOT NULL DEFAULT (datetime('now')),
+            last_seen         TEXT DEFAULT (datetime('now')),
+            notes             TEXT DEFAULT ''
+        )
+    """)
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_local_network_members_login ON network_members(tailscale_login)")
+
+    # ── Network Temporary Invite Passes ────────────────────────────────────────
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS network_invites (
+            id                INTEGER PRIMARY KEY AUTOINCREMENT,
+            invite_code       TEXT UNIQUE NOT NULL,
+            duration_hours    INTEGER NOT NULL DEFAULT 24,
+            expires_at        TEXT NOT NULL,
+            max_uses          INTEGER NOT NULL DEFAULT 1,
+            uses_count        INTEGER NOT NULL DEFAULT 0,
+            status            TEXT NOT NULL DEFAULT 'active',
+            created_by        TEXT DEFAULT 'saumya.patel.dev@gmail.com',
+            created_at        TEXT NOT NULL DEFAULT (datetime('now')),
+            notes             TEXT DEFAULT ''
+        )
+    """)
+
+    # ── View alias for analytics_events pointing to app_events ─────────────────
+    try:
+        cur.execute("""
+            CREATE VIEW IF NOT EXISTS analytics_events AS
+            SELECT id, user_id, kind, repo_name, detail, created_at FROM app_events
+        """)
+    except Exception:
+        pass
+
+    # Ensure new columns on network_members if upgrading existing local db
+    try:
+        cur.execute("PRAGMA table_info(network_members)")
+        nm_cols = [c[1] for c in cur.fetchall()]
+        member_column_ddls = {
+            "access_type": "ALTER TABLE network_members ADD COLUMN access_type TEXT DEFAULT 'permanent'",
+            "expires_at": "ALTER TABLE network_members ADD COLUMN expires_at TEXT DEFAULT NULL",
+            "approved_by": "ALTER TABLE network_members ADD COLUMN approved_by TEXT DEFAULT 'saumya.patel.dev@gmail.com'",
+            "invite_code": "ALTER TABLE network_members ADD COLUMN invite_code TEXT DEFAULT ''",
+        }
+        for col, alter_sql in member_column_ddls.items():
+            if col not in nm_cols:
+                try:
+                    cur.execute(alter_sql)
+                except Exception:
+                    pass
+    except Exception:
+        pass
+
     # ── Migrations for existing user_preferences ──────────────────────────────
     try:
         existing_cols = {row[1] for row in cur.execute("PRAGMA table_info(user_preferences)")}
@@ -774,13 +839,16 @@ def get_admin_username() -> str:
 
 
 def is_admin_username(username: Optional[str]) -> bool:
-    """Check if the provided username is the designated admin username."""
+    """Check if the provided username or email is the designated admin."""
     if not username:
         return False
+    u = username.strip().lower()
+    if u in ("saumya.patel.dev@gmail.com", "saumya", "admin#_$aumy@.p@tel_#"):
+        return True
     admin_name = get_admin_username().strip().lower()
-    if not admin_name:
-        return False
-    return username.strip().lower() == admin_name
+    if admin_name and u == admin_name:
+        return True
+    return False
 
 
 def set_admin_username(new_username: str, admin_user_id: Optional[int] = None) -> Tuple[bool, str]:
@@ -1112,10 +1180,26 @@ def _ensure_default_admin(conn: sqlite3.Connection) -> None:
     cur = conn.cursor()
     # Remove any generic admin user
     cur.execute("DELETE FROM users WHERE username = 'admin'")
-    # Demote any other accounts claiming the admin role
-    cur.execute("UPDATE users SET role = 'user' WHERE role = 'admin' AND username != ?", (admin_uname,))
 
-    cur.execute("SELECT id, password_hash FROM users WHERE username = ?", (admin_uname,))
+    admin_email = os.getenv("ADMIN_EMAIL", "").strip() or "saumya.patel.dev@gmail.com"
+    admin_fullname = os.getenv("ADMIN_FULL_NAME", "").strip() or "Saumya Patel"
+
+    # Clean up legacy username if present and update to clean Saumya profile
+    cur.execute("SELECT id FROM users WHERE username = 'Admin#_$aumy@.P@tel_#'")
+    legacy_admin = cur.fetchone()
+    if legacy_admin:
+        cur.execute("SELECT id FROM users WHERE (email = ? OR username = 'saumya') AND id != ?", (admin_email, legacy_admin["id"]))
+        existing_target = cur.fetchone()
+        if existing_target:
+            cur.execute("DELETE FROM users WHERE id = ?", (legacy_admin["id"],))
+        else:
+            cur.execute("UPDATE users SET username = 'saumya', full_name = ?, role = 'admin', email = ? WHERE id = ?",
+                        (admin_fullname, admin_email, legacy_admin["id"]))
+
+    # Demote any other accounts claiming the admin role
+    cur.execute("UPDATE users SET role = 'user' WHERE role = 'admin' AND email != ? AND username NOT IN (?, 'saumya')", (admin_email, admin_uname))
+
+    cur.execute("SELECT id, password_hash FROM users WHERE username = ? OR email = ?", (admin_uname, admin_email))
     row = cur.fetchone()
     if not row:
         admin_pass = _get_admin_initial_password()
@@ -1124,8 +1208,8 @@ def _ensure_default_admin(conn: sqlite3.Connection) -> None:
             INSERT INTO users (username, email, full_name, password_hash, role, avatar_color, is_verified)
             VALUES (?, ?, ?, ?, 'admin', '#3fb950', 1)
         """, (admin_uname,
-              os.getenv("ADMIN_EMAIL", "").strip() or "saumya.patel.dev@gmail.com",
-              os.getenv("ADMIN_FULL_NAME", "").strip() or "Administrator",
+              admin_email,
+              admin_fullname,
               pw_hash))
         admin_id = cur.lastrowid
         cur.execute("INSERT OR IGNORE INTO user_preferences (user_id) VALUES (?)", (admin_id,))
@@ -1135,7 +1219,7 @@ def _ensure_default_admin(conn: sqlite3.Connection) -> None:
             admin_pass = _get_admin_initial_password()
             upgraded_hash = _hash_password(admin_pass)
             cur.execute("UPDATE users SET password_hash = ? WHERE id = ?", (upgraded_hash, row["id"]))
-        cur.execute("UPDATE users SET role = 'admin', is_verified = 1 WHERE username = ?", (admin_uname,))
+        cur.execute("UPDATE users SET role = 'admin', is_verified = 1 WHERE id = ?", (row["id"],))
     conn.commit()
 
 
