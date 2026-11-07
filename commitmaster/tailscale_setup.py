@@ -133,6 +133,7 @@ def register_with_network_hub(
     tailscale_login: str,
     display_name: str = "",
     username: str = "",
+    invite_code: str = "",
     timeout: float = 6.0
 ) -> Tuple[bool, str, Dict[str, Any]]:
     """
@@ -150,7 +151,8 @@ def register_with_network_hub(
         "display_name": display_name.strip() or tailscale_login.split("@")[0],
         "node_hostname": tailscale_service.get_device_hostname(),
         "node_ip": tailscale_service.get_tailscale_ip() or "",
-        "username": username.strip() or tailscale_login.split("@")[0]
+        "username": username.strip() or tailscale_login.split("@")[0],
+        "invite_code": invite_code.strip()
     }
 
     try:
@@ -586,6 +588,11 @@ class TailscaleSetupDialog(tk.Toplevel):
         if default_name:
             self.name_entry.insert(0, default_name)
 
+        # Temporary Access Pass / Invite Code field (Optional)
+        tk.Label(inner, text="Temporary Access Pass / Invite Code (Optional)", font=FONTS["body_bold"], fg=COLORS["text_primary"], bg=COLORS["bg_card"]).pack(anchor="w")
+        self.pass_entry = tk.Entry(inner, font=FONTS["body"], bg=COLORS["bg_input"], fg=COLORS["text_primary"], insertbackground=COLORS["text_primary"], bd=1, relief="solid")
+        self.pass_entry.pack(fill="x", pady=(4, 12))
+
         # Hub address
         tk.Label(inner, text="Team Hub Address (Private Tailnet)", font=FONTS["body_bold"], fg=COLORS["text_primary"], bg=COLORS["bg_card"]).pack(anchor="w")
         self.hub_entry = tk.Entry(inner, font=FONTS["body"], bg=COLORS["bg_input"], fg=COLORS["text_primary"], insertbackground=COLORS["text_primary"], bd=1, relief="solid")
@@ -638,6 +645,7 @@ class TailscaleSetupDialog(tk.Toplevel):
         email = self.email_entry.get().strip()
         display_name = self.name_entry.get().strip()
         hub_addr = self.hub_entry.get().strip()
+        invite_code = self.pass_entry.get().strip() if hasattr(self, "pass_entry") else ""
 
         if not email:
             messagebox.showwarning("Email Required", "Please enter your Tailscale account email to register.")
@@ -650,7 +658,8 @@ class TailscaleSetupDialog(tk.Toplevel):
             ok, msg, data = register_with_network_hub(
                 hub_address=hub_addr,
                 tailscale_login=email,
-                display_name=display_name
+                display_name=display_name,
+                invite_code=invite_code
             )
             self.after(0, lambda: self._handle_register_result(ok, msg, data))
 
@@ -658,7 +667,8 @@ class TailscaleSetupDialog(tk.Toplevel):
 
     def _handle_register_result(self, ok: bool, msg: str, data: Dict):
         self.connect_btn.config(state="normal", text="🛡️ Connect & Register Node")
-        if ok:
+        st = data.get("status", "")
+        if ok or st == "pending":
             self.registration_data = data
             self._show_step(5)
         else:
@@ -673,24 +683,42 @@ class TailscaleSetupDialog(tk.Toplevel):
         inner = tk.Frame(card, bg=COLORS["bg_card"])
         inner.pack(fill="both", expand=True, padx=24, pady=30)
 
+        reg = getattr(self, "registration_data", {})
+        status_val = reg.get("status", "approved")
+        access_type = reg.get("access_type", "permanent")
+        expires_at = reg.get("expires_at")
+        admin_email = reg.get("admin", "saumya.patel.dev@gmail.com")
+
+        if status_val == "approved":
+            headline = "🎉 Connected to Private Team Network!"
+            head_color = COLORS["success"]
+            if access_type == "temporary":
+                st_desc = f"Temporary Access Granted (Valid until: {expires_at or 'Expiring soon'})"
+            else:
+                st_desc = "Permanent Access Approved"
+        else:
+            headline = "⏳ Registered: Pending Admin Approval"
+            head_color = COLORS["warning"]
+            st_desc = f"Access Pending Approval from Administrator ({admin_email})"
+
         tk.Label(
             inner,
-            text="🎉 Connected to Team Network!",
+            text=headline,
             font=FONTS["title"],
-            fg=COLORS["success"],
+            fg=head_color,
             bg=COLORS["bg_card"]
         ).pack(anchor="w", pady=(0, 12))
 
-        hub_info = getattr(self, "registration_data", {}).get("hub", {})
+        hub_info = reg.get("hub", {})
         hub_ip = hub_info.get("tailscale_ip", DEFAULT_HUB_HOST)
 
         info_text = (
-            "Your machine is now registered on CommitMaster's private cloud network.\n\n"
+            "Your machine is registered on CommitMaster's private Tailscale network.\n\n"
             f"  • Central Hub: {hub_ip}\n"
-            "  • Status: Active & Approved\n"
-            "  • Cloud Database: Synchronized\n\n"
-            "All your commit messages, productivity analytics, repository statistics, "
-            "and graphs are automatically synchronized to the team server over encrypted WireGuard."
+            f"  • Network Status: {st_desc}\n"
+            "  • Mesh Security: WireGuard® Encrypted Peer Tunnel\n\n"
+            "When approved, all your commit history, analytics, and repository statistics "
+            "synchronize securely to the central cloud hub."
         )
 
         tk.Label(
