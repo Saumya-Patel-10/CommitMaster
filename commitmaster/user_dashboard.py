@@ -446,6 +446,8 @@ class UserDashboard:
         self._build_header()
 
         # Content area (scrollable)
+        self._last_canvas_width = None
+        self._last_scrollregion = None
         self._content_outer = tk.Frame(self._main, bg=COLORS["bg_dark"])
         self._content_outer.pack(fill="both", expand=True)
         self._content_canvas = tk.Canvas(self._content_outer, bg=COLORS["bg_dark"],
@@ -458,6 +460,9 @@ class UserDashboard:
         self._content_frame = tk.Frame(self._content_canvas, bg=COLORS["bg_dark"])
         self._content_window = self._content_canvas.create_window(
             (0, 0), window=self._content_frame, anchor="nw")
+        init_w = self._content_canvas.winfo_width()
+        if init_w > 1:
+            self._content_canvas.itemconfig(self._content_window, width=init_w)
         self._content_frame.bind("<Configure>", self._on_frame_configure)
         self._content_canvas.bind("<Configure>", self._on_canvas_configure)
         self._navigator = navigation.PageNavigator(
@@ -492,9 +497,8 @@ class UserDashboard:
             self._content_canvas.configure(scrollregion=(0, 0, max(event.width, self._content_canvas.winfo_width()), event.height))
 
     def _on_canvas_configure(self, event):
-        if getattr(self, "_last_canvas_width", None) != event.width:
-            self._last_canvas_width = event.width
-            self._content_canvas.itemconfig(self._content_window, width=event.width)
+        self._content_canvas.itemconfig(self._content_window, width=event.width)
+        self._last_canvas_width = event.width
         bbox = self._content_canvas.bbox("all")
         if bbox and (bbox[2] > 1 or bbox[3] > 1):
             self._content_canvas.configure(scrollregion=bbox)
@@ -671,10 +675,17 @@ class UserDashboard:
 
     def _rebuild_ui(self, nav_to: str = "customize"):
         """Tear down and recreate UI with new theme/tokens."""
+        self._last_canvas_width = None
+        self._last_scrollregion = None
         for w in self.root.winfo_children():
             w.destroy()
         self.root.configure(bg=COLORS["bg_darkest"])
         self._build_layout()
+        self.root.update_idletasks()
+        if hasattr(self, "_content_canvas") and hasattr(self, "_content_window"):
+            c_w = self._content_canvas.winfo_width()
+            if c_w > 1:
+                self._content_canvas.itemconfig(self._content_window, width=c_w)
         self._nav_to(nav_to)
 
     def _go(self, key=None):
