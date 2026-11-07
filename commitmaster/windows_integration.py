@@ -112,15 +112,15 @@ def get_logo_photo(size: int = 32, master: Optional[tk.Misc] = None,
     """Return high-resolution PhotoImage for in-app headers and dialogs bound to active master."""
     if master is None:
         try:
-            master = tk._default_root
+            master = getattr(tk, "_default_root", None)
         except Exception:
             pass
 
-    cache_key = (size, str(master) if master else "root", app_type)
+    cache_key = (size, id(master) if master else 0, app_type)
     if cache_key in _PHOTO_CACHE:
         try:
             photo = _PHOTO_CACHE[cache_key]
-            if master:
+            if master and hasattr(master, "tk"):
                 master.tk.call("image", "type", str(photo))
             return photo
         except Exception:
