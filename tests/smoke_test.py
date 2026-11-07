@@ -15,10 +15,16 @@ APP_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if APP_DIR not in sys.path:
     sys.path.insert(0, APP_DIR)
 
+import pytest
 from commitmaster import commit_engine
 from commitmaster.config import load_config, DEFAULTS
 
 REPO = os.path.join(tempfile.gettempdir(), "commitmaster_test_repo")
+
+
+@pytest.fixture(autouse=True, scope="module")
+def auto_setup():
+    setup_repo()
 
 
 def g(*args):
