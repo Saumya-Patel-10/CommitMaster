@@ -79,6 +79,8 @@ class AdminPortal:
         self._build_header()
 
         # Scrollable content
+        self._last_canvas_width = None
+        self._last_scrollregion = None
         self._content_outer = tk.Frame(self._main, bg=COLORS["bg_dark"])
         self._content_outer.pack(fill="both", expand=True)
         self._canvas = tk.Canvas(self._content_outer, bg=COLORS["bg_dark"],
@@ -90,6 +92,9 @@ class AdminPortal:
         self._canvas.pack(side="left", fill="both", expand=True)
         self._content_frame = tk.Frame(self._canvas, bg=COLORS["bg_dark"])
         self._cw = self._canvas.create_window((0, 0), window=self._content_frame, anchor="nw")
+        init_w = self._canvas.winfo_width()
+        if init_w > 1:
+            self._canvas.itemconfig(self._cw, width=init_w)
         self._content_frame.bind("<Configure>", self._on_frame_configure)
         self._canvas.bind("<Configure>", self._on_canvas_configure)
         self._navigator = navigation.PageNavigator(self.root, self._canvas, self._content_frame, self._cw)
@@ -112,9 +117,8 @@ class AdminPortal:
             self._canvas.configure(scrollregion=(0, 0, max(canvas_w, 1), event.height))
 
     def _on_canvas_configure(self, event):
-        if getattr(self, "_last_canvas_width", None) != event.width:
-            self._last_canvas_width = event.width
-            self._canvas.itemconfig(self._cw, width=event.width)
+        self._canvas.itemconfig(self._cw, width=event.width)
+        self._last_canvas_width = event.width
         canvas_w = event.width
         bbox = self._canvas.bbox("all")
         if bbox and (bbox[2] > 1 or bbox[3] > 1):
@@ -143,12 +147,16 @@ class AdminPortal:
             pass
 
         from commitmaster import windows_integration
-        logo_img = windows_integration.get_logo_photo(26, app_type="admin")
+        logo_img = windows_integration.get_logo_photo(26, master=self.root, app_type="admin")
         if logo_img:
-            self._sidebar_logo_img = logo_img
-            tk.Label(logo_f, image=logo_img, bg=COLORS["bg_sidebar"]).pack(side="left", padx=(14, 6), pady=20)
-            tk.Label(logo_f, text="CommitMaster Admin", font=FONTS["heading_sm"],
-                     fg=COLORS["text_primary"], bg=COLORS["bg_sidebar"]).pack(side="left", pady=20)
+            try:
+                self._sidebar_logo_img = logo_img
+                tk.Label(logo_f, image=logo_img, bg=COLORS["bg_sidebar"]).pack(side="left", padx=(14, 6), pady=20)
+                tk.Label(logo_f, text="CommitMaster Admin", font=FONTS["heading_sm"],
+                         fg=COLORS["text_primary"], bg=COLORS["bg_sidebar"]).pack(side="left", pady=20)
+            except Exception:
+                tk.Label(logo_f, text="🛡 CommitMaster Admin", font=FONTS["heading_sm"],
+                         fg=COLORS["admin"], bg=COLORS["bg_sidebar"]).pack(side="left", padx=14, pady=20)
         else:
             tk.Label(logo_f, text="🛡 CommitMaster Admin", font=FONTS["heading_sm"],
                      fg=COLORS["admin"], bg=COLORS["bg_sidebar"]).pack(
@@ -337,10 +345,17 @@ class AdminPortal:
 
     def _rebuild_ui(self, nav_to: str = "customize"):
         """Tear down and recreate UI with new theme/tokens."""
+        self._last_canvas_width = None
+        self._last_scrollregion = None
         for w in self.root.winfo_children():
             w.destroy()
         self.root.configure(bg=COLORS["bg_darkest"])
         self._build_layout()
+        self.root.update_idletasks()
+        if hasattr(self, "_canvas") and hasattr(self, "_cw"):
+            c_w = self._canvas.winfo_width()
+            if c_w > 1:
+                self._canvas.itemconfig(self._cw, width=c_w)
         self._nav_to(nav_to)
 
     def _go(self, key=None):
@@ -1315,90 +1330,90 @@ class AdminPortal:
                  bg=COLORS["bg_dark"]).pack(anchor="w", pady=(2, 16))
 
         activity = db.get_activity_log(limit=200)
-
-        # Table header
-        hdr = tk.Frame(pad, bg=COLORS["bg_medium"])
-        hdr.pack(fill="x")
-        hdr.grid_columnconfigure(0, weight=2, minsize=140)  # User
-        hdr.grid_columnconfigure(1, weight=2, minsize=140)  # Repository
-        hdr.grid_columnconfigure(2, weight=5, minsize=180)  # Commit Message
-        hdr.grid_columnconfigure(3, weight=1, minsize=60)   # Files
-        hdr.grid_columnconfigure(4, weight=2, minsize=130)  # Date
-
-        for col_idx, col_name, sticky, px in [
-            (0, "User", "w", (12, 6)),
-            (1, "Repository", "w", (6, 6)),
-            (2, "Commit Message", "w", (6, 6)),
-            (3, "Files", "w", (6, 6)),
-            (4, "Date", "e", (6, 14)),
-        ]:
-            tk.Label(hdr, text=col_name, font=FONTS["label_bold"],
-                     fg=COLORS["text_secondary"], bg=COLORS["bg_medium"]).grid(
-                row=0, column=col_idx, sticky=sticky, padx=px, pady=6
-            )
-
         if not activity:
             tk.Label(pad, text="No activity yet.",
                      font=FONTS["body_md"], fg=COLORS["text_muted"],
                      bg=COLORS["bg_dark"]).pack(anchor="w", pady=20)
             return
 
+        table_card = tk.Frame(pad, bg=COLORS["bg_card"], highlightthickness=1, highlightbackground=COLORS["border"])
+        table_card.pack(fill="x", pady=(0, 20))
+
+        table_card.grid_columnconfigure(0, weight=2, minsize=180)  # User
+        table_card.grid_columnconfigure(1, weight=2, minsize=140)  # Repository
+        table_card.grid_columnconfigure(2, weight=6, minsize=260)  # Commit Message
+        table_card.grid_columnconfigure(3, weight=1, minsize=80)   # Files
+        table_card.grid_columnconfigure(4, weight=2, minsize=140)  # Date
+
+        # Header Row (row 0)
+        for col_idx, col_name, anch, pl in [
+            (0, "User", "w", 16),
+            (1, "Repository", "w", 10),
+            (2, "Commit Message", "w", 10),
+            (3, "Files", "center", 8),
+            (4, "Date", "w", 10),
+        ]:
+            h_lbl = tk.Label(table_card, text=col_name, font=FONTS["label_bold"],
+                             fg=COLORS["text_secondary"], bg=COLORS["bg_medium"],
+                             anchor=anch, padx=pl, pady=8)
+            h_lbl.grid(row=0, column=col_idx, sticky="nsew", padx=0, pady=0)
+
+        # Header divider line
+        h_sep = tk.Frame(table_card, height=1, bg=COLORS["border"])
+        h_sep.grid(row=1, column=0, columnspan=5, sticky="ew")
+
+        # Data Rows
+        grid_row = 2
         for entry in activity:
-            row = tk.Frame(pad, bg=COLORS["bg_card"],
-                           highlightbackground=COLORS["border"],
-                           highlightthickness=0)
-            row.pack(fill="x")
-            tk.Frame(pad, height=1, bg=COLORS["border"]).pack(fill="x")
+            row_bg = COLORS["bg_card"]
 
-            row.grid_columnconfigure(0, weight=2, minsize=140)
-            row.grid_columnconfigure(1, weight=2, minsize=140)
-            row.grid_columnconfigure(2, weight=5, minsize=180)
-            row.grid_columnconfigure(3, weight=1, minsize=60)
-            row.grid_columnconfigure(4, weight=2, minsize=130)
-
-            def on_enter(e, r=row): r.config(bg=COLORS["bg_card_hover"])
-            def on_leave(e, r=row): r.config(bg=COLORS["bg_card"])
-            row.bind("<Enter>", on_enter)
-            row.bind("<Leave>", on_leave)
-
-            # Col 0: User (avatar + name)
-            ucell = tk.Frame(row, bg=COLORS["bg_card"])
-            ucell.grid(row=0, column=0, sticky="w", padx=(12, 6), pady=6)
+            # Col 0: User (Avatar + Name)
+            ucell = tk.Frame(table_card, bg=row_bg)
+            ucell.grid(row=grid_row, column=0, sticky="nsew", padx=0, pady=0)
+            inner_u = tk.Frame(ucell, bg=row_bg)
+            inner_u.pack(side="left", padx=(16, 8), pady=7)
             color = entry.get("avatar_color", AVATAR_COLORS[0])
-            av = tk.Label(ucell, text=(entry.get("username") or "?")[:2].upper(),
+            uname = entry.get("username", "") or "?"
+            av = tk.Label(inner_u, text=uname[:2].upper(),
                           bg=color, fg="white", font=FONTS["caption"],
                           width=2, padx=3, pady=3)
             av.pack(side="left", padx=(0, 6))
-            tk.Label(ucell, text=entry.get("username", ""), font=FONTS["body_sm"],
-                     fg=COLORS["text_primary"], bg=COLORS["bg_card"]).pack(side="left")
+            tk.Label(inner_u, text=uname, font=FONTS["body_sm"],
+                     fg=COLORS["text_primary"], bg=row_bg).pack(side="left")
 
             # Col 1: Repository
-            tk.Label(row, text=entry["repo_name"][:24], font=FONTS["body_sm"],
-                     fg=COLORS["accent"], bg=COLORS["bg_card"]).grid(
-                row=0, column=1, sticky="w", padx=6, pady=6
+            tk.Label(table_card, text=entry.get("repo_name", "")[:24], font=FONTS["body_sm"],
+                     fg=COLORS["accent"], bg=row_bg, anchor="w", padx=10, pady=7).grid(
+                row=grid_row, column=1, sticky="nsew", padx=0, pady=0
             )
 
-            # Col 2: Commit message (dynamic width, up to 100 chars)
+            # Col 2: Commit message
             cmsg = entry.get("commit_msg", "")
-            if len(cmsg) > 100:
-                cmsg = cmsg[:97] + "..."
-            tk.Label(row, text=cmsg, font=FONTS["body_sm"],
-                     fg=COLORS["text_primary"], bg=COLORS["bg_card"], anchor="w").grid(
-                row=0, column=2, sticky="w", padx=6, pady=6
+            if len(cmsg) > 95:
+                cmsg = cmsg[:92] + "..."
+            tk.Label(table_card, text=cmsg, font=FONTS["body_sm"],
+                     fg=COLORS["text_primary"], bg=row_bg, anchor="w", padx=10, pady=7).grid(
+                row=grid_row, column=2, sticky="nsew", padx=0, pady=0
             )
 
             # Col 3: Files count
-            tk.Label(row, text=str(entry.get("files_count", 0)), font=FONTS["body_sm"],
-                     fg=COLORS["text_secondary"], bg=COLORS["bg_card"]).grid(
-                row=0, column=3, sticky="w", padx=6, pady=6
+            tk.Label(table_card, text=str(entry.get("files_count", 0)), font=FONTS["body_sm"],
+                     fg=COLORS["text_secondary"], bg=row_bg, anchor="center", padx=8, pady=7).grid(
+                row=grid_row, column=3, sticky="nsew", padx=0, pady=0
             )
 
             # Col 4: Date
             date_str = (entry.get("committed_at") or "")[:16]
-            tk.Label(row, text=date_str, font=FONTS["caption"],
-                     fg=COLORS["text_muted"], bg=COLORS["bg_card"]).grid(
-                row=0, column=4, sticky="e", padx=(6, 14), pady=6
+            tk.Label(table_card, text=date_str, font=FONTS["caption"],
+                     fg=COLORS["text_muted"], bg=row_bg, anchor="w", padx=10, pady=7).grid(
+                row=grid_row, column=4, sticky="nsew", padx=0, pady=0
             )
+
+            grid_row += 1
+            # Divider between rows
+            rsep = tk.Frame(table_card, height=1, bg=COLORS["border"])
+            rsep.grid(row=grid_row, column=0, columnspan=5, sticky="ew")
+            grid_row += 1
 
     def _page_charts(self):
         p = self._content_frame
