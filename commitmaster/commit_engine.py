@@ -427,6 +427,10 @@ def stage_and_commit_individual(
         try:
             # Stage only this specific file (handles additions, modifications, and deletions)
             git(repo_path, "add", "-A", "--", file_path)
+            staged = git(repo_path, "diff", "--cached", "--name-only").strip()
+            if not staged:
+                log.debug("No staged changes for %s; skipping commit.", file_path)
+                continue
             git(repo_path, "commit", "-m", clean_msg)
         except GitError as exc:
             failures.append(f"{file_path}: {exc}")
