@@ -59,7 +59,7 @@ def scan_repo_status_and_logs(repo_path: str, user_id: int) -> Dict[str, Any]:
     try:
         conn = db.get_conn()
         cur = conn.execute("""
-            SELECT * FROM analytics_events
+            SELECT * FROM app_events
             WHERE user_id = ? AND (repo_name = ? OR repo_name = '')
               AND (kind LIKE '%fail%' OR kind LIKE '%error%' OR kind LIKE '%warning%')
             ORDER BY created_at DESC LIMIT 20
