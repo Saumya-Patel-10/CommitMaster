@@ -422,8 +422,27 @@ def show_toast(
                 master=master,
             )
             toast.show()
+        except RuntimeError as r_err:
+            # "main thread is not in main loop" or inactive Tk runtime
+            log.debug("Tkinter main loop not active, displaying system notification: %s", r_err)
+            try:
+                from commitmaster import windows_integration
+                windows_integration.show_balloon_notification(
+                    title=f"CommitMaster: {title}",
+                    message=message,
+                )
+            except Exception:
+                pass
         except Exception as exc:
-            log.error("Failed to display NotificationToast: %s", exc)
+            log.debug("Failed to display NotificationToast: %s", exc)
+            try:
+                from commitmaster import windows_integration
+                windows_integration.show_balloon_notification(
+                    title=f"CommitMaster: {title}",
+                    message=message,
+                )
+            except Exception:
+                pass
 
     target_root = master or getattr(tk, "_default_root", None)
     if target_root and hasattr(target_root, "after"):
