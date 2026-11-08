@@ -2130,7 +2130,7 @@ class AdminApp:
         unpushed = commit_engine.get_unpushed_commits(self._gd_selected_repo)
 
         if self._gd_ask_push_var.get():
-            confirmed = ui.ask_push_confirmation(name, branch, account, unpushed)
+            confirmed = ui.ask_push_confirmation(name, branch, account, unpushed, parent=self.root)
             if not confirmed:
                 messagebox.showinfo("Push Cancelled", "Push cancelled. Commits remain saved locally.", parent=self.root)
                 return
