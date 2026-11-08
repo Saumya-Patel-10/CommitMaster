@@ -556,14 +556,12 @@ def ask_push_confirmation(
     branch: str,
     account_info: Optional[Dict] = None,
     commits: Optional[List[Dict]] = None,
+    parent: Optional[tk.Widget] = None,
 ) -> bool:
     """Prompt user with explicit confirmation before pushing commits to GitHub."""
     result = {"confirmed": False}
-    done_evt = threading.Event()
 
-    def _show():
-        root = _make_root()
-        win = tk.Toplevel(root)
+    def _build_dialog(win, on_close):
         win.title("CommitMaster — Confirm GitHub Push")
         _style_window(win)
         win.geometry("540x440")
@@ -624,25 +622,75 @@ def ask_push_confirmation(
 
         def _yes():
             result["confirmed"] = True
-            win.destroy()
-            root.destroy()
-            done_evt.set()
+            on_close()
 
         def _no():
             result["confirmed"] = False
-            win.destroy()
-            root.destroy()
-            done_evt.set()
+            on_close()
 
         _button(btn_row, "🚀  Yes, Push to GitHub", _yes).pack(side="left", padx=(0, 8))
         _button(btn_row, "❌  Keep Local (Don't Push)", _no, accent=False).pack(side="left")
 
         win.protocol("WM_DELETE_WINDOW", _no)
         _center(win)
+
+    p = parent or getattr(tk, "_default_root", None)
+    is_main = threading.current_thread() is threading.main_thread()
+
+    # Synchronous modal on the active UI thread (no deadlock)
+    if is_main and p is not None:
+        try:
+            win = tk.Toplevel(p)
+            win.transient(p)
+            win.grab_set()
+
+            def _on_close():
+                win.destroy()
+
+            _build_dialog(win, _on_close)
+            p.wait_window(win)
+            return result["confirmed"]
+        except Exception as exc:
+            log.warning("Could not open modal on parent: %s", exc)
+
+    # Background worker thread or headless fallback
+    done_evt = threading.Event()
+
+    def _show():
+        p_act = getattr(tk, "_default_root", None)
+        if p_act is not None:
+            try:
+                win = tk.Toplevel(p_act)
+                win.transient(p_act)
+                win.grab_set()
+
+                def _on_close():
+                    win.destroy()
+                    done_evt.set()
+
+                _build_dialog(win, _on_close)
+                p_act.wait_window(win)
+                return
+            except Exception as exc:
+                log.warning("Could not open modal via UI thread dispatch: %s", exc)
+
+        root = _make_root()
+        win = tk.Toplevel(root)
+
+        def _on_close_standalone():
+            win.destroy()
+            root.destroy()
+            done_evt.set()
+
+        _build_dialog(win, _on_close_standalone)
         root.mainloop()
 
-    run_in_ui_thread(_show)
-    done_evt.wait()
+    if is_main:
+        _show()
+    else:
+        run_in_ui_thread(_show)
+        done_evt.wait()
+
     return result["confirmed"]
 
 
@@ -865,35 +913,58 @@ def ask_pre_commit_issues_warning(
         w, h = 820, min(680, max(460, win.winfo_screenheight() - 120))
         win.geometry(f"{w}x{h}+{(win.winfo_screenwidth() - w) // 2}+{(win.winfo_screenheight() - h) // 2 - 20}")
 
-    # If parent is provided and mainloop is running, run as transient modal
-    if parent is not None:
+    p = parent or getattr(tk, "_default_root", None)
+    is_main = threading.current_thread() is threading.main_thread()
+
+    # Synchronous modal on the active UI thread (no deadlock)
+    if is_main and p is not None:
         try:
-            modal = tk.Toplevel(parent)
-            modal.transient(parent)
+            modal = tk.Toplevel(p)
+            modal.transient(p)
             modal.grab_set()
 
             def on_close():
                 modal.destroy()
-                done_evt.set()
 
             _build_dialog(modal, is_toplevel=True, on_finish=on_close)
-            parent.wait_window(modal)
+            p.wait_window(modal)
             return result["proceed"]
         except Exception as exc:
             log.warning("Could not open modal on parent window: %s, falling back to UI thread", exc)
 
     def _show():
+        p_act = getattr(tk, "_default_root", None)
+        if p_act is not None:
+            try:
+                win = tk.Toplevel(p_act)
+                win.transient(p_act)
+                win.grab_set()
+
+                def on_close():
+                    win.destroy()
+                    done_evt.set()
+
+                _build_dialog(win, is_toplevel=True, on_finish=on_close)
+                p_act.wait_window(win)
+                return
+            except Exception as exc:
+                log.warning("Could not open modal via UI thread dispatch: %s", exc)
+
         root = _make_root()
         win = tk.Toplevel(root)
 
-        def on_close():
+        def on_close_standalone():
             win.destroy()
             root.destroy()
             done_evt.set()
 
-        _build_dialog(win, is_toplevel=True, on_finish=on_close)
+        _build_dialog(win, is_toplevel=True, on_finish=on_close_standalone)
         root.mainloop()
 
-    run_in_ui_thread(_show)
-    done_evt.wait()
+    if is_main:
+        _show()
+    else:
+        run_in_ui_thread(_show)
+        done_evt.wait()
+
     return result["proceed"]
