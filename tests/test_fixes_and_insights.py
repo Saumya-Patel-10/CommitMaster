@@ -133,6 +133,28 @@ class TestFixesAndInsights(unittest.TestCase):
         except RuntimeError:
             self.fail("show_toast raised RuntimeError when Tk mainloop was inactive")
 
+    def test_ask_push_confirmation_non_blocking_on_ui_thread(self):
+        """ask_push_confirmation must not block or deadlock when invoked from UI thread."""
+        import tkinter as tk
+        from commitmaster import ui
+
+        root = tk.Tk()
+        root.withdraw()
+
+        # Simulate user closing confirmation dialog immediately after rendering
+        def close_dialog_soon():
+            for child in root.winfo_children():
+                if isinstance(child, tk.Toplevel):
+                    child.destroy()
+                    return
+            root.after(50, close_dialog_soon)
+
+        root.after(50, close_dialog_soon)
+        # Must return boolean without deadlocking the thread
+        confirmed = ui.ask_push_confirmation("CommitMaster", "main", commits=[{"hash": "abc", "message": "test"}], parent=root)
+        self.assertIsInstance(confirmed, bool)
+        root.destroy()
+
 
 if __name__ == "__main__":
     unittest.main()
