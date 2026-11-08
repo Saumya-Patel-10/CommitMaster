@@ -3886,7 +3886,7 @@ class UserDashboard:
 
         # Ask user before pushing if checkbox is checked
         if self._gd_ask_push_var.get():
-            confirmed = ui.ask_push_confirmation(name, branch, account, unpushed)
+            confirmed = ui.ask_push_confirmation(name, branch, account, unpushed, parent=self.root)
             if not confirmed:
                 messagebox.showinfo("Push Cancelled", "Push cancelled. Commits remain saved locally.", parent=self.root)
                 return
