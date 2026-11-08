@@ -462,6 +462,8 @@ class CommitComposer(tk.Frame):
         state = "normal" if sel and not self._busy else "disabled"
         for b in (self.commit_btn, self.push_commit_btn):
             b.config(state=state)
+        if hasattr(self, "push_btn"):
+            self.push_btn.config(state="disabled" if self._busy else "normal")
 
     def _say(self, text: str, color: Optional[str] = None) -> None:
         if self.winfo_exists():
@@ -598,7 +600,7 @@ class CommitComposer(tk.Frame):
         acc = db.get_repo_account(host.user["id"], repo)
         if push and host._gd_ask_push_var.get():
             unpushed = commit_engine.get_unpushed_commits(repo)
-            if not ui.ask_push_confirmation(repo_name, commit_engine.current_branch(repo), acc, unpushed):
+            if not ui.ask_push_confirmation(repo_name, commit_engine.current_branch(repo), acc, unpushed, parent=root):
                 self._say("ℹ Push cancelled - nothing was committed.", COLORS["warning"])
                 return
 
@@ -648,14 +650,16 @@ class CommitComposer(tk.Frame):
         threading.Thread(target=worker, daemon=True).start()
 
     def _do_push(self, repo: str, acc: Optional[dict], user_id: int) -> Tuple[bool, str]:
-        if acc:
+        if acc and acc.get("github_token", "").strip():
             ok, msg = commit_engine.push_repo_with_account(repo, acc)
         else:
-            accounts = db.get_github_accounts(user_id)
+            accounts = [a for a in db.get_github_accounts(user_id) if a.get("github_token", "").strip()]
             if accounts:
                 ok, msg = commit_engine.push_repo_with_account(repo, accounts[0])
             else:
                 ok, msg = commit_engine.push(repo)
+        if not ok and "Personal Access Token" in msg:
+            ok, msg = commit_engine.push(repo)
         db.log_event(user_id, "push_ok" if ok else "push_failed", repo_name=commit_engine.repo_name(repo),
                      detail="" if ok else msg[:200])
         return ok, msg
@@ -706,11 +710,12 @@ class CommitComposer(tk.Frame):
         acc = db.get_repo_account(host.user["id"], repo)
         unpushed = commit_engine.get_unpushed_commits(repo)
         if host._gd_ask_push_var.get():
-            if not ui.ask_push_confirmation(repo_name, commit_engine.current_branch(repo), acc, unpushed):
+            if not ui.ask_push_confirmation(repo_name, commit_engine.current_branch(repo), acc, unpushed, parent=root):
                 self._say("ℹ Push cancelled. Commits remain saved locally.", COLORS["warning"])
                 return
         self._busy = True
         self._say("⏳ Pushing...", COLORS["info"])
+        self._update_commit_button()
         user_id = host.user["id"]
 
         def worker():
@@ -723,6 +728,8 @@ class CommitComposer(tk.Frame):
                 self._update_commit_button()
                 if ok:
                     self._say(f"✔ {msg}", COLORS["success"])
+                    messagebox.showinfo("Push Succeeded", f"✔ {msg}", parent=root)
+                    self.on_done()
                 else:
                     self._say(f"❌ Push failed: {msg}", COLORS["error"])
                     messagebox.showerror("Push failed", msg, parent=root)
