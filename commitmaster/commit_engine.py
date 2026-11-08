@@ -613,7 +613,14 @@ def push(repo_path: str, remote: str = "origin", branch: Optional[str] = None) -
         out = git(repo_path, "push", remote, b)
         return True, out or f"Pushed successfully to {remote} ({b})"
     except GitError as exc:
-        return False, str(exc)
+        err_str = str(exc)
+        if "set-upstream" in err_str or "has no upstream" in err_str:
+            try:
+                out = git(repo_path, "push", "-u", remote, b)
+                return True, out or f"Pushed successfully to {remote} ({b})"
+            except GitError as exc2:
+                return False, str(exc2)
+        return False, err_str
 
 
 # ── File classification ───────────────────────────────────────────────────────
