@@ -451,5 +451,13 @@ def show_toast(
             return
         except Exception:
             pass
-    from commitmaster import ui
-    ui.run_in_ui_thread(_do_show)
+
+    # If no active Tk mainloop/root exists, show Windows native balloon notification safely
+    try:
+        from commitmaster import windows_integration
+        windows_integration.show_balloon_notification(
+            title=f"CommitMaster: {title}",
+            message=message,
+        )
+    except Exception:
+        pass
