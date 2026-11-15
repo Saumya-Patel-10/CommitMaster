@@ -85,7 +85,7 @@ class TestSecurityBoundaries(unittest.TestCase):
         self.assertIn("blocked", result.stdout)
 
     def test_03_user_package_has_no_admin_entry_or_secret(self):
-        from packaging.stage_packages import stage_all
+        from package_layout.stage_packages import stage_all
         with tempfile.TemporaryDirectory() as directory:
             built = stage_all(directory)
             user_root = built["user"]

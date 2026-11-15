@@ -10,7 +10,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 EXCLUDED_DIRS = {
     ".git", ".github", "dist", "build", "msix_layout", "tests", "__pycache__",
-    ".agents", "packaging",
+    ".agents", "package_layout",
 }
 USER_EXCLUDED_FILES = {
     "admin_app.py", "demo_app.py", "server.py", "admin_portal.py", "admin_client.py",
@@ -57,7 +57,8 @@ def _copy_tree(destination: str, excluded_files: set) -> None:
 
 
 def stage_all(output_root: str) -> dict:
-    identities = json.load(open(os.path.join(ROOT, "packaging", "identities.json"), encoding="utf-8"))
+    with open(os.path.join(ROOT, "package_layout", "identities.json"), encoding="utf-8") as handle:
+        identities = json.load(handle)
     trees = {
         "user": (os.path.join(output_root, "CommitMaster-User"), USER_EXCLUDED_FILES),
         "admin": (os.path.join(output_root, "CommitMaster-Admin"), ADMIN_EXCLUDED_FILES),
