@@ -126,7 +126,7 @@ def _do_commits(repo: str, groups: dict, messages: Dict[str, str]) -> None:
         if not message or not files:
             continue
         try:
-            commit_engine.stage_and_commit(repo, files, message)
+            commit_engine.stage_and_commit(repo, files, message, confirmed=True)
         except commit_engine.GitError as exc:
             log.error("Commit failed for group '%s': %s", group, exc)
             ui.show_error(f"Commit failed ({group}):\n{exc}")
@@ -154,8 +154,8 @@ def _after_commit(cfg: dict, repo: str, name: str, auto: bool) -> None:
                     auto_push = bool(prefs.get("auto_push", 0) or cfg.get("auto_push", False))
                     unpushed = commit_engine.get_unpushed_commits(repo)
                     branch = commit_engine.current_branch(repo)
-                    if (auto_push and not should_ask) or ui.ask_push_confirmation(name, branch, account, unpushed):
-                        ok, push_msg = commit_engine.push_repo_with_account(repo, account)
+                    if ui.ask_push_confirmation(name, branch, account, unpushed):
+                        ok, push_msg = commit_engine.push_repo_with_account(repo, account, confirmed=True)
                         if ok:
                             ui.notify(f"Committed & Pushed: {name}",
                                       f"Pushed to GitHub via @{account['github_username']} ({account['account_name']})")

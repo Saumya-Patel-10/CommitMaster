@@ -624,12 +624,12 @@ class CommitComposer(tk.Frame):
             committed: List[str] = []
             try:
                 if pairs is not None:
-                    results = commit_engine.stage_and_commit_individual(repo, pairs)
+                    results = commit_engine.stage_and_commit_individual(repo, pairs, confirmed=True)
                     for item in results:
                         db.log_commit(user_id, repo, item["message"].splitlines()[0], 1, item["hash"])
                     summary = f"{len(results)} commit{'s' if len(results) != 1 else ''} created"
                 else:
-                    line = commit_engine.stage_and_commit(repo, sel, single_msg)
+                    line = commit_engine.stage_and_commit(repo, sel, single_msg, confirmed=True)
                     db.log_commit(user_id, repo, single_msg.splitlines()[0], len(sel), line.split()[0] if line else "")
                     summary = line
                 committed = list(sel)
@@ -651,15 +651,15 @@ class CommitComposer(tk.Frame):
 
     def _do_push(self, repo: str, acc: Optional[dict], user_id: int) -> Tuple[bool, str]:
         if acc and acc.get("github_token", "").strip():
-            ok, msg = commit_engine.push_repo_with_account(repo, acc)
+            ok, msg = commit_engine.push_repo_with_account(repo, acc, confirmed=True)
         else:
             accounts = [a for a in db.get_github_accounts(user_id) if a.get("github_token", "").strip()]
             if accounts:
-                ok, msg = commit_engine.push_repo_with_account(repo, accounts[0])
+                ok, msg = commit_engine.push_repo_with_account(repo, accounts[0], confirmed=True)
             else:
-                ok, msg = commit_engine.push(repo)
+                ok, msg = commit_engine.push(repo, confirmed=True)
         if not ok and "Personal Access Token" in msg:
-            ok, msg = commit_engine.push(repo)
+            ok, msg = commit_engine.push(repo, confirmed=True)
         db.log_event(user_id, "push_ok" if ok else "push_failed", repo_name=commit_engine.repo_name(repo),
                      detail="" if ok else msg[:200])
         return ok, msg

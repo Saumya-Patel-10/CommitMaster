@@ -96,7 +96,7 @@ def test_commit():
     changes = commit_engine.uncommitted_changes(REPO)
     groups = commit_engine.build_groups(changes, sensitive_patterns=sensitive)
 
-    summary = commit_engine.stage_and_commit(REPO, groups["code"], "refactor: update app output")
+    summary = commit_engine.stage_and_commit(REPO, groups["code"], "refactor: update app output", confirmed=True)
     print(f"  commit summary: {summary}")
     assert "refactor: update app output" in commit_engine.git(REPO, "log", "--oneline")
     print("✔  stage_and_commit")

@@ -1754,7 +1754,7 @@ class AdminPortal:
             return
 
         def run_push():
-            success, msg = commit_engine.push_repo_with_account(repo_path, account)
+            success, msg = commit_engine.push_repo_with_account(repo_path, account, confirmed=True)
             if success:
                 messagebox.showinfo("Push Succeeded", msg, parent=self.root)
             else:
