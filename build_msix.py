@@ -1,12 +1,11 @@
 """
 CommitMaster — MSIX Packaging Engine for Microsoft Store & Windows Desktop Bridge.
 ====================================================================================
-Packages CommitMaster into an official .msix installer package ready for:
-  1. Direct submission to the Microsoft Partner Center / Microsoft Store
-  2. Direct side-loading and installation on Windows 10/11 PCs
+Packages the user executable named in store_identity.json. Running this script
+does not submit anything to Partner Center. This revision was not packed.
 
 Prerequisites:
-  - dist/CommitMaster.exe (compiled via build_exe.py)
+  - dist/CommitMaster-User.exe (the user executable named in store_identity.json)
   - Windows 10/11 SDK tools (makeappx.exe, signtool.exe)
 """
 import glob

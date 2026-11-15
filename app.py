@@ -1,7 +1,8 @@
 """
 CommitMaster — Desktop Application Entrypoint (public USER edition).
 ====================================================================
-This is the app published to the Microsoft Store / GitHub releases.
+This is the public user entry. The Store package name stays SaumyaPatel.CommitMaster.
+This revision has not been packed as an MSIX or submitted to the Store.
 
   • It contains NO administrator account and NO admin console. Every person who
     installs it gets the personal User Dashboard for their own account only.

@@ -1,9 +1,13 @@
 """
-Build CommitMaster as standalone Windows .exe applications using PyInstaller:
-  1. CommitMaster.exe       → Public release for Microsoft Store / users (from app.py)
-  2. CommitMaster-Admin.exe → Saumya's private personal administrative tool (from admin_app.py)
+Build three standalone Windows executables with PyInstaller:
 
-Can be launched directly or by double-clicking 'Build_All_Packages.bat'.
+  1. CommitMaster-User.exe  from app.py, product "user"
+  2. CommitMaster-Admin.exe from admin_app.py, product "admin"
+  3. CommitMaster-Demo.exe  from demo_app.py, product "demo"
+
+The user build excludes the admin and demo modules. Signing and MSIX packaging
+are separate steps and are not performed unless the Windows signing tools and
+MSIX_TEST_CERT_PASSWORD are present. This module does not publish to the Store.
 """
 import os
 import shutil
@@ -230,7 +234,8 @@ CommitMaster v1.0 — Intelligent Git Companion & Session Monitor
 
 HOW TO RUN:
 1. Extract this entire zip file to any folder on your PC.
-2. Double-click 'CommitMaster.exe' (or 'Launch_CommitMaster.bat').
+2. Double-click the user executable in this zip (stored here as CommitMaster.exe).
+   It is the public user app and does not open an admin portal.
 3. Sign in or create an account to start tracking repositories.
 
 WINDOWS DEFENDER & SMARTSCREEN NOTE:

@@ -2,7 +2,7 @@
 
 Three products share this repository and must not share runtime privilege:
 
-* user — public Microsoft Store app
+* user — public user app; Store Name and Publisher stay in store_identity.json
 * admin — private administrator console
 * demo — staging app with no production data
 
