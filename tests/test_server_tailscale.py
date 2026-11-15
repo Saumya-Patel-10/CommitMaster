@@ -37,9 +37,9 @@ class TestServerTailscale(unittest.TestCase):
     @patch("commitmaster.tailscale_service.whois")
     def test_auth_tailscale_sso(self, mock_whois):
         mock_whois.return_value = {
-            "login_name": "saumya.patel.dev@gmail.com",
-            "display_name": "Saumya Patel",
-            "hostname": "saumya-laptop",
+            "login_name": server.DEFAULT_ADMIN_EMAIL,
+            "display_name": "Configured Admin",
+            "hostname": "admin-laptop",
             "os": "windows"
         }
         resp = self.client.post("/api/auth/tailscale", environ_base={"REMOTE_ADDR": "100.108.102.82"})
@@ -47,8 +47,10 @@ class TestServerTailscale(unittest.TestCase):
         data = resp.get_json()
         self.assertTrue(data.get("ok"))
         self.assertIn("token", data)
-        self.assertEqual(data["user"]["email"], "saumya.patel.dev@gmail.com")
-        self.assertEqual(data["tailscale"]["node"], "saumya-laptop")
+        self.assertEqual(data["user"]["role"], "user")
+        self.assertEqual(data["tailscale"]["node"], "admin-laptop")
+        denied = self.client.get("/api/admin/users", headers={"Authorization": f"Bearer {data['token']}"})
+        self.assertEqual(denied.status_code, 403)
 
 
 if __name__ == "__main__":

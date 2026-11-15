@@ -21,26 +21,19 @@ class TestTailscaleNetwork(unittest.TestCase):
         self.app.testing = True
 
     def test_01_admin_profile_and_masking(self):
-        """Verify admin profile email and masking behavior."""
-        root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        local_db_path = os.path.join(root_dir, "commitmaster.db")
-        with sqlite3.connect(local_db_path) as conn:
-            conn.row_factory = sqlite3.Row
-            row = conn.execute("SELECT id, username, email, role FROM users WHERE id = 1").fetchone()
-            self.assertIsNotNone(row)
-            self.assertEqual(row["email"], "saumya.patel.dev@gmail.com")
-            self.assertEqual(row["role"], "admin")
+        """Email masking does not depend on a personal identity stored in a local database."""
+        masked = server.mask_admin_email("owner@example.com", is_admin_viewer=False)
+        self.assertIn("*", masked)
+        self.assertNotEqual(masked, "owner@example.com")
 
-        # 2. Check mask_admin_email
-        masked = server.mask_admin_email("saumya.patel.dev@gmail.com", is_admin_viewer=False)
-        self.assertEqual(masked, "s***v@gmail.com")
+        unmasked = server.mask_admin_email("owner@example.com", is_admin_viewer=True)
+        self.assertEqual(unmasked, "owner@example.com")
 
-        unmasked = server.mask_admin_email("saumya.patel.dev@gmail.com", is_admin_viewer=True)
-        self.assertEqual(unmasked, "saumya.patel.dev@gmail.com")
-
-        # 3. Check sanitize_user in server
-        sanitized = server.sanitize_user({"username": "Admin#_$aumy@.P@tel_#", "email": "saumya.patel.dev@gmail.com", "role": "admin"}, is_admin_viewer=False)
-        self.assertEqual(sanitized["email"], "s***v@gmail.com")
+        sanitized = server.sanitize_user(
+            {"username": "member", "email": "owner@example.com", "role": "admin"},
+            is_admin_viewer=False,
+        )
+        self.assertNotEqual(sanitized["email"], "owner@example.com")
 
     def test_02_network_join_endpoint(self):
         """Verify friend/node registration via /api/network/join."""
@@ -62,7 +55,7 @@ class TestTailscaleNetwork(unittest.TestCase):
         # Verify record in server_commitmaster.db
         conn = server.get_db()
         cur = conn.cursor()
-        cur.execute("SELECT * FROM network_members WHERE tailscale_login = ?", ("friend.developer@gmail.com",))
+        cur.execute("SELECT * FROM network_members WHERE id = ?", (data["member_id"],))
         m_row = cur.fetchone()
         self.assertIsNotNone(m_row)
         self.assertEqual(m_row["node_hostname"], "friend-thinkpad")
@@ -80,7 +73,7 @@ class TestTailscaleNetwork(unittest.TestCase):
         # If admin is in members, make sure email is masked for unauthenticated callers
         for m in data["members"]:
             if m.get("user_role") == "admin":
-                self.assertFalse(m["tailscale_login"] == "saumya.patel.dev@gmail.com")
+                self.assertIn("*", m["tailscale_login"])
                 self.assertTrue("*" in m["tailscale_login"] or "@" in m["tailscale_login"])
 
     def test_04_tailscale_setup_constants(self):

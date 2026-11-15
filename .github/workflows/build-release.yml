@@ -1,39 +1,101 @@
-name: Build & Release Standalone Windows App
+name: Packages
 
 on:
   push:
-    tags:
-      - 'v*'
+  pull_request:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
-  build:
-    runs-on: windows-latest
-
+  security:
+    runs-on: ubuntu-latest
     steps:
-    - name: Checkout Repository
-      uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Security and reliability tests
+        run: python -m unittest tests.test_security_boundaries tests.test_git_reliability tests.test_user_edition -v
 
-    - name: Set up Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.11'
+  package-user:
+    needs: security
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller
+      - name: Build the public user executable
+        run: python -c "from build_exe import build_single; build_single('app.py', 'CommitMaster-User', 'user', product='user')"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: CommitMaster-User
+          path: dist/CommitMaster-User.exe
 
-    - name: Install Dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install -r requirements.txt
-        pip install pyinstaller
+  package-admin:
+    needs: security
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller
+      - name: Build the private admin executable
+        run: python -c "from build_exe import build_single; build_single('admin_app.py', 'CommitMaster-Admin', 'admin', product='admin')"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: CommitMaster-Admin
+          path: dist/CommitMaster-Admin.exe
 
-    - name: Build Standalone Windows Executable
-      run: |
-        python build_exe.py
+  package-demo:
+    needs: security
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller
+      - name: Build the demo executable
+        run: python -c "from build_exe import build_single; build_single('demo_app.py', 'CommitMaster-Demo', 'demo', product='demo')"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: CommitMaster-Demo
+          path: dist/CommitMaster-Demo.exe
 
-    - name: Upload Release Binaries to GitHub
-      uses: softprops/action-gh-release@v2
-      if: startsWith(github.ref, 'refs/tags/')
-      with:
-        files: |
-          dist/CommitMaster.exe
-          dist/CommitMaster-v2.0-Windows.zip
-        generate_release_notes: true
+  store-publish:
+    needs: [security, package-user]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: CommitMaster-User
+          path: dist
+      - name: Publish only the user package
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/CommitMaster-User.exe

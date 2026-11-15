@@ -15,7 +15,17 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from commitmaster import database as db
+from commitmaster.totp import totp_at
 import server
+
+def build_admin_headers(server_url: str) -> dict:
+    response = __import__("requests").post(f"{server_url}/api/admin/login", json={
+        "username_or_email": server.DEFAULT_ADMIN_USER,
+        "password": server.DEFAULT_ADMIN_PASS,
+        "totp_code": totp_at(os.environ["ADMIN_TOTP_SECRET"]),
+    }, headers={"X-CommitMaster-Product": "admin"}, timeout=10)
+    assert response.status_code == 200, response.text
+    return {"Authorization": f"Bearer {response.json()['token']}", "Content-Type": "application/json"}
 
 class TestCloudServerAndAuth(unittest.TestCase):
 
@@ -126,24 +136,29 @@ class TestCloudServerAndAuth(unittest.TestCase):
         unauth_resp = requests.get(f"{self.server_url}/api/admin/users")
         self.assertEqual(unauth_resp.status_code, 401)
 
-        # Authenticate as the designated administrator
+        # A normal login token for the administrator account is not an admin session.
         login_resp = requests.post(f"{self.server_url}/api/auth/login", json={
             "username_or_email": server.DEFAULT_ADMIN_USER,
             "password": server.DEFAULT_ADMIN_PASS
         })
         self.assertEqual(login_resp.status_code, 200)
-        admin_token = login_resp.json().get("token")
-        self.assertTrue(admin_token)
-        admin_headers = {"Authorization": f"Bearer {admin_token}"}
+        user_token = login_resp.json().get("token")
+        rejected = requests.get(
+            f"{self.server_url}/api/admin/users",
+            headers={"Authorization": f"Bearer {user_token}"},
+        )
+        self.assertEqual(rejected.status_code, 403)
 
-        # Fetch admin users list with authenticated admin token
-        resp = requests.get(f"{self.server_url}/api/admin/users", headers=admin_headers)
+        admin_headers_value = build_admin_headers(self.server_url)
+
+        # Fetch admin users list with an admin-scoped token
+        resp = requests.get(f"{self.server_url}/api/admin/users", headers=admin_headers_value)
         self.assertEqual(resp.status_code, 200)
         users = resp.json().get("users", [])
         self.assertTrue(len(users) >= 1)
 
         # Check stats with authenticated admin token
-        stats_resp = requests.get(f"{self.server_url}/api/admin/stats", headers=admin_headers)
+        stats_resp = requests.get(f"{self.server_url}/api/admin/stats", headers=admin_headers_value)
         self.assertEqual(stats_resp.status_code, 200)
         stats = stats_resp.json().get("stats", {})
         self.assertIn("total_users", stats)
@@ -294,14 +309,7 @@ class TestCloudServerAndAuth(unittest.TestCase):
         ts = int(time.time() * 1000)
 
         # 1. Admin login to get admin authorization headers
-        from server import DEFAULT_ADMIN_USER, DEFAULT_ADMIN_PASS
-        admin_login = requests.post(f"{self.server_url}/api/auth/login", json={
-            "username_or_email": DEFAULT_ADMIN_USER,
-            "password": DEFAULT_ADMIN_PASS
-        })
-        self.assertEqual(admin_login.status_code, 200)
-        admin_token = admin_login.json()["token"]
-        admin_headers = {"Authorization": f"Bearer {admin_token}", "Content-Type": "application/json"}
+        admin_headers = build_admin_headers(self.server_url)
 
         # 2. Register 3 test users
         created_ids = []
@@ -382,6 +390,7 @@ class TestCloudServerAndAuth(unittest.TestCase):
 
         # Now test db.sync_account_from_server(uid3) pulls both watched repo and commit into local db
         os.environ["COMMITMASTER_SERVER_URL"] = self.server_url
+        admin_token = admin_headers["Authorization"].split(" ", 1)[1]
         db.set_active_session_token(admin_token)
         try:
             sync_ok = db.sync_account_from_server(uid3)

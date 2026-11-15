@@ -33,9 +33,9 @@ def _stage_public_assets() -> str:
     return dest
 
 
-def build_single(target_script: str, exe_name: str, description: str, icon_file: str = "icon_user.ico", version_file: Optional[str] = None) -> str:
+def build_single(target_script: str, exe_name: str, description: str, icon_file: str = "icon_user.ico", version_file: Optional[str] = None, product: str = "user") -> str:
     print(f"\n[{description}] Compiling {exe_name}...")
-    is_admin_build = target_script == "admin_app.py"
+    is_admin_build = product == "admin"
     assets_src = os.path.join(APP_DIR, "assets") if is_admin_build else _stage_public_assets()
     cmd = [
         sys.executable, "-m", "PyInstaller",
@@ -45,13 +45,28 @@ def build_single(target_script: str, exe_name: str, description: str, icon_file:
         "--name", exe_name,
         "--add-data", f"{assets_src};assets",
     ]
-    if is_admin_build:
+    if product == "admin":
         cmd += ["--hidden-import", "admin_app",
-                "--hidden-import", "commitmaster.admin_portal"]
+                "--hidden-import", "commitmaster.admin_portal",
+                "--hidden-import", "commitmaster.admin_client",
+                "--exclude-module", "demo_app",
+                "--exclude-module", "server"]
+    elif product == "demo":
+        cmd += ["--hidden-import", "demo_app",
+                "--exclude-module", "admin_app",
+                "--exclude-module", "commitmaster.admin_portal",
+                "--exclude-module", "commitmaster.admin_client",
+                "--exclude-module", "server"]
     else:
-        # The public/Store build must contain NO admin console code at all.
         cmd += ["--exclude-module", "admin_app",
-                "--exclude-module", "commitmaster.admin_portal"]
+                "--exclude-module", "commitmaster.admin_portal",
+                "--exclude-module", "commitmaster.admin_client",
+                "--exclude-module", "demo_app",
+                "--exclude-module", "server"]
+    cmd += ["--hidden-import", "commitmaster.product",
+            "--hidden-import", "commitmaster.git_safety",
+            "--hidden-import", "commitmaster.user_mode",
+            "--hidden-import", "commitmaster.totp"]
     cmd += [
         "--hidden-import", "commitmaster.edition",
         "--hidden-import", "commitmaster.ai_setup",
@@ -140,10 +155,11 @@ def main():
     # 1. Build Public User App for Microsoft Store / Public Release
     user_exe = build_single(
         target_script="app.py",
-        exe_name="CommitMaster",
-        description="1/2: Public User Application (for Microsoft Store / GitHub Releases)",
+        exe_name="CommitMaster-User",
+        description="1/3: Public User Application",
         icon_file="icon_user.ico",
         version_file="version_info.txt",
+        product="user",
     )
 
     # Digitally sign user_exe with Authenticode cert to prevent SmartScreen/AV blocks
@@ -153,9 +169,18 @@ def main():
     admin_exe = build_single(
         target_script="admin_app.py",
         exe_name="CommitMaster-Admin",
-        description="2/2: Saumya's Private Admin App (Keep private, DO NOT upload to Store)",
+        description="2/3: Private Admin App",
         icon_file="icon_admin.ico",
         version_file="version_info_admin.txt",
+        product="admin",
+    )
+    demo_exe = build_single(
+        target_script="demo_app.py",
+        exe_name="CommitMaster-Demo",
+        description="3/3: Demo / Staging App",
+        icon_file="icon_user.ico",
+        version_file="version_info.txt",
+        product="demo",
     )
     _sign_executable(admin_exe)
 
@@ -164,13 +189,11 @@ def main():
 
     print("\n" + "=" * 65)
     print("BUILD SUMMARY:")
-    print("  • Public Store/User Binary : dist/CommitMaster.exe (Digitally Signed)")
-    print("  • Public Release Archive    : dist/CommitMaster-v1.0-Windows.zip")
-    print("  • Universal Release Archive : dist/CommitMaster.zip")
-    print("  • Saumya's Private Admin App: dist/CommitMaster-Admin.exe")
+    print(f"  • Public user binary : {user_exe}")
+    print(f"  • Private admin binary : {admin_exe}")
+    print(f"  • Demo binary : {demo_exe}")
     print("=" * 65)
-    print("NOTE: Only upload 'CommitMaster.exe' or 'CommitMaster.msix' to Microsoft Store.")
-    print("Keep 'CommitMaster-Admin.exe' for yourself to monitor users & manage data.")
+    print("Store publication uses only the user package. Admin and demo are separate identities.")
 
 
 def _sign_executable(exe_path: str) -> None:
@@ -178,6 +201,9 @@ def _sign_executable(exe_path: str) -> None:
     if not os.path.exists(exe_path):
         return
     from build_msix import find_windows_kit_tool, TEST_CERT_PFX, TEST_CERT_PWD, ensure_test_certificate
+    if not TEST_CERT_PWD:
+        print(f"[WARN] MSIX_TEST_CERT_PASSWORD is unset. {os.path.basename(exe_path)} was not signed.")
+        return
     signtool = find_windows_kit_tool("signtool.exe")
     if not signtool:
         return

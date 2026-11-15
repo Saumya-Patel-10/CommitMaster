@@ -18,6 +18,8 @@ def _run(code: str, data_dir: str, extra_env=None) -> str:
     # Even if the environment tries to provide admin details, the user edition ignores them.
     env["ADMIN_USERNAME"] = "someone.admin"
     env["ADMIN_PASSWORD"] = "x"
+    env.pop("COMMITMASTER_SERVER_URL", None)
+    env.pop("COMMITMASTER_LOCAL_ADMIN_DB", None)
     env.update(extra_env or {})
     res = subprocess.run([sys.executable, "-c", code], env=env, cwd=ROOT,
                          capture_output=True, text=True, timeout=60)

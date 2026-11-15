@@ -2,7 +2,13 @@
 title CommitMaster Launcher
 cd /d "%~dp0"
 
-:: Auto-unblock executable from Mark of the Web if downloaded via browser/zip
+:: Prefer the Store user executable, then the previously published filename.
+if exist "%~dp0CommitMaster-User.exe" (
+    powershell -NoProfile -Command "Unblock-File -Path '%~dp0CommitMaster-User.exe' -ErrorAction SilentlyContinue" >nul 2>&1
+    start "" "%~dp0CommitMaster-User.exe"
+    exit /b 0
+)
+
 if exist "%~dp0CommitMaster.exe" (
     powershell -NoProfile -Command "Unblock-File -Path '%~dp0CommitMaster.exe' -ErrorAction SilentlyContinue" >nul 2>&1
     start "" "%~dp0CommitMaster.exe"

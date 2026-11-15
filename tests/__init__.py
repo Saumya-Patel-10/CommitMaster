@@ -12,6 +12,9 @@ os.environ.setdefault("COMMITMASTER_DATA_DIR", os.path.join(tempfile.gettempdir(
 os.environ.setdefault("ADMIN_USERNAME", "test.admin@Admin_#")
 os.environ.setdefault("ADMIN_EMAIL", "test.admin@example.com")
 os.environ.setdefault("ADMIN_PASSWORD", "Test-Admin-Pass-123!")
+os.environ.setdefault("ADMIN_TOTP_SECRET", "JBSWY3DPEHPK3PXP")
+os.environ.setdefault("COMMITMASTER_LOCAL_ADMIN_DB", "1")
+os.environ.setdefault("APP_ENVIRONMENT", "production")
 
 from commitmaster import edition  # noqa: E402
 

@@ -27,11 +27,11 @@ class TestFixesAndInsights(unittest.TestCase):
         self.app = server.app.test_client()
         self.app.testing = True
 
-    def test_admin_identity_locked_to_saumya(self):
-        """Admin identity must strictly default to saumya.patel.dev@gmail.com and cannot be hijacked."""
-        self.assertTrue(db.is_admin_username("saumya.patel.dev@gmail.com"))
-        self.assertTrue(db.is_admin_username("saumya"))
-        # Arbitrary local PC accounts or names containing 'admin' must not be granted admin rights
+    def test_admin_identity_locked_to_configured_account(self):
+        """Only the configured admin username is an administrator, and only in the admin product."""
+        self.assertTrue(db.is_admin_username("test.admin@Admin_#"))
+        self.assertFalse(db.is_admin_username("saumya.patel.dev@gmail.com"))
+        self.assertFalse(db.is_admin_username("saumya"))
         self.assertFalse(db.is_admin_username("admin_local_pc"))
         self.assertFalse(db.is_admin_username("random_developer"))
 
@@ -98,7 +98,10 @@ class TestFixesAndInsights(unittest.TestCase):
 
         import secrets
         tok = secrets.token_urlsafe(32)
-        cur.execute("INSERT INTO sessions (token, user_id, expires_at) VALUES (?, ?, datetime('now', '+1 day'))", (tok, admin_uid))
+        cur.execute(
+            "INSERT INTO sessions (token, user_id, expires_at, scope) VALUES (?, ?, datetime('now', '+1 day'), 'admin')",
+            (tok, admin_uid),
+        )
         conn.commit()
         conn.close()
 

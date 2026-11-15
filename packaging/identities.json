@@ -1,0 +1,30 @@
+{
+  "user": {
+    "package_name": "SaumyaPatel.CommitMaster",
+    "package_display_name": "CommitMaster",
+    "publisher_name": "CN=7522A476-A1F1-4D1A-80FA-BEFE0A4BF5F8",
+    "publisher_display_name": "Saumya Patel",
+    "version": "1.1.0.0",
+    "executable": "CommitMaster-User.exe",
+    "entry": "app.py",
+    "upgrade_note": "Name and Publisher match store_identity.json so a Store update can replace 1.0.0.0. No published MSIX was found; the v1.1 GitHub asset is CommitMaster.exe."
+  },
+  "admin": {
+    "package_name": "SaumyaPatel.CommitMaster.Admin",
+    "package_display_name": "CommitMaster Admin",
+    "publisher_name": "CN=CommitMaster-Admin-Private",
+    "publisher_display_name": "CommitMaster Admin",
+    "version": "1.0.0.0",
+    "executable": "CommitMaster-Admin.exe",
+    "entry": "admin_app.py"
+  },
+  "demo": {
+    "package_name": "SaumyaPatel.CommitMaster.Demo",
+    "package_display_name": "CommitMaster Demo",
+    "publisher_name": "CN=CommitMaster-Demo-Staging",
+    "publisher_display_name": "CommitMaster Demo",
+    "version": "1.0.0.0",
+    "executable": "CommitMaster-Demo.exe",
+    "entry": "demo_app.py"
+  }
+}
