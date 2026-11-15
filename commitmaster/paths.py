@@ -42,7 +42,12 @@ def get_data_dir() -> str:
         return env_dir
 
     local_app_data = os.getenv("LOCALAPPDATA") or os.path.expanduser("~")
-    local_commitmaster_dir = os.path.join(local_app_data, "CommitMaster")
+    try:
+        from commitmaster import product as _product
+        folder_name = _product.data_dir_name()
+    except Exception:
+        folder_name = "CommitMaster"
+    local_commitmaster_dir = os.path.join(local_app_data, folder_name)
 
     # 2. Check if running directly in or alongside workspace repository
     # Workspace repo has the authentic commitmaster.db

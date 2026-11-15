@@ -10,8 +10,9 @@ This is the app published to the Microsoft Store / GitHub releases.
   • A previous session is resumed only when its stored token is still valid.
   • Quick sign-in entries can be removed from the login screen.
 
-The private administrator console lives in admin_app.py (CommitMaster-Admin.exe),
-which reuses `run_session_loop(admin_edition=True)` from this module.
+This entry point is the public user product. It never imports or opens the
+administrator console. A handoff from the admin app can open this user's own
+workspace, or a read-only impersonation session, in a separate process.
 
 Run: python app.py
 """
@@ -28,7 +29,8 @@ if APP_DIR not in sys.path:
 from commitmaster import paths
 from commitmaster import database as db
 from commitmaster import account_manager
-from commitmaster import edition
+from commitmaster import product
+from commitmaster import user_mode
 from commitmaster.login_window import LoginWindow
 from commitmaster.user_dashboard import UserDashboard
 
@@ -114,24 +116,43 @@ def _auto_configure_ai_async() -> None:
     threading.Thread(target=work, daemon=True, name="ai-autoconfig").start()
 
 
-def run_session_loop(admin_edition: bool = False) -> None:
-    """Sign-in / dashboard lifecycle shared by the user and admin editions."""
+def _apply_handoff(handoff: dict) -> dict:
+    """A handoff may open a normal workspace or a read-only impersonation. Never admin."""
+    user = dict(handoff.get("user") or {})
+    user["role"] = "user"
+    user.pop("password", None)
+    user.pop("password_hash", None)
+    token = handoff.get("token") or ""
+    if token:
+        _save_token(token)
+        db.set_active_session_token(token)
+    if handoff.get("read_only"):
+        os.environ["COMMITMASTER_SESSION_READ_ONLY"] = "1"
+    else:
+        os.environ.pop("COMMITMASTER_SESSION_READ_ONLY", None)
+    user["_session_mode"] = handoff.get("mode") or "workspace"
+    user["_session_banner"] = handoff.get("banner") or ""
+    user["_session_expires"] = handoff.get("expires_at") or ""
+    user["_session_justification"] = handoff.get("justification") or ""
+    return user
+
+
+def run_session_loop(handoff: dict | None = None) -> None:
+    """Sign-in / dashboard lifecycle for the public user product and the demo product."""
+    if product.is_admin():
+        raise RuntimeError("the user session cannot run inside the admin product")
     try:
         from commitmaster import windows_integration
         windows_integration.set_dpi_awareness()
-        windows_integration.init_app_user_model_id("admin" if admin_edition else "unified")
-        windows_integration.register_windows_app("admin" if admin_edition else "user")
+        windows_integration.init_app_user_model_id("demo" if product.is_demo() else "unified")
+        windows_integration.register_windows_app("user")
 
         db.init_db()
 
-        # First launch: ask how AI will be used (Local / API key / Both), install the
-        # local runtime + model if needed, then continue to sign in / create account.
-        if not admin_edition:
+        if handoff is None and not product.is_demo():
             _run_first_run_setup()
 
-        current_user = _resume_saved_session()
-        if admin_edition and current_user and not db.is_admin_username(current_user.get("username")):
-            current_user = None
+        current_user = _apply_handoff(handoff) if handoff else _resume_saved_session()
 
         while True:
             if not current_user:
@@ -140,40 +161,25 @@ def run_session_loop(admin_edition: bool = False) -> None:
                 def on_login_success(u: dict):
                     auth_result["user"] = u
 
-                win = LoginWindow(on_success=on_login_success,
-                                  app_type="admin" if admin_edition else "user")
+                win = LoginWindow(on_success=on_login_success, app_type="user")
                 win.run()
 
                 current_user = auth_result["user"] or getattr(win, "authenticated_user", None)
                 if not current_user:
                     break  # window closed without signing in
 
-                if admin_edition and not db.is_admin_username(current_user.get("username")):
-                    try:
-                        account_manager.clear_active_account()
-                    except Exception:
-                        pass
-                    root = tk.Tk()
-                    root.withdraw()
-                    messagebox.showerror(
-                        "Access Denied",
-                        "This is the administrator app.\nPlease use the regular CommitMaster app.",
-                        parent=root,
-                    )
-                    root.destroy()
-                    current_user = None
-                    continue
-
             user_dict = dict(current_user)
-            token = db.create_session_token(user_dict["id"])
-            _save_token(token)
-            db.set_active_session_token(token)
-            try:
-                account_manager.save_account(user_dict, token)
-            except Exception:
-                pass
+            # This process is the user or demo product. Account role cannot open an admin surface.
+            user_dict["role"] = "user"
+            if not handoff:
+                token = db.create_session_token(user_dict["id"])
+                _save_token(token)
+                db.set_active_session_token(token)
+                try:
+                    account_manager.save_account(user_dict, token)
+                except Exception:
+                    pass
 
-            # Signed in: fill in local AI host / port / model automatically (background).
             _auto_configure_ai_async()
 
             session_state = {"action": "exit", "next_user": None}
@@ -191,23 +197,16 @@ def run_session_loop(admin_edition: bool = False) -> None:
                 session_state["action"] = "switch"
                 session_state["next_user"] = switched_user
 
-            if admin_edition and db.is_admin_username(user_dict.get("username", "")):
-                import admin_app
-                admin_app._open_admin_window(
-                    user=user_dict,
-                    on_logout=on_logout,
-                    on_switch_account=on_switch_account,
-                )
-            else:
-                dashboard = UserDashboard(
-                    user=user_dict,
-                    on_logout=on_logout,
-                    on_switch_account=on_switch_account,
-                )
-                dashboard.run()
-                if getattr(dashboard, "next_action", None):
-                    session_state["action"] = dashboard.next_action
-                    session_state["next_user"] = getattr(dashboard, "next_user", None)
+            dashboard = UserDashboard(
+                user=user_dict,
+                on_logout=on_logout,
+                on_switch_account=on_switch_account,
+            )
+            dashboard.run()
+            if getattr(dashboard, "next_action", None):
+                session_state["action"] = dashboard.next_action
+                session_state["next_user"] = getattr(dashboard, "next_user", None)
+            handoff = None
 
             if session_state["action"] == "switch" and session_state["next_user"]:
                 current_user = session_state["next_user"]
@@ -236,8 +235,16 @@ def run_session_loop(admin_edition: bool = False) -> None:
 
 
 def launch_app():
-    """Public user edition entry point (no admin account, no admin console)."""
-    run_session_loop(admin_edition=False)
+    """Public user entry point. Demo may already have locked the process."""
+    if not product.is_locked():
+        product.activate("user")
+    if product.is_admin():
+        raise RuntimeError("the user entry point cannot start the admin product")
+    ignored = {"--admin", "--admin-edition"}
+    if any(arg in ignored for arg in sys.argv[1:]):
+        sys.argv = [sys.argv[0]] + [arg for arg in sys.argv[1:] if arg not in ignored]
+    handoff = user_mode.consume_handoff(sys.argv[1:])
+    run_session_loop(handoff=handoff)
 
 
 if __name__ == "__main__":

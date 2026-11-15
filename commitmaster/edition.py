@@ -10,14 +10,15 @@ switchable through environment variables or config files, so the public build
 cannot be flipped into admin mode from outside.
 """
 
-_ADMIN_EDITION = False
-
-
 def set_admin_edition() -> None:
-    """Mark this process as the private administrator edition."""
-    global _ADMIN_EDITION
-    _ADMIN_EDITION = True
+    """Mark this process as the private administrator edition.
+
+    This cannot escalate a process that the user or demo entry point already locked.
+    """
+    from commitmaster import product
+    product.activate("admin")
 
 
 def is_admin_edition() -> bool:
-    return _ADMIN_EDITION
+    from commitmaster import product
+    return product.is_admin()
