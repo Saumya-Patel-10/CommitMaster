@@ -25,12 +25,14 @@ class TestEnhancements(unittest.TestCase):
         self.assertNotIn("__init__", res["summary"])
         
         # Verify New Features subsection is prominently created
-        self.assertIn("### New Features", res["description"])
+        self.assertIn("New Features:", res["description"])
+        self.assertNotIn("### New Features", res["description"])
         self.assertTrue("- Adds class `Autoscroller`" in res["description"] or '- Adds class "Autoscroller"' in res["description"])
         self.assertTrue("- Adds function `on_press`" in res["description"] or '- Adds function "on_press"' in res["description"])
         
         # Verify Changes & Improvements subsection
-        self.assertIn("### Changes & Improvements", res["description"])
+        self.assertIn("Changes & Improvements:", res["description"])
+        self.assertNotIn("### Changes & Improvements", res["description"])
         self.assertTrue("- Updates logic in `_tick`" in res["description"] or '- Updates logic in "_tick"' in res["description"])
 
     def test_refactor_changes_subsection_without_new_features(self):
@@ -44,15 +46,16 @@ class TestEnhancements(unittest.TestCase):
         
         self.assertTrue(res["summary"].startswith("refactor(file_inspector):"))
         self.assertNotIn("### New Features", res["description"])
-        self.assertIn("### Changes & Improvements", res["description"])
+        self.assertIn("Changes & Improvements:", res["description"])
         self.assertTrue("- Updates logic in `inspect_file`" in res["description"] or '- Updates logic in "inspect_file"' in res["description"])
 
     def test_clean_description_preserves_subsections(self):
         raw = "### New Features\n- Adds Autoscroller\n\n### Changes & Improvements\n- Updates logic"
         cleaned = ai_messages._clean_description(raw, "navigation.py", [])
-        self.assertIn("### New Features", cleaned)
+        self.assertIn("New Features:", cleaned)
+        self.assertNotIn("###", cleaned)
         self.assertIn("- Adds Autoscroller", cleaned)
-        self.assertIn("### Changes & Improvements", cleaned)
+        self.assertIn("Changes & Improvements:", cleaned)
         self.assertIn("- Updates logic", cleaned)
 
     def test_subprocess_kwargs_hides_console_on_windows(self):

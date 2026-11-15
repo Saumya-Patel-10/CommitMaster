@@ -687,7 +687,7 @@ class TailscaleSetupDialog(tk.Toplevel):
         status_val = reg.get("status", "approved")
         access_type = reg.get("access_type", "permanent")
         expires_at = reg.get("expires_at")
-        admin_email = reg.get("admin", "saumya.patel.dev@gmail.com")
+        admin_email = reg.get("admin") or os.getenv("ADMIN_EMAIL") or "administrator"
 
         if status_val == "approved":
             headline = "🎉 Connected to Private Team Network!"

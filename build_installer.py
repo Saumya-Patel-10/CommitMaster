@@ -18,7 +18,7 @@ ISS_FILE = os.path.join(APP_DIR, "installer.iss")
 OUTPUT_SETUP_VERSIONED = os.path.join(DIST_DIR, "CommitMaster-Setup-v1.0.exe")
 OUTPUT_SETUP_ALIAS = os.path.join(DIST_DIR, "CommitMaster-Setup.exe")
 TEST_CERT_PFX = os.path.join(DIST_DIR, "CommitMaster-TestCert.pfx")
-TEST_CERT_PWD = "CommitMaster2026!"
+TEST_CERT_PWD = os.environ.get("MSIX_TEST_CERT_PASSWORD", "")
 
 
 def find_iscc() -> str:

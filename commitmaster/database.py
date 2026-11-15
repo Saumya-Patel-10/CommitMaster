@@ -476,7 +476,7 @@ def init_db() -> None:
             status            TEXT NOT NULL DEFAULT 'pending',
             access_type       TEXT NOT NULL DEFAULT 'temporary',
             expires_at        TEXT DEFAULT NULL,
-            approved_by       TEXT DEFAULT 'saumya.patel.dev@gmail.com',
+            approved_by       TEXT DEFAULT '',
             invite_code       TEXT DEFAULT '',
             user_id           INTEGER REFERENCES users(id) ON DELETE SET NULL,
             created_at        TEXT NOT NULL DEFAULT (datetime('now')),
@@ -496,7 +496,7 @@ def init_db() -> None:
             max_uses          INTEGER NOT NULL DEFAULT 1,
             uses_count        INTEGER NOT NULL DEFAULT 0,
             status            TEXT NOT NULL DEFAULT 'active',
-            created_by        TEXT DEFAULT 'saumya.patel.dev@gmail.com',
+            created_by        TEXT DEFAULT '',
             created_at        TEXT NOT NULL DEFAULT (datetime('now')),
             notes             TEXT DEFAULT ''
         )
@@ -518,7 +518,7 @@ def init_db() -> None:
         member_column_ddls = {
             "access_type": "ALTER TABLE network_members ADD COLUMN access_type TEXT DEFAULT 'permanent'",
             "expires_at": "ALTER TABLE network_members ADD COLUMN expires_at TEXT DEFAULT NULL",
-            "approved_by": "ALTER TABLE network_members ADD COLUMN approved_by TEXT DEFAULT 'saumya.patel.dev@gmail.com'",
+            "approved_by": "ALTER TABLE network_members ADD COLUMN approved_by TEXT DEFAULT ''",
             "invite_code": "ALTER TABLE network_members ADD COLUMN invite_code TEXT DEFAULT ''",
         }
         for col, alter_sql in member_column_ddls.items():
@@ -839,16 +839,17 @@ def get_admin_username() -> str:
 
 
 def is_admin_username(username: Optional[str]) -> bool:
-    """Check if the provided username or email is the designated admin."""
+    """True only inside the admin product, and only for the configured admin username.
+
+    The public user and demo products have no administrator identity.
+    """
     if not username:
         return False
-    u = username.strip().lower()
-    if u in ("saumya.patel.dev@gmail.com", "saumya", "admin#_$aumy@.p@tel_#"):
-        return True
+    from commitmaster import product
+    if not product.is_admin():
+        return False
     admin_name = get_admin_username().strip().lower()
-    if admin_name and u == admin_name:
-        return True
-    return False
+    return bool(admin_name) and username.strip().lower() == admin_name
 
 
 def set_admin_username(new_username: str, admin_user_id: Optional[int] = None) -> Tuple[bool, str]:
@@ -1178,26 +1179,16 @@ def _ensure_default_admin(conn: sqlite3.Connection) -> None:
     if not admin_uname:
         return
     cur = conn.cursor()
-    # Remove any generic admin user
-    cur.execute("DELETE FROM users WHERE username = 'admin'")
+    admin_email = os.getenv("ADMIN_EMAIL", "").strip()
+    admin_fullname = os.getenv("ADMIN_FULL_NAME", "").strip() or admin_uname
+    if not admin_email:
+        return
 
-    admin_email = os.getenv("ADMIN_EMAIL", "").strip() or "saumya.patel.dev@gmail.com"
-    admin_fullname = os.getenv("ADMIN_FULL_NAME", "").strip() or "Saumya Patel"
-
-    # Clean up legacy username if present and update to clean Saumya profile
-    cur.execute("SELECT id FROM users WHERE username = 'Admin#_$aumy@.P@tel_#'")
-    legacy_admin = cur.fetchone()
-    if legacy_admin:
-        cur.execute("SELECT id FROM users WHERE (email = ? OR username = 'saumya') AND id != ?", (admin_email, legacy_admin["id"]))
-        existing_target = cur.fetchone()
-        if existing_target:
-            cur.execute("DELETE FROM users WHERE id = ?", (legacy_admin["id"],))
-        else:
-            cur.execute("UPDATE users SET username = 'saumya', full_name = ?, role = 'admin', email = ? WHERE id = ?",
-                        (admin_fullname, admin_email, legacy_admin["id"]))
-
-    # Demote any other accounts claiming the admin role
-    cur.execute("UPDATE users SET role = 'user' WHERE role = 'admin' AND email != ? AND username NOT IN (?, 'saumya')", (admin_email, admin_uname))
+    # Demote any other accounts claiming the admin role. Rows are kept.
+    cur.execute(
+        "UPDATE users SET role = 'user' WHERE role = 'admin' AND email != ? AND username != ?",
+        (admin_email, admin_uname),
+    )
 
     cur.execute("SELECT id, password_hash FROM users WHERE username = ? OR email = ?", (admin_uname, admin_email))
     row = cur.fetchone()
@@ -1412,8 +1403,44 @@ def authenticate(username_or_email: str, password: str) -> Optional[Dict]:
     return None
 
 
+def _explicit_owner_id() -> Optional[int]:
+    """Owner of the in-memory or token-file session. Does not guess the latest row."""
+    token = _active_token_cache or ""
+    if not token:
+        tok_file = paths.get_token_path()
+        if os.path.exists(tok_file):
+            try:
+                import json
+                with open(tok_file, "r", encoding="utf-8") as handle:
+                    token = json.load(handle).get("token", "") or ""
+            except Exception:
+                token = ""
+    if not token:
+        return None
+    try:
+        row = get_conn().execute(
+            "SELECT user_id FROM sessions WHERE token = ? AND expires_at > datetime('now')",
+            (token,),
+        ).fetchone()
+    except Exception:
+        return None
+    return int(row["user_id"]) if row else None
+
+
+def _owner_may_read(user_id: int) -> bool:
+    from commitmaster import product
+    if product.is_admin() and _local_admin_dump_allowed():
+        return True
+    owner = _explicit_owner_id()
+    if owner is None:
+        return True
+    return owner == int(user_id)
+
+
 def get_user(user_id: int) -> Optional[Dict]:
-    """Get user by ID."""
+    """Get user by ID. A signed-in user product session cannot read another owner."""
+    if not _owner_may_read(user_id):
+        return None
     url = get_server_url()
     if url:
         try:
@@ -1589,18 +1616,30 @@ def get_user_by_username_or_email(identifier: str) -> Optional[Dict]:
     return _clean_user_dict(dict(row)) if row else None
 
 
+def _local_admin_dump_allowed() -> bool:
+    """The desktop client may not dump every user unless a test explicitly opts in."""
+    import sys
+    if getattr(sys, "frozen", False):
+        return False
+    return os.getenv("COMMITMASTER_LOCAL_ADMIN_DB") == "1"
+
+
 def get_all_users() -> List[Dict]:
-    """Get all users (admin view). Fetches row-by-row and trims sensitive fields."""
+    """List users. The user product never receives another account's row."""
+    from commitmaster import product
     url = get_server_url()
-    if url:
+    if url and product.is_admin():
         try:
             resp = requests.get(f"{url}/api/admin/users", headers=_get_api_headers(), timeout=8)
             if resp.status_code == 200:
                 users = resp.json().get("users")
                 if users is not None:
-                    return [_clean_user_dict(u) for u in users]
+                    return [_clean_user_dict(u, is_admin_viewer=True) for u in users]
+            return []
         except Exception:
-            pass
+            return []
+    if not product.is_admin() or not _local_admin_dump_allowed():
+        return []
 
     conn = get_conn()
     cur = conn.execute("""
@@ -1875,6 +1914,8 @@ def bulk_delete_users(user_ids: List[int], hard: bool = True, exclude_user_id: O
 
 def get_preferences(user_id: int) -> Optional[Dict]:
     """Get user preferences."""
+    if not _owner_may_read(user_id):
+        return None
     url = get_server_url()
     if url:
         try:
@@ -2490,6 +2531,8 @@ def delete_github_account(account_id: int, user_id: int) -> bool:
 
 def get_github_accounts(user_id: int) -> List[Dict]:
     """Get all linked GitHub accounts for a user."""
+    if not _owner_may_read(user_id):
+        return []
     conn = get_conn()
     cur = conn.execute("""
         SELECT ga.*, 

@@ -82,7 +82,7 @@ class TestNewFeatures(unittest.TestCase):
         with open(f2, "w") as f:
             f.write("content 2\n")
 
-        summary = commit_engine.stage_and_commit(self.test_dir, ["file1.txt", "file2.txt"], "feat: add both files")
+        summary = commit_engine.stage_and_commit(self.test_dir, ["file1.txt", "file2.txt"], "feat: add both files", confirmed=True)
         self.assertIn("feat: add both files", summary)
 
         # Total commits in log should be exactly 1
@@ -103,7 +103,7 @@ class TestNewFeatures(unittest.TestCase):
             ("gamma.json", "chore(config): initialize gamma schema"),
         ]
 
-        results = commit_engine.stage_and_commit_individual(self.test_dir, file_comments)
+        results = commit_engine.stage_and_commit_individual(self.test_dir, file_comments, confirmed=True)
         self.assertEqual(len(results), 3)
 
         # Verify each commit in git history
@@ -183,7 +183,7 @@ class TestNewFeatures(unittest.TestCase):
         f = os.path.join(self.test_dir, "cached.txt")
         with open(f, "w") as fp:
             fp.write("initial\n")
-        commit_engine.stage_and_commit(self.test_dir, ["cached.txt"], "init cached")
+        commit_engine.stage_and_commit(self.test_dir, ["cached.txt"], "init cached", confirmed=True)
 
         with open(f, "w") as fp:
             fp.write("modified\n")

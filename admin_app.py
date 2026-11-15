@@ -84,12 +84,19 @@ def _clear_token() -> None:
 # ── Entry point ────────────────────────────────────────────────────────────────
 
 def launch_admin_app():
-    """
-    Private administrator app. Reuses the shared sign-in/session loop from app.py,
-    but in admin mode: only the designated admin account is admitted.
-    """
-    import app
-    app.run_session_loop(admin_edition=True)
+    """Private administrator app. It does not call the public user entry point."""
+    import sys
+    from commitmaster import product
+    product.activate("admin")
+    local_tests = os.getenv("COMMITMASTER_LOCAL_ADMIN_DB") == "1" and not getattr(sys, "frozen", False)
+    if local_tests:
+        _open_admin_login()
+        return
+    from commitmaster.admin_client import prompt_server_login
+    session = prompt_server_login()
+    if not session:
+        return
+    _open_admin_window(session.get("user") or {}, admin_token=session.get("token") or "")
 
 
 
@@ -112,8 +119,9 @@ def _open_admin_login():
     win.run()
 
 
-def _open_admin_window(user: dict, on_logout: Optional[Callable] = None, on_switch_account: Optional[Callable[[Dict], None]] = None):
+def _open_admin_window(user: dict, on_logout: Optional[Callable] = None, on_switch_account: Optional[Callable[[Dict], None]] = None, admin_token: str = ""):
     app = AdminApp(user, on_logout=on_logout, on_switch_account=on_switch_account)
+    app.admin_token = admin_token
     app.run()
 
 
@@ -130,6 +138,7 @@ class AdminApp:
         self.user = user
         self.on_logout = on_logout
         self.on_switch_account = on_switch_account
+        self.admin_token = ""
 
         # Apply saved customization
         prefs = db.get_preferences(self.user["id"]) or {}
@@ -234,6 +243,58 @@ class AdminApp:
         from commitmaster import windows_integration
         windows_integration.apply_windows_theme(self.root, f"CommitMaster Admin — Workspace  ({name})", app_type="admin")
         self.root.protocol("WM_DELETE_WINDOW", self._on_close_window)
+        mode_bar = tk.Frame(self.root, bg=COLORS["bg_dark"])
+        mode_bar.pack(side="top", fill="x")
+        tk.Button(
+            mode_bar, text="Open my user workspace", command=self._open_own_user_workspace,
+            bg=COLORS["bg_medium"], fg=COLORS["text_primary"], relief="flat", padx=8, pady=4,
+        ).pack(side="left", padx=8, pady=4)
+        tk.Button(
+            mode_bar, text="Impersonate user", command=self._open_impersonation_dialog,
+            bg=COLORS["bg_medium"], fg=COLORS["text_primary"], relief="flat", padx=8, pady=4,
+        ).pack(side="left", padx=4, pady=4)
+
+    def _server_url(self) -> str:
+        return db.get_server_url()
+
+    def _open_own_user_workspace(self):
+        from commitmaster.admin_client import open_own_workspace
+        try:
+            open_own_workspace(self._server_url(), getattr(self, "admin_token", ""))
+        except Exception as exc:
+            messagebox.showerror("User workspace", str(exc), parent=self.root)
+
+    def _open_impersonation_dialog(self):
+        from commitmaster.admin_client import open_impersonation
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Impersonate user")
+        dialog.configure(bg=COLORS["bg_dark"])
+        uid = tk.StringVar()
+        reason = tk.StringVar()
+        confirm = tk.BooleanVar(value=False)
+        read_only = tk.BooleanVar(value=True)
+        tk.Label(dialog, text="User id", bg=COLORS["bg_dark"], fg="white").pack(anchor="w", padx=12, pady=(8, 0))
+        tk.Entry(dialog, textvariable=uid).pack(fill="x", padx=12)
+        tk.Label(dialog, text="Justification", bg=COLORS["bg_dark"], fg="white").pack(anchor="w", padx=12)
+        tk.Entry(dialog, textvariable=reason, width=48).pack(fill="x", padx=12)
+        tk.Checkbutton(dialog, text="I confirm this access", variable=confirm, bg=COLORS["bg_dark"], fg="white", selectcolor=COLORS["bg_dark"]).pack(anchor="w", padx=12)
+        tk.Checkbutton(dialog, text="Read only", variable=read_only, bg=COLORS["bg_dark"], fg="white", selectcolor=COLORS["bg_dark"]).pack(anchor="w", padx=12)
+
+        def go():
+            try:
+                open_impersonation(
+                    self._server_url(),
+                    getattr(self, "admin_token", ""),
+                    int(uid.get()),
+                    reason.get(),
+                    confirm.get(),
+                    read_only.get(),
+                )
+                dialog.destroy()
+            except Exception as exc:
+                messagebox.showerror("Impersonation", str(exc), parent=dialog)
+
+        tk.Button(dialog, text="Start", command=go).pack(padx=12, pady=8)
 
     def _on_reminder_commit(self):
         """Action handler when user clicks 'Review & Commit' in the bottom-right toast."""
@@ -1738,7 +1799,7 @@ class AdminApp:
             return
 
         def run_push():
-            success, msg = commit_engine.push_repo_with_account(repo_path, account)
+            success, msg = commit_engine.push_repo_with_account(repo_path, account, confirmed=True)
             if success:
                 messagebox.showinfo("Push Succeeded", msg, parent=self.root)
             else:
@@ -2136,7 +2197,7 @@ class AdminApp:
                 return
 
         def do_push():
-            ok, msg = commit_engine.push_repo_with_account(self._gd_selected_repo, account)
+            ok, msg = commit_engine.push_repo_with_account(self._gd_selected_repo, account, confirmed=True)
             def done():
                 if ok:
                     messagebox.showinfo("Push Succeeded", msg, parent=self.root)
@@ -2601,14 +2662,14 @@ class AdminApp:
                     if grp == "sensitive" or not f_list:
                         continue
                     m = msgs.get(grp, "").strip() or f"chore: update {len(f_list)} files in {repo_name}"
-                    summary_line = commit_engine.stage_and_commit(repo_path, f_list, m)
+                    summary_line = commit_engine.stage_and_commit(repo_path, f_list, m, confirmed=True)
                     db.log_commit(self.user["id"], repo_path, m, len(f_list), summary_line.split()[0] if summary_line else "")
 
                 push_ok, push_msg = False, ""
                 if acc:
-                    push_ok, push_msg = commit_engine.push_repo_with_account(repo_path, acc)
+                    push_ok, push_msg = commit_engine.push_repo_with_account(repo_path, acc, confirmed=True)
                 else:
-                    push_ok, push_msg = commit_engine.push(repo_path)
+                    push_ok, push_msg = commit_engine.push(repo_path, confirmed=True)
 
                 def _finish():
                     if push_ok:
@@ -4782,9 +4843,9 @@ class AdminApp:
                     s_conn = sqlite3.connect(db_file)
                     s_conn.execute("""
                         UPDATE network_members
-                        SET status = ?, access_type = ?, expires_at = ?, approved_by = 'saumya.patel.dev@gmail.com'
+                        SET status = ?, access_type = ?, expires_at = ?, approved_by = ?
                         WHERE id = ?
-                    """, (new_status, access_type, expires_at, member_id))
+                    """, (new_status, access_type, expires_at, os.getenv("ADMIN_EMAIL") or "administrator", member_id))
                     s_conn.commit()
                     s_conn.close()
                     updated = True
@@ -4918,8 +4979,8 @@ class AdminApp:
                         s_conn = sqlite3.connect(db_file)
                         s_conn.execute("""
                             INSERT INTO network_invites (invite_code, duration_hours, expires_at, max_uses, uses_count, status, created_by, notes)
-                            VALUES (?, ?, ?, 1, 0, 'active', 'saumya.patel.dev@gmail.com', ?)
-                        """, (code, duration, exp, note))
+                            VALUES (?, ?, ?, 1, 0, 'active', ?, ?)
+                        """, (code, duration, exp, os.getenv("ADMIN_EMAIL") or "administrator", note))
                         s_conn.commit()
                         s_conn.close()
                     except Exception:

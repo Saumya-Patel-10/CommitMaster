@@ -1,12 +1,11 @@
 """
 CommitMaster — MSIX Packaging Engine for Microsoft Store & Windows Desktop Bridge.
 ====================================================================================
-Packages CommitMaster into an official .msix installer package ready for:
-  1. Direct submission to the Microsoft Partner Center / Microsoft Store
-  2. Direct side-loading and installation on Windows 10/11 PCs
+Packages the user executable named in store_identity.json. Running this script
+does not submit anything to Partner Center. This revision was not packed.
 
 Prerequisites:
-  - dist/CommitMaster.exe (compiled via build_exe.py)
+  - dist/CommitMaster-User.exe (the user executable named in store_identity.json)
   - Windows 10/11 SDK tools (makeappx.exe, signtool.exe)
 """
 import glob
@@ -154,7 +153,7 @@ def generate_appx_manifest(identity: dict = None):
 
   <Applications>
     <Application Id="App"
-      Executable="CommitMaster.exe"
+      Executable="{identity.get('executable', 'CommitMaster-User.exe')}"
       EntryPoint="Windows.FullTrustApplication">
       <uap:VisualElements
         DisplayName="{pkg_display}"
@@ -183,20 +182,21 @@ def build_msix_package():
     print("      CommitMaster — MSIX Packaging Engine")
     print("=" * 65)
 
-    exe_src = os.path.join(DIST_DIR, "CommitMaster.exe")
+    identity = load_store_identity()
+    exe_name = identity.get("executable", "CommitMaster-User.exe")
+    exe_src = os.path.join(DIST_DIR, exe_name)
     if not os.path.exists(exe_src):
-        print(f"[INFO] '{exe_src}' not found. Compiling CommitMaster.exe first...")
+        print(f"[INFO] '{exe_src}' not found. Compiling {exe_name} first...")
         from build_exe import build_single
-        build_single("app.py", "CommitMaster", "Public User App", "icon_user.ico", "version_info.txt")
+        build_single("app.py", os.path.splitext(exe_name)[0], "Public User App", "icon_user.ico", "version_info.txt", product="user")
 
     os.makedirs(LAYOUT_DIR, exist_ok=True)
     os.makedirs(DIST_DIR, exist_ok=True)
 
-    # 1. Copy executable into layout directory
     import shutil
-    dest_exe = os.path.join(LAYOUT_DIR, "CommitMaster.exe")
+    dest_exe = os.path.join(LAYOUT_DIR, exe_name)
     shutil.copy2(exe_src, dest_exe)
-    print(f"[OK] Staged CommitMaster.exe into {LAYOUT_DIR}")
+    print(f"[OK] Staged {exe_name} into {LAYOUT_DIR}")
 
     # 2. Generate Store Visual Assets
     generate_store_assets()
@@ -238,7 +238,7 @@ def build_msix_package():
 
 TEST_CERT_PFX = os.path.join(DIST_DIR, "CommitMaster-TestCert.pfx")
 TEST_CERT_CER = os.path.join(DIST_DIR, "CommitMaster-TestCert.cer")
-TEST_CERT_PWD = "CommitMaster2026!"
+TEST_CERT_PWD = os.environ.get("MSIX_TEST_CERT_PASSWORD", "")
 
 
 def ensure_test_certificate(publisher_dn: str) -> bool:

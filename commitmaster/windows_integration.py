@@ -241,11 +241,10 @@ def register_windows_app(app_type: str = "user") -> bool:
     import subprocess
 
     try:
-        is_admin = (app_type == "admin")
-        exe_base = "CommitMaster-Admin.exe" if is_admin else "CommitMaster.exe"
-        lnk_title = "CommitMaster Admin" if is_admin else "CommitMaster"
-        desc = "CommitMaster Admin Console" if is_admin else "CommitMaster — Intelligent Git Companion"
-        ico_file = "icon_admin.ico" if is_admin else "icon_user.ico"
+        exe_base = "CommitMaster-Demo.exe" if app_type == "demo" else "CommitMaster-User.exe"
+        lnk_title = "CommitMaster Demo" if app_type == "demo" else "CommitMaster"
+        desc = "CommitMaster Demo" if app_type == "demo" else "CommitMaster — Intelligent Git Companion"
+        ico_file = "icon_user.ico"
 
         target_exe = None
         working_dir = APP_DIR
@@ -263,7 +262,7 @@ def register_windows_app(app_type: str = "user") -> bool:
                 target_exe = dist_app
                 working_dir = os.path.dirname(dist_app)
 
-        vbs_fallback = os.path.join(APP_DIR, "Launch_Admin_App.vbs" if is_admin else "Launch_CommitMaster.vbs")
+        vbs_fallback = os.path.join(APP_DIR, "Launch_CommitMaster.vbs")
         ico_path = os.path.join(APP_DIR, ico_file)
         if not os.path.exists(ico_path):
             ico_path = os.path.join(APP_DIR, "icon.ico")
@@ -348,61 +347,28 @@ def create_desktop_shortcut(target: str = "both") -> tuple[bool, str]:
     if sys.platform != "win32":
         return False, "Shortcuts can only be created on Windows."
 
-    # The public user edition never creates an administrator shortcut.
-    from commitmaster import edition as _edition
-    if not _edition.is_admin_edition():
-        target = "user"
-
+    target = "user"
     import subprocess
     app_dir = APP_DIR.replace("\\", "/")
     user_icon = os.path.join(APP_DIR, "icon_user.ico").replace("\\", "/")
-    admin_icon = os.path.join(APP_DIR, "icon_admin.ico").replace("\\", "/")
     fallback_icon = os.path.join(APP_DIR, "icon.ico").replace("\\", "/")
 
     # Check compiled executable existence
     user_exe = None
-    admin_exe = None
     if getattr(sys, "frozen", False):
         user_exe = sys.executable.replace("\\", "/")
     else:
         for candidate in [
+            os.path.expandvars(r"%LOCALAPPDATA%\Programs\CommitMaster\CommitMaster-User.exe"),
+            os.path.join(APP_DIR, "dist", "CommitMaster-User.exe"),
             os.path.expandvars(r"%LOCALAPPDATA%\Programs\CommitMaster\CommitMaster.exe"),
             os.path.join(APP_DIR, "dist", "CommitMaster.exe"),
         ]:
             if os.path.exists(candidate):
                 user_exe = candidate.replace("\\", "/")
                 break
-        for candidate in [
-            os.path.expandvars(r"%LOCALAPPDATA%\Programs\CommitMaster\CommitMaster-Admin.exe"),
-            os.path.join(APP_DIR, "dist", "CommitMaster-Admin.exe"),
-        ]:
-            if os.path.exists(candidate):
-                admin_exe = candidate.replace("\\", "/")
-                break
 
     shortcuts_to_create = []
-    if target in ("admin", "both"):
-        ico = admin_icon if os.path.exists(os.path.join(APP_DIR, "icon_admin.ico")) else fallback_icon
-        if admin_exe and os.path.exists(admin_exe):
-            shortcuts_to_create.append({
-                "name": "CommitMaster Admin",
-                "desc": "CommitMaster Admin Portal — Saumya's Private Workspace",
-                "target": admin_exe,
-                "args": "",
-                "workdir": os.path.dirname(admin_exe),
-                "icon": admin_exe,
-            })
-        else:
-            vbs_target = os.path.join(APP_DIR, "Launch_Admin_App.vbs").replace("\\", "/")
-            shortcuts_to_create.append({
-                "name": "CommitMaster Admin",
-                "desc": "CommitMaster Admin Portal — Saumya's Private Workspace",
-                "target": "wscript.exe",
-                "args": f'"{vbs_target}"',
-                "workdir": app_dir,
-                "icon": ico,
-            })
-
     if target in ("user", "both"):
         ico = user_icon if os.path.exists(os.path.join(APP_DIR, "icon_user.ico")) else fallback_icon
         if user_exe and os.path.exists(user_exe):

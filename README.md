@@ -1,6 +1,6 @@
 # CommitMaster v1.0
 
-[![Microsoft Store](https://img.shields.io/badge/Microsoft%20Store-Certified%20App-0078d4.svg?logo=windows)](https://apps.microsoft.com/)
+[![Microsoft Store](https://img.shields.io/badge/Microsoft%20Store-Not%20published%20this%20revision-lightgrey.svg?logo=windows)](https://apps.microsoft.com/)
 [![Platform Windows](https://img.shields.io/badge/platform-Windows%2011%20%7C%2010-0078d4.svg)](https://microsoft.com/windows)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![Local AI Native](https://img.shields.io/badge/AI-100%25%20Offline%20(LM%20Studio%20%7C%20Ollama%20%7C%20Bionic)-brightgreen.svg)](https://lmstudio.ai/)
@@ -8,7 +8,9 @@
 [![Security Audited](https://img.shields.io/badge/Security-20--Point%20Hardened-blue.svg)]()
 [![License MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE.txt)
 
-**CommitMaster** is an intelligent, privacy-first **Windows 11 Git companion and developer session monitor** built specifically for software engineers. Available on the **Microsoft Store**, it bridges the gap between your coding flow and your remote repositories by tracking active IDE sessions, catching uncommitted changes the moment you finish coding, validating syntax and security vulnerabilities before staging, and generating file-by-file Conventional Commits powered by **100% offline local AI**.
+**CommitMaster** is a privacy-first **Windows Git companion and developer session monitor**. This repository builds three separate programs. The public user app tracks IDE sessions, inspects changes before you commit, and can draft Conventional Commits with a local model. The private admin app and the demo app are different entry points. They do not live inside the user app.
+
+The user package keeps the existing Store identity: Name `SaumyaPatel.CommitMaster`, Publisher `CN=7522A476-A1F1-4D1A-80FA-BEFE0A4BF5F8`, version `1.1.0.0`, executable `CommitMaster-User.exe`. No MSIX for this revision has been built, and it has not been submitted to the Microsoft Store.
 
 Whether you work with VS Code, Cursor, Antigravity IDE, PyCharm, or Visual Studio, CommitMaster runs silently in the background, protects you against secret leaks, and guarantees you never lose track of what you changed.
 
@@ -16,9 +18,9 @@ Whether you work with VS Code, Cursor, Antigravity IDE, PyCharm, or Visual Studi
 
 ## 🔄 The Evolution Journey: From Prototype to Version 1.0
 
-CommitMaster evolved from a simple background tray daemon into an enterprise-grade, certified Windows desktop application. Here is how it progressed from where it started to its official **Version 1.0 Microsoft Store** release:
+CommitMaster started as a tray daemon and grew into a Windows desktop application. The table below is that history. It is not a claim that this revision is certified or listed in the Microsoft Store:
 
-| Area | Phase 1: Inception<br>*(CLI & Tray Daemon)* | Phase 2: Alpha<br>*(Local AI Desktop)* | Phase 3: Beta<br>*(Cloud & Security Hardening)* | Version 1.0<br>*(Official Microsoft Store Release)* |
+| Area | Phase 1: Inception<br>*(CLI & Tray Daemon)* | Phase 2: Alpha<br>*(Local AI Desktop)* | Phase 3: Beta<br>*(Cloud & Security Hardening)* | Version 1.0 |
 |:---|:---|:---|:---|:---|
 | **User Interface** | Flat gray Tkinter frames & system tray icon only | Basic dark UI with simple buttons | Multi-page dark layout with account switcher | **Fluent UI with 7 Procedural Canvas Textures** (Tech Dots, Circuit Mesh, Carbon Weave, Blueprint, Hexagon), custom accents & 60fps LRU caching |
 | **Notification Engine** | OS tray balloon tooltip | Windows notifications via Plyer | Single-IDE polling timer | **Independent Multi-IDE Process Tracker** (`Code.exe`, `Cursor.exe`, `Antigravity IDE.exe`, etc.) with 2s exit grace & Windows 11 crash shield |
@@ -27,7 +29,7 @@ CommitMaster evolved from a simple background tray daemon into an enterprise-gra
 | **Authentication & Auth UI**| None (local shell only) | Stretched full-width dialog | Simple SQLite password storage | **Centered Studio Auth Card (450px fixed)**, PBKDF2 600,000 iterations, 15-minute brute-force lockout & token encryption |
 | **Database Architecture** | Flat JSON file | Raw SQLite queries | SQLite with WAL mode | **Enterprise Indexed SQLite with Cursor Streaming** (`fetch_rows_iter`), zero UI lag on 10,000+ commit histories |
 | **Multi-Device & Sync** | Single machine only | Local database only | Prototype REST endpoints | **Dual-Mode Data Architecture** (Zero-config local SQLite + Central Flask REST cloud backend `server.py` with multi-device login) |
-| **Packaging & Distribution**| Raw Python source scripts | Single PyInstaller `.exe` | Portable ZIP and Win32 executable | **Official Microsoft Store MSIX Package (`CommitMaster.msix`)** + Standalone Portable EXE + Partner Center certification compliance |
+| **Packaging & Distribution**| Raw Python source scripts | Single PyInstaller `.exe` | Portable ZIP and Win32 executable | Historical `CommitMaster.exe` release. This tree builds `CommitMaster-User.exe`, `CommitMaster-Admin.exe`, and `CommitMaster-Demo.exe`. An MSIX for this split has not been built or published. |
 
 ---
 
@@ -75,11 +77,9 @@ CommitMaster evolved from a simple background tray daemon into an enterprise-gra
 - **Featured Toast Overlay**: Custom bottom-right floating notification toast with direct interactive action buttons (`Commit Now`, `Snooze`, `Dismiss`).
 - **Zero OS Duplication**: Eliminates duplicate Windows Action Center balloon popups, keeping developer notifications clean and distraction-free.
 
-### 7. 👥 Administrator Multi-Select & Bulk Account Operations
-- **Bulk Selection Control**: Select multiple user accounts via bright contrast checkboxes or by clicking anywhere on account rows.
-- **Visual Selection Feedback**: Selected rows immediately highlight in dark emerald glass with reactive hover states.
-- **Instant Bulk Operations**: Mass `Disable Selected`, `Enable Selected`, and `Delete Selected` with confirmation modals, database batch transactions, and audit logging.
-- **Admin Self-Protection**: Designated administrators and active self-accounts are strictly protected against accidental bulk disablement or deletion.
+### 7. Private admin app
+
+Account administration is not part of the public user app. There is no Admin Portal button in `app.py`. Run `admin_app.py` (or `CommitMaster-Admin.exe`) as its own process. That process can select accounts and disable, enable, or delete them, with confirmation and an audit log. The user package excludes `admin_app`, `commitmaster.admin_portal`, and `commitmaster.admin_client`.
 
 ### 8. 🐙 Multi-Account GitHub Linking & Web Sign-In
 - **Fast Web Sign-In**: Automatically launches GitHub with pre-filled scopes (`repo`, `user:email`, `read:org`, `workflow`) for instant authorization.
@@ -115,57 +115,59 @@ CommitMaster evolved from a simple background tray daemon into an enterprise-gra
 
 ---
 
-## 🚀 Getting Started
+## Three programs
 
-### Option 1: Microsoft Store Package (MSIX)
-Download directly from the **Microsoft Store** or install `CommitMaster.msix` for seamless background updates, Windows 11 sandbox isolation, and 1-click installation.
+| Program | Run from source | Windows executable | Data directory name |
+| --- | --- | --- | --- |
+| User | `python app.py` | `CommitMaster-User.exe` | `CommitMaster` |
+| Admin | `python admin_app.py` | `CommitMaster-Admin.exe` | `CommitMaster-Admin` |
+| Demo | `python demo_app.py` | `CommitMaster-Demo.exe` | `CommitMaster-Demo` |
 
-### Option 2: Standalone Portable Windows Binary
-1. Download `CommitMaster-v1.0-Windows.zip` (or `CommitMaster.exe`) from the [Latest GitHub Release](../../releases/latest).
-2. Extract the archive into any folder on your PC.
-3. Run `CommitMaster.exe` (or `Launch_CommitMaster.bat`) — no Python runtime or installer required.
-4. *SmartScreen Note*: If Windows displays a SmartScreen notice for a newly downloaded executable, click **More info** → **Run anyway**, or run `Install_Certificate.bat` once to trust the Authenticode certificate.
+The user process locks itself as `user` and cannot open the admin console. The admin process is private and is not included in the user package. The demo process uses its own data directory, refuses a production server, and does not push to GitHub remotes.
 
-### Option 3: Running from Source
+Each program keeps its own local database. Do not point the admin or demo package at the user Store identity.
+
+## Getting started from source
 
 ```powershell
-# 1. Clone the repository
 git clone https://github.com/Saumya-Patel-10/CommitMaster.git
 cd CommitMaster
-
-# 2. Create and activate a virtual environment
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
-
-# 3. Install dependencies
 pip install -r requirements.txt
-
-# 4. Launch the application
 python app.py
 ```
 
----
+Use `python admin_app.py` or `python demo_app.py` instead of `python app.py` when you mean those programs. On Linux or macOS the same three commands start the source apps. The executables below are Windows builds.
 
-## 🛠️ Building & Packaging
+The published GitHub release asset is still `CommitMaster.exe` from tag `v1.1`. That file is the older single executable and still contains the admin launch path. It is not `CommitMaster-User.exe`.
 
-CommitMaster includes build scripts to compile standalone binaries, release zip archives, and Microsoft Store packages:
+## Building
 
-### 1. Build Standalone Binaries & Release ZIPs
+On Windows, with PyInstaller installed, `python build_exe.py` builds all three executables under `dist/` and attempts Authenticode signing only when `signtool` and `MSIX_TEST_CERT_PASSWORD` are present. The same command also writes `dist/CommitMaster-v1.0-Windows.zip` and `dist/CommitMaster.zip`. Those zips store the user executable under the filename `CommitMaster.exe`. The file produced by the user build, and by CI, is `dist/CommitMaster-User.exe`. The zips are not an MSIX. CI builds each executable separately and does not sign them:
+
 ```powershell
-python build_exe.py
+python -c "from build_exe import build_single; build_single('app.py', 'CommitMaster-User', 'user', product='user')"
+python -c "from build_exe import build_single; build_single('admin_app.py', 'CommitMaster-Admin', 'admin', product='admin')"
+python -c "from build_exe import build_single; build_single('demo_app.py', 'CommitMaster-Demo', 'demo', product='demo')"
 ```
-**Outputs (`dist/`):**
-- `CommitMaster.exe` (Public User Desktop App, Digitally Signed)
-- `CommitMaster-v1.0-Windows.zip` (Public release package with unblocker launcher & cert)
-- `CommitMaster.zip` (Universal distribution archive)
-- `CommitMaster-Admin.exe` (Saumya's Private Admin Console)
 
-### 2. Build Microsoft Store MSIX Package
-```powershell
-python build_msix.py
-```
-**Output (`dist/`):**
-- `CommitMaster.msix` (Production package ready for Microsoft Partner Center submission and local testing)
+A GitHub Actions run on commit `971a6ad` produced those three unsigned executables as workflow artifacts. They were not installed on a clean machine, not attached to a GitHub Release, and not submitted to the Store.
+
+`python build_msix.py` is the user-package packager. It reads `store_identity.json` and expects `dist/CommitMaster-User.exe`. It needs `makeappx.exe`. Signing needs `signtool.exe`. Neither tool ran for this revision, so there is no `CommitMaster.msix` to install or upload. Do not treat a successful executable build as a Store publication.
+
+### Store identity
+
+Leave the user package identity unchanged:
+
+| Field | Value |
+| --- | --- |
+| Name | `SaumyaPatel.CommitMaster` |
+| Publisher | `CN=7522A476-A1F1-4D1A-80FA-BEFE0A4BF5F8` |
+| Version | `1.1.0.0` |
+| Executable | `CommitMaster-User.exe` |
+
+Admin and demo identities are in `package_layout/identities.json`. They use different package names and publishers.
 
 ---
 

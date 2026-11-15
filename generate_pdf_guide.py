@@ -260,7 +260,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       <tr>
         <td><b>Public User App</b><br><span class="badge badge-user">Public Release</span></td>
         <td>End users, developers, team members, public downloaders.</td>
-        <td><code>app.py</code><br>Compiled to: <code>CommitMaster.exe</code></td>
+        <td><code>app.py</code><br>Compiled to: <code>CommitMaster-User.exe</code></td>
         <td>Standard developer tool: AI commit messages, Git Desktop diff viewer, security inspection, local watched repositories. <i>Zero administrative controls.</i></td>
       </tr>
       <tr>
@@ -269,11 +269,17 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         <td><code>admin_app.py</code><br>Compiled to: <code>CommitMaster-Admin.exe</code></td>
         <td>Full unified operator portal: manage all user accounts, view system activity logs, analyze multi-user commit charts, configure system settings, and inspect database state.</td>
       </tr>
+      <tr>
+        <td><b>Demo App</b></td>
+        <td>Local staging only.</td>
+        <td><code>demo_app.py</code><br>Compiled to: <code>CommitMaster-Demo.exe</code></td>
+        <td>Separate data directory. Refuses a production server and does not push to GitHub remotes.</td>
+      </tr>
     </tbody>
   </table>
 
   <div class="callout callout-danger">
-    <b>CRITICAL SECURITY RULE:</b> NEVER upload <code>CommitMaster-Admin.exe</code> to the Microsoft Store or public GitHub releases. Only upload <code>CommitMaster.exe</code> for public distribution. Keep the Admin App exclusively on your private PC.
+    <b>CRITICAL SECURITY RULE:</b> NEVER upload <code>CommitMaster-Admin.exe</code> or <code>CommitMaster-Demo.exe</code> to the Microsoft Store. The public package is <code>CommitMaster-User.exe</code> only, and only after an MSIX is actually built. This revision has not been submitted. The older GitHub asset <code>CommitMaster.exe</code> still contains the admin launch path.
   </div>
 
   <h2>2. Clickable Single-Click Launchers (No Terminal Needed!)</h2>
@@ -295,7 +301,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   <div class="grid">
     <div class="card">
       <h4>⚙️ Build_All_Packages.bat</h4>
-      <p><b>One-click automated compiler.</b> Compiles both <code>CommitMaster.exe</code> (User App) and <code>CommitMaster-Admin.exe</code> (Admin App) and generates a release ZIP archive in the <code>dist/</code> folder.</p>
+      <p><b>One-click automated compiler.</b> Compiles <code>CommitMaster-User.exe</code>, <code>CommitMaster-Admin.exe</code>, and <code>CommitMaster-Demo.exe</code>. It can also write a zip that stores the user executable under the old filename <code>CommitMaster.exe</code>. That zip is not a Store package.</p>
     </div>
     <div class="card">
       <h4>📌 Desktop Shortcut Creation</h4>
@@ -360,45 +366,15 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 
   <div class="page-break"></div>
 
-  <h2>4. Publishing to the Microsoft Store</h2>
+  <h2>4. Microsoft Store status</h2>
   <p>
-    Microsoft provides two official methods to publish Win32 desktop apps to the Microsoft Store:
+    This revision has not been packed as an MSIX and has not been submitted to Partner Center.
+    Keep the user package identity exactly as stored in <code>store_identity.json</code>:
+    Name <code>SaumyaPatel.CommitMaster</code>, Publisher <code>CN=7522A476-A1F1-4D1A-80FA-BEFE0A4BF5F8</code>,
+    version <code>1.1.0.0</code>, executable <code>CommitMaster-User.exe</code>.
+    Do not submit <code>CommitMaster.exe</code> from the v1.1 GitHub release. That file still contains the admin launch path.
+    Do not submit the admin or demo executable.
   </p>
-
-  <h3>Method A: Direct Win32 (.EXE) Submission via URL (Recommended & Easiest)</h3>
-  <p>
-    Since 2021, Microsoft allows developers to submit standard Windows desktop applications directly:
-  </p>
-  <ol>
-    <li>Compile the user binary by double-clicking <code>Build_All_Packages.bat</code>.</li>
-    <li>Go to your GitHub repository and create a new Release (e.g., <code>v2.0.0</code>).</li>
-    <li>Attach <code>dist/CommitMaster.exe</code> to the GitHub Release.</li>
-    <li>In <b>Microsoft Partner Center</b>, create a new submission and choose <b>Win32 App</b>.</li>
-    <li>Enter the download URL of your GitHub release:
-      <pre>https://github.com/Saumya-Patel-10/CommitMaster/releases/download/v2.0.0/CommitMaster.exe</pre>
-    </li>
-    <li>Provide silent installer arguments: <code>/SILENT</code> or leave blank for portable exes.</li>
-    <li>Submit for certification. Microsoft's automated bots download, scan, and list the app.</li>
-  </ol>
-
-  <h3>Method B: MSIX Package via MSIX Packaging Tool (Best for Clean Sandbox)</h3>
-  <p>
-    MSIX packages install cleanly like native Windows Store apps and update automatically through the Store:
-  </p>
-  <ol>
-    <li>Install the official free <b>MSIX Packaging Tool</b> from the Microsoft Store.</li>
-    <li>Open the tool and choose <b>Application package on this computer</b>.</li>
-    <li>Select <code>dist/CommitMaster.exe</code> as the application executable.</li>
-    <li>Fill in your Package details:
-      <ul>
-        <li><b>Package Name:</b> <code>CommitMaster</code></li>
-        <li><b>Publisher:</b> <code>CN=Your-Partner-Center-Publisher-ID</code></li>
-        <li><b>Version:</b> <code>2.0.0.0</code></li>
-      </ul>
-    </li>
-    <li>Click <b>Create Package</b> &rarr; Generates <code>CommitMaster.msix</code>.</li>
-    <li>Upload <code>CommitMaster.msix</code> directly into Microsoft Partner Center.</li>
-  </ol>
 
   <h2>5. Testing on the Microsoft Store Before Public Launch</h2>
   <p>
@@ -485,8 +461,8 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   <div class="callout callout-success">
     <b>Summary Checklist:</b><br>
     ✔ <b>Run Admin App:</b> Double-click <code>Launch_Admin_App.vbs</code> on your PC (silent background launch).<br>
-    ✔ <b>Build Executables:</b> Double-click <code>Build_All_Packages.bat</code> (compiles both User & Admin binaries).<br>
-    ✔ <b>Deploy to Store:</b> Submit <code>dist/CommitMaster.exe</code> (or <code>.msix</code>) to Microsoft Partner Center.
+    ✔ <b>Build Executables:</b> <code>CommitMaster-User.exe</code>, <code>CommitMaster-Admin.exe</code>, and <code>CommitMaster-Demo.exe</code> are separate builds.<br>
+    ✔ <b>Store:</b> Not published for this revision. No MSIX was produced.
   </div>
 
 </body>

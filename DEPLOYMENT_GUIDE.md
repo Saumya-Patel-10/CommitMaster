@@ -122,8 +122,8 @@ SUCCESS: Successfully migrated user account(s)!
 ### On Any Client Device:
 1. Download or clone CommitMaster on the second Windows PC.
 2. Run `pip install -r requirements.txt`.
-3. Launch the app (`python app.py` or double-click `Launch_CommitMaster.vbs`).
-4. On the **Sign In** screen, look at the footer:
+3. Launch the public user app with `python app.py`. That process has no Admin Portal. The private admin console is `python admin_app.py`, and the demo is `python demo_app.py`.
+4. On the **Sign In** screen of the user app, look at the footer:
    - Click **"⚙ Server Settings"**.
    - Enter your Cloud Server URL: `https://your-commitmaster.onrender.com`.
    - Click **"🔌 Test Connection"** → Verify it shows `✔ Connected`.
@@ -133,32 +133,24 @@ SUCCESS: Successfully migrated user account(s)!
 
 > [!TIP]
 > **Pre-configuring for distributed users:**
-> You can also put `"server_url": "https://your-commitmaster.onrender.com"` directly inside `config.json` before building standalone `.exe` packages (`python build_exe.py`). That way, anyone who downloads the `.exe` connects to your cloud backend automatically without needing to configure anything.
+> You can also put `"server_url": "https://your-commitmaster.onrender.com"` directly inside `config.json` before building the user executable (`CommitMaster-User.exe`). Build the three executables separately, as described in `README.md`. The admin and demo packages are not the Store user package.
 
 ---
 
-## 6. 🛡️ Administrator Governance Across Devices
+## 6. Administrator access is a separate program
 
-As the Administrator (`saumya.patel`):
-- You can launch **`admin_app.py`** on **any** Windows machine.
-- Sign in with your admin credentials.
-- In **Admin Control**:
-  - View all registered users across all devices.
-  - Activate or deactivate accounts.
-  - View aggregate commit activity and security scan charts.
-  - Configure global system settings applied across the platform.
+The public user app does not open an admin portal and does not treat a username as an administrator. Administrative account controls run only in `admin_app.py` / `CommitMaster-Admin.exe`, which is a different process and a different package identity.
+
+Server admin routes require an admin-scoped session from `POST /api/admin/login` plus a TOTP code. Set `ADMIN_USERNAME`, `ADMIN_PASSWORD`, and `ADMIN_TOTP_SECRET` on the server host. They are not shipped inside the user executable. An impersonation session is separate from that admin session. This guide does not deploy the server or publish a desktop package.
 
 ---
 
-## 7. 🧪 Testing & Verification
+## 7. Tests
 
-Run the test suite to verify all cloud backend and authentication workflows:
+From the repository root:
+
 ```powershell
-# Verify cloud server & multi-device authentication workflow
-python test_cloud_server_and_auth.py
-
-# Verify core commit engine & file inspector
-python smoke_test.py
-python test_new_features.py
+python -m unittest discover -s tests -t .
 ```
-All tests pass with 100% success rate.
+
+That command is the suite. This guide does not record a pass count. Clean-machine install, Start Menu launch, MSIX packaging, and Microsoft Store submission were not run for this revision.

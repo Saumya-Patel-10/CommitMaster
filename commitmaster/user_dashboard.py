@@ -33,13 +33,13 @@ class UserDashboard:
     Full-featured user dashboard window with theme customization and
     multiple linked GitHub accounts support.
     on_logout() is called when the user chooses to log out.
-    on_admin() is called when an admin wants to open the admin portal.
+    This window has no administrative surface.
     """
 
     def __init__(self, user: Dict, on_logout: Callable, on_admin: Optional[Callable] = None, on_switch_account: Optional[Callable[[Dict], None]] = None):
         self.user = user
         self.on_logout = on_logout
-        self.on_admin = on_admin
+        self.on_admin = None  # accepted and discarded so a caller cannot attach an admin portal
         self.on_switch_account = on_switch_account
         self._active_nav = None
 
@@ -432,6 +432,22 @@ class UserDashboard:
     # ── Layout skeleton ───────────────────────────────────────────────────────
 
     def _build_layout(self):
+        mode = self.user.get("_session_mode")
+        if mode == "impersonation" or self.user.get("_session_banner"):
+            banner = tk.Frame(self.root, bg="#7f1d1d")
+            banner.pack(side="top", fill="x")
+            text = self.user.get("_session_banner") or "Impersonation session. This is not an administrator session."
+            expires = self.user.get("_session_expires") or ""
+            reason = self.user.get("_session_justification") or ""
+            tk.Label(
+                banner,
+                text=f"{text}  Expires: {expires}  Reason: {reason}",
+                fg="white",
+                bg="#7f1d1d",
+                font=("Segoe UI", 9, "bold"),
+                wraplength=900,
+                justify="left",
+            ).pack(fill="x", padx=12, pady=6)
         # Sidebar
         self._sidebar = tk.Frame(self.root, bg=COLORS["bg_sidebar"],
                                  width=SIZES["sidebar_width"])
@@ -616,9 +632,8 @@ class UserDashboard:
                  bg=COLORS["bg_sidebar"], wraplength=160)
         self._sidebar_name_lbl.pack(anchor="w", pady=(4, 0))
         self._refresh_sidebar_avatar()
-        is_admin = db.is_admin_username(self.user.get("username", "")) and self.user.get("role") == "admin"
-        role_tag = "● Admin" if is_admin else "● User"
-        role_color = COLORS["admin"] if is_admin else COLORS["success"]
+        role_tag = "● User"
+        role_color = COLORS["success"]
         tk.Label(av_f, text=role_tag, font=FONTS["caption"],
                  fg=role_color, bg=COLORS["bg_sidebar"]).pack(anchor="w")
 
@@ -636,8 +651,6 @@ class UserDashboard:
             ("⚙️",  "Settings",       "settings"),
             ("👤", "My Profile",      "profile"),
         ]
-        if is_admin:
-            nav_items.append(("🛡", "Admin Portal", "admin"))
 
         self._nav_buttons = {}
         self._nav_order = [k for _, _, k in nav_items if k != "admin"]
@@ -703,8 +716,7 @@ class UserDashboard:
             self._nav_to(key, record=False)
 
     def _nav_to(self, key: str, record: bool = True):
-        if key == "admin" and self.on_admin:
-            self.on_admin()
+        if key == "admin":
             return
         navigation.set_active_nav(self._nav_buttons, key)
         self._active_nav = key
@@ -2760,8 +2772,7 @@ class UserDashboard:
 
     def _create_desktop_shortcuts(self):
         from commitmaster import windows_integration
-        target = "both" if self.user.get("role") == "admin" else "user"
-        ok, msg = windows_integration.create_desktop_shortcut(target)
+        ok, msg = windows_integration.create_desktop_shortcut("user")
         if ok:
             messagebox.showinfo(
                 "Shortcuts Created",
@@ -3486,7 +3497,7 @@ class UserDashboard:
             return
 
         def run_push():
-            success, msg = commit_engine.push_repo_with_account(repo_path, account)
+            success, msg = commit_engine.push_repo_with_account(repo_path, account, confirmed=True)
             if success:
                 messagebox.showinfo("Push Succeeded", msg, parent=self.root)
             else:
@@ -3892,7 +3903,7 @@ class UserDashboard:
                 return
 
         def do_push():
-            ok, msg = commit_engine.push_repo_with_account(self._gd_selected_repo, account)
+            ok, msg = commit_engine.push_repo_with_account(self._gd_selected_repo, account, confirmed=True)
             def done():
                 if ok:
                     messagebox.showinfo("Push Succeeded", msg, parent=self.root)
@@ -4368,14 +4379,14 @@ class UserDashboard:
                     if grp == "sensitive" or not f_list:
                         continue
                     m = msgs.get(grp, "").strip() or f"chore: update {len(f_list)} files in {repo_name}"
-                    summary_line = commit_engine.stage_and_commit(repo_path, f_list, m)
+                    summary_line = commit_engine.stage_and_commit(repo_path, f_list, m, confirmed=True)
                     db.log_commit(self.user["id"], repo_path, m, len(f_list), summary_line.split()[0] if summary_line else "")
 
                 push_ok, push_msg = False, ""
                 if acc:
-                    push_ok, push_msg = commit_engine.push_repo_with_account(repo_path, acc)
+                    push_ok, push_msg = commit_engine.push_repo_with_account(repo_path, acc, confirmed=True)
                 else:
-                    push_ok, push_msg = commit_engine.push(repo_path)
+                    push_ok, push_msg = commit_engine.push(repo_path, confirmed=True)
 
                 def _finish():
                     if push_ok:

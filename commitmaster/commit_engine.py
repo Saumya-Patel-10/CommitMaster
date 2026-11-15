@@ -17,8 +17,7 @@ from commitmaster.logger import get
 log = get("commit_engine")
 
 
-class GitError(Exception):
-    pass
+from commitmaster.git_safety import GitError
 
 
 def _subprocess_kwargs() -> dict:
@@ -37,6 +36,10 @@ def _subprocess_kwargs() -> dict:
 
 def git(repo_path: str, *args, timeout: int = 30) -> str:
     """Run a git command inside repo_path and return stdout silently in background."""
+    if any(arg == "--no-verify" or arg in ("--force", "--force-with-lease") for arg in args):
+        raise GitError("refusing hook bypass or force push")
+    if args and args[0] == "push" and any(arg == "-f" or str(arg).startswith("+") for arg in args[1:]):
+        raise GitError("refusing force push")
     cmd = ["git", "-C", repo_path, *args]
     log.debug("git %s", " ".join(args))
     try:
@@ -382,22 +385,12 @@ def sanitize_commit_message(message: str) -> str:
         return headline
 
 
-def stage_and_commit(repo_path: str, files: List[str], message: str) -> str:
-    """Stage specific files and create one commit.  Returns commit summary."""
-    if not files:
-        raise GitError("Nothing to stage")
-    # Clean staging index first so only intended files are committed
-    try:
-        git(repo_path, "reset")
-    except GitError:
-        pass
-    # Chunk the adds — very long arg lists can hit OS command-line limits.
-    for i in range(0, len(files), 40):
-        git(repo_path, "add", "-A", "--", *files[i:i + 40])
-    clean_message = sanitize_commit_message(message) or message.strip()
-    git(repo_path, "commit", "-m", clean_message)
+def stage_and_commit(repo_path: str, files: List[str], message: str, *, confirmed: bool = False) -> str:
+    """Commit exactly the named files after the caller has confirmed that preview."""
+    from commitmaster import git_safety
+    clean_message = sanitize_commit_message(message) or (message or "").strip()
+    summary = git_safety.commit_authorized(repo_path, files, clean_message, confirmed=confirmed)
     invalidate_changes_cache(repo_path)
-    summary = git(repo_path, "log", "-1", "--oneline").strip()
     log.info("Committed in %s: %s", repo_name(repo_path), summary)
     return summary
 
@@ -405,39 +398,27 @@ def stage_and_commit(repo_path: str, files: List[str], message: str) -> str:
 def stage_and_commit_individual(
     repo_path: str,
     file_comments: List[Tuple[str, str]],
+    *,
+    confirmed: bool = False,
 ) -> List[Dict[str, str]]:
     """
-    Commit each file individually with its own dedicated commit comment.
-    file_comments: list of (file_path, comment_message)
-    Returns list of dicts: {"file": path, "hash": hash, "summary": summary, "message": message}
+    Commit each named file with its own message.
+    The real index is not reset. A missing confirmation refuses the whole batch.
     """
+    if not confirmed:
+        raise GitError("Commit refused until the exact file list is previewed and confirmed.")
     if not file_comments:
         raise GitError("No files specified for individual commits.")
 
-    # Unstage any previously staged files
-    try:
-        git(repo_path, "reset")
-    except GitError:
-        pass
-
+    from commitmaster import git_safety
     results: List[Dict[str, str]] = []
     failures: List[str] = []
     for file_path, msg in file_comments:
         clean_msg = sanitize_commit_message(msg) or (msg or "").strip() or f"chore: update {os.path.basename(file_path)}"
         try:
-            # Stage only this specific file (handles additions, modifications, and deletions)
-            git(repo_path, "add", "-A", "--", file_path)
-            staged = git(repo_path, "diff", "--cached", "--name-only").strip()
-            if not staged:
-                log.debug("No staged changes for %s; skipping commit.", file_path)
-                continue
-            git(repo_path, "commit", "-m", clean_msg)
+            git_safety.commit_authorized(repo_path, [file_path], clean_msg, confirmed=True)
         except GitError as exc:
             failures.append(f"{file_path}: {exc}")
-            try:
-                git(repo_path, "reset", "-q", "--", file_path)   # leave nothing half-staged
-            except GitError:
-                pass
             continue
         summary = git(repo_path, "log", "-1", "--oneline").strip()
         commit_hash = summary.split()[0] if summary else ""
@@ -539,33 +520,23 @@ def push_repo_with_account(
     remote: str = "origin",
     branch: Optional[str] = None,
     timeout: int = 60,
-) -> Tuple[bool, str]:
+    *,
+    confirmed: bool = False,
+    acknowledge_uncertain: bool = False,
+) -> "git_safety.PushResult":
     """
-    Push current or specified branch to remote using the given linked GitHub account.
-    Authenticates securely using PAT without exposing token in git configs or process logs.
-    Returns (success: bool, message: str).
+    Push the named branch. The token is passed to git through a short-lived
+    askpass helper, not through the remote URL or the command line.
     """
-    token = account.get("github_token", "").strip()
-    if not token:
-        return False, "Selected GitHub account does not have a Personal Access Token (PAT)."
-
+    from commitmaster import git_safety
+    token = (account.get("github_token") or "").strip()
     branch = branch or current_branch(repo_path)
     if not branch or branch == "unknown":
-        return False, "Could not determine current git branch."
-
-    remote_url = get_remote_url(repo_path, remote)
-    if not remote_url:
-        return False, f"Remote '{remote}' not found in {repo_name(repo_path)}."
-
-    slug = parse_github_slug(remote_url)
-    if not slug:
-        return False, f"Remote URL '{remote_url}' is not recognized as a GitHub repository."
-
-    # Construct authenticated HTTPS target
-    username = account.get("github_username", "").strip() or "x-access-token"
-    auth_url = f"https://{username}:{token}@github.com/{slug}.git"
-
-    # Configure local author identity if provided
+        return git_safety.PushResult("failed", "Could not determine current git branch.")
+    remote_url = get_remote_url(repo_path, remote) or ""
+    slug = parse_github_slug(remote_url) if remote_url else None
+    if token and not slug:
+        return git_safety.PushResult("failed", f"Remote URL '{remote_url}' is not recognized as a GitHub repository.")
     author_name = account.get("author_name", "")
     author_email = account.get("author_email", "")
     if author_name or author_email:
@@ -573,54 +544,38 @@ def push_repo_with_account(
             configure_author_identity(repo_path, author_name, author_email)
         except Exception as exc:
             log.warning("Could not set git author identity: %s", exc)
-
-    cmd = ["git", "-C", repo_path, "-c", "credential.helper=", "push", "-u", auth_url, branch]
-    log.info("Pushing %s (%s) to %s via @%s", repo_name(repo_path), branch, slug, username)
-
-    try:
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-            encoding="utf-8",
-            errors="replace",
-            **_subprocess_kwargs(),
-        )
-    except FileNotFoundError:
-        return False, "git executable not found on PATH."
-    except subprocess.TimeoutExpired:
-        return False, f"git push timed out after {timeout} seconds."
-
-    # Scrub token from outputs before logging or returning
-    stdout = result.stdout.replace(token, "[TOKEN_REDACTED]")
-    stderr = result.stderr.replace(token, "[TOKEN_REDACTED]")
-
-    if result.returncode == 0:
-        msg = stdout.strip() or stderr.strip() or f"Pushed successfully to {slug} ({branch})"
-        log.info("Push succeeded for %s: %s", repo_name(repo_path), msg)
-        return True, f"Successfully pushed to GitHub ({slug}) on branch '{branch}' via @{username}!"
-    else:
-        err_msg = stderr.strip() or stdout.strip() or "git push failed"
-        log.warning("Push failed for %s: %s", repo_name(repo_path), err_msg)
-        return False, err_msg
+    username = (account.get("github_username") or "").strip() or "x-access-token"
+    safe_url = f"https://github.com/{slug}.git" if slug else remote_url
+    result = git_safety.push_authorized(
+        repo_path,
+        remote if not token else safe_url,
+        branch,
+        confirmed=confirmed,
+        username=username if token else "",
+        token=token,
+        remote_url=safe_url or remote_url,
+        acknowledge_uncertain=acknowledge_uncertain,
+        timeout=timeout,
+    )
+    if token and token in result.message:
+        result = git_safety.PushResult(result.outcome, result.message.replace(token, "[REDACTED]"))
+    log.info("Push %s for %s: %s", result.outcome, repo_name(repo_path), result.message)
+    return result
 
 
-def push(repo_path: str, remote: str = "origin", branch: Optional[str] = None) -> Tuple[bool, str]:
-    """Push branch to remote using standard git CLI (supports SSH/Git Credential Manager)."""
-    b = branch or current_branch(repo_path)
-    try:
-        out = git(repo_path, "push", remote, b)
-        return True, out or f"Pushed successfully to {remote} ({b})"
-    except GitError as exc:
-        err_str = str(exc)
-        if "set-upstream" in err_str or "has no upstream" in err_str:
-            try:
-                out = git(repo_path, "push", "-u", remote, b)
-                return True, out or f"Pushed successfully to {remote} ({b})"
-            except GitError as exc2:
-                return False, str(exc2)
-        return False, err_str
+def push(repo_path: str, remote: str = "origin", branch: Optional[str] = None, *, confirmed: bool = False, acknowledge_uncertain: bool = False) -> "git_safety.PushResult":
+    """Push branch to remote. Force push is refused. Outcome is never a silent success."""
+    from commitmaster import git_safety
+    branch_name = branch or current_branch(repo_path)
+    remote_url = get_remote_url(repo_path, remote) or remote
+    return git_safety.push_authorized(
+        repo_path,
+        remote,
+        branch_name,
+        confirmed=confirmed,
+        remote_url=remote_url,
+        acknowledge_uncertain=acknowledge_uncertain,
+    )
 
 
 # ── File classification ───────────────────────────────────────────────────────
@@ -1057,21 +1012,33 @@ def clone_repo(clone_url: str, target_dir: str, account: Optional[Dict] = None) 
     
     url = clone_url
     token = account.get("github_token", "").strip() if account else ""
+    env = os.environ.copy()
+    askpass = ""
     if token and "github.com" in url:
+        from commitmaster import git_safety
         slug = parse_github_slug(url)
         if slug:
-            username = account.get("github_username", "x-access-token")
-            url = f"https://{username}:{token}@github.com/{slug}.git"
+            url = f"https://github.com/{slug}.git"
+        askpass = git_safety._askpass_script()
+        env["GIT_ASKPASS"] = askpass
+        env["GIT_TERMINAL_PROMPT"] = "0"
+        env["CM_GIT_USERNAME"] = (account.get("github_username") or "").strip() or "x-access-token"
+        env["CM_GIT_TOKEN"] = token
 
     cmd = ["git", "clone", url, target_dir]
     try:
         result = subprocess.run(
             cmd, capture_output=True, text=True, timeout=120, encoding="utf-8", errors="replace",
-            **_subprocess_kwargs(),
+            env=env, **_subprocess_kwargs(),
         )
         if result.returncode == 0:
             return True, f"Successfully cloned into {target_dir}."
-        err = result.stderr.replace(token, "[REDACTED]") if token else result.stderr
-        return False, err.strip() or "git clone failed"
+        return False, (result.stderr or "git clone failed").strip()
     except Exception as exc:
         return False, str(exc)
+    finally:
+        if askpass:
+            try:
+                os.remove(askpass)
+            except OSError:
+                pass
