@@ -21,9 +21,11 @@ from commitmaster.logger import get
 
 log = get("database")
 
-# Database file path (always persistent, never in temporary _MEIPASS)
+# Database file path (always persistent, never in temporary _MEIPASS).
+# DB_PATH follows the active product unless a caller assigns another file.
 APP_DIR = paths.get_data_dir()
 DB_PATH = paths.get_db_path()
+_synced_db_path = DB_PATH
 
 _local = threading.local()
 _active_token_cache: Optional[str] = None
@@ -219,9 +221,25 @@ def _cache_user_locally(user: Dict, password: Optional[str] = None) -> None:
 
 
 def get_conn() -> sqlite3.Connection:
-    """Get a thread-local database connection."""
-    if not hasattr(_local, "conn") or _local.conn is None:
-        _local.conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+    """Get a thread-local database connection for this product's data directory.
+
+    The connection follows paths.get_db_path() when the product directory
+    changes. Assigning DB_PATH to another file keeps that file until it is
+    assigned back; the unit tests use that for an isolated database.
+    """
+    global DB_PATH, _synced_db_path
+    if DB_PATH != _synced_db_path:
+        db_path = DB_PATH
+    else:
+        db_path = paths.get_db_path()
+        DB_PATH = db_path
+        _synced_db_path = db_path
+    if getattr(_local, "conn", None) is not None and getattr(_local, "db_path", None) != db_path:
+        close_conn()
+    if getattr(_local, "conn", None) is None:
+        os.makedirs(os.path.dirname(db_path) or ".", exist_ok=True)
+        _local.conn = sqlite3.connect(db_path, check_same_thread=False)
+        _local.db_path = db_path
         _local.conn.row_factory = sqlite3.Row
         _local.conn.execute("PRAGMA journal_mode=WAL")
         _local.conn.execute("PRAGMA foreign_keys=ON")
@@ -1147,7 +1165,7 @@ def _get_admin_initial_password() -> str:
     env_pw = os.getenv("ADMIN_PASSWORD", "").strip()
     if env_pw:
         return env_pw
-    secret_file = os.path.join(os.path.dirname(DB_PATH), ".admin_initial_secret")
+    secret_file = os.path.join(paths.get_data_dir(), ".admin_initial_secret")
     if os.path.exists(secret_file):
         try:
             with open(secret_file, "r", encoding="utf-8") as f:

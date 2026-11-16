@@ -1,25 +1,42 @@
 """
 CommitMaster — Path Resolution & Persistent Storage Management.
 =================================================================
-Centralizes persistent application data paths to prevent data loss across
-frozen PyInstaller one-file runs, updates, and environment changes.
+Each product keeps its own database, config, and logs:
 
-Guarantees:
-  1. commitmaster.db, accounts, sessions, config, and logs ALWAYS persist in a
-     permanent directory (%LOCALAPPDATA%\\CommitMaster or workspace repo).
-  2. NEVER writes or reads persistent state from PyInstaller's temporary
-     sys._MEIPASS directory (which Windows deletes when the app closes).
-  3. Seamless auto-sync between workspace repository and %LOCALAPPDATA%\\CommitMaster
-     so user history and commit records are never lost.
+  user   %LOCALAPPDATA%\\CommitMaster
+  admin  %LOCALAPPDATA%\\CommitMaster-Admin
+  demo   %LOCALAPPDATA%\\CommitMaster-Demo
+
+A workspace checkout that still contains commitmaster.db is not the runtime
+data directory. The user product may copy that database once into its own
+empty folder. Admin and demo never receive it.
+
+COMMITMASTER_DATA_DIR is a root. Each product uses a child folder named for
+that product, unless the path already ends in its own folder. A path that
+ends in another product's folder is refused.
+
+Persistent state is never read or written under PyInstaller's _MEIPASS.
 """
 import os
 import shutil
 import sys
-from typing import Optional
 
-# Base workspace directory (c:\Data\Saumya\Projects\CommitMaster)
+# Base workspace directory (the repository that contains this package).
 _THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 _WORKSPACE_DIR = os.path.dirname(_THIS_DIR)
+
+# Copied once, and only into an empty user folder. Session tokens and admin
+# secrets stay where they are.
+_USER_COPY_FILES = (
+    "commitmaster.db",
+    "config.json",
+    ".commitmaster_accounts.json",
+    "commitmaster.log",
+)
+
+
+class DataDirectoryError(RuntimeError):
+    """Raised when a product is pointed at another product's data directory."""
 
 
 def get_app_dir() -> str:
@@ -30,70 +47,78 @@ def get_app_dir() -> str:
     return getattr(sys, "_MEIPASS", _WORKSPACE_DIR)
 
 
-def get_data_dir() -> str:
-    """
-    Return the persistent writable data directory for database, config, tokens, and logs.
-    NEVER returns a temporary _MEIPASS folder.
-    """
-    # 1. Explicit override via environment variable
-    env_dir = os.getenv("COMMITMASTER_DATA_DIR", "").strip()
-    if env_dir:
-        os.makedirs(env_dir, exist_ok=True)
-        return env_dir
-
-    local_app_data = os.getenv("LOCALAPPDATA") or os.path.expanduser("~")
+def _own_folder_name() -> str:
     try:
         from commitmaster import product as _product
-        folder_name = _product.data_dir_name()
+        return _product.data_dir_name()
     except Exception:
-        folder_name = "CommitMaster"
-    local_commitmaster_dir = os.path.join(local_app_data, folder_name)
+        return "CommitMaster"
 
-    # 2. Check if running directly in or alongside workspace repository
-    # Workspace repo has the authentic commitmaster.db
+
+def _product_folder_names() -> dict:
+    try:
+        from commitmaster.product import DATA_DIR_NAMES
+        return dict(DATA_DIR_NAMES)
+    except Exception:
+        return {"user": "CommitMaster", "admin": "CommitMaster-Admin", "demo": "CommitMaster-Demo"}
+
+
+def _foreign_folder(path: str, own_name: str) -> str:
+    """Return another product's folder name when `path` points at that folder."""
+    base = os.path.basename(os.path.normpath(path))
+    for name in _product_folder_names().values():
+        if base == name and name != own_name:
+            return name
+    return ""
+
+
+def resolve_data_dir(env_dir: str, own_name: str) -> str:
+    """Map an override root onto this product's folder, or refuse a foreign one."""
+    foreign = _foreign_folder(env_dir, own_name)
+    if foreign:
+        raise DataDirectoryError(
+            f"This product stores data in {own_name} and refuses {foreign}."
+        )
+    base = os.path.basename(os.path.normpath(env_dir))
+    if base == own_name:
+        return os.path.normpath(env_dir)
+    return os.path.normpath(os.path.join(env_dir, own_name))
+
+
+def _copy_user_workspace_once(dest: str) -> None:
+    """Copy the workspace database into an empty user folder. Never copies secrets."""
+    if os.path.exists(os.path.join(dest, "commitmaster.db")):
+        return
     workspace_db = os.path.join(_WORKSPACE_DIR, "commitmaster.db")
-    if not getattr(sys, "frozen", False) and os.path.exists(workspace_db):
-        # We are in the workspace repo (either source or running in repo/dist)
-        # Also ensure %LOCALAPPDATA%\CommitMaster is initialized as a backup
-        try:
-            os.makedirs(local_commitmaster_dir, exist_ok=True)
-            for fname in ["commitmaster.db", "server_commitmaster.db", ".commitmaster_accounts.json", ".session_token", ".admin_session", ".admin_initial_secret", "config.json", "commitmaster.log"]:
-                src = os.path.join(_WORKSPACE_DIR, fname)
-                dst = os.path.join(local_commitmaster_dir, fname)
-                if os.path.exists(src) and not os.path.exists(dst):
-                    shutil.copy2(src, dst)
-        except Exception:
-            pass
-        return _WORKSPACE_DIR
+    if not os.path.isfile(workspace_db):
+        return
+    for fname in _USER_COPY_FILES:
+        src = os.path.join(_WORKSPACE_DIR, fname)
+        dst = os.path.join(dest, fname)
+        if os.path.isfile(src) and not os.path.exists(dst):
+            shutil.copy2(src, dst)
 
-    # 3. If running frozen from outside workspace repo
-    if getattr(sys, "frozen", False):
-        exe_dir = os.path.dirname(os.path.abspath(sys.executable))
-        # If running from dist/ inside workspace (and not packaged in WindowsApps / Program Files)
-        if not any(p in exe_dir.lower() for p in ["windowsapps", "program files"]):
-            candidate_repo = os.path.dirname(exe_dir)
-            candidate_db = os.path.join(candidate_repo, "commitmaster.db")
-            if os.path.exists(candidate_db) and os.access(candidate_repo, os.W_OK):
-                return candidate_repo
 
-    # 4. Standard Windows persistent application data directory
-    os.makedirs(local_commitmaster_dir, exist_ok=True)
-    local_db = os.path.join(local_commitmaster_dir, "commitmaster.db")
-    # If local_db doesn't exist but workspace has it, copy it over!
-    # (Developer convenience only: never for packaged builds, which must start clean
-    # with no inherited database, accounts or session tokens.)
-    if (not getattr(sys, "frozen", False)) and not os.path.exists(local_db) and os.path.exists(workspace_db):
-        try:
-            shutil.copy2(workspace_db, local_db)
-            for fname in ["commitmaster.db", "server_commitmaster.db", ".commitmaster_accounts.json", ".session_token", ".admin_session", ".admin_initial_secret", "config.json", "commitmaster.log"]:
-                src = os.path.join(_WORKSPACE_DIR, fname)
-                dst = os.path.join(local_commitmaster_dir, fname)
-                if os.path.exists(src) and not os.path.exists(dst):
-                    shutil.copy2(src, dst)
-        except Exception:
-            pass
+def get_data_dir() -> str:
+    """
+    Return this product's persistent data directory.
+    Never returns _MEIPASS and never returns another product's folder.
+    """
+    own_name = _own_folder_name()
+    env_dir = os.getenv("COMMITMASTER_DATA_DIR", "").strip()
+    if env_dir:
+        dest = resolve_data_dir(env_dir, own_name)
+        os.makedirs(dest, exist_ok=True)
+        return dest
 
-    return local_commitmaster_dir
+    local_app_data = os.getenv("LOCALAPPDATA") or os.path.expanduser("~")
+    dest = os.path.join(local_app_data, own_name)
+    os.makedirs(dest, exist_ok=True)
+    # Frozen and packaged builds start empty. Source runs may seed the user
+    # folder once from a workspace database that predates the split.
+    if own_name == "CommitMaster" and not getattr(sys, "frozen", False):
+        _copy_user_workspace_once(dest)
+    return dest
 
 
 def get_db_path() -> str:

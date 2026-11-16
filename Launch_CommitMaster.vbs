@@ -6,24 +6,32 @@ WshShell.CurrentDirectory = currentDir
 
 ' Ensure Desktop shortcut exists with official custom icon
 desktopPath = WshShell.SpecialFolders("Desktop")
-shortcutPath = desktopPath & "\CommitMaster.lnk"
+shortcutPath = desktopPath & "\CommitMaster User.lnk"
 If Not fso.FileExists(shortcutPath) Then
     On Error Resume Next
     Set oLink = WshShell.CreateShortcut(shortcutPath)
     oLink.TargetPath = "wscript.exe"
     oLink.Arguments = """" & WScript.ScriptFullName & """"
     oLink.WorkingDirectory = currentDir
-    oLink.Description = "CommitMaster Desktop Application"
-    If fso.FileExists(currentDir & "\icon.ico") Then
-        oLink.IconLocation = currentDir & "\icon.ico, 0"
+    oLink.Description = "CommitMaster User"
+    If fso.FileExists(currentDir & "\icon_user.ico") Then
+        oLink.IconLocation = currentDir & "\icon_user.ico, 0"
+    ElseIf fso.FileExists(currentDir & "\assets\icon_user.ico") Then
+        oLink.IconLocation = currentDir & "\assets\icon_user.ico, 0"
     End If
     oLink.Save
     On Error GoTo 0
 End If
 
 ' If compiled native executable exists, launch it directly so Task Manager shows CommitMaster!
-exePath = currentDir & "\dist\CommitMaster.exe"
-installedExe = WshShell.ExpandEnvironmentStrings("%LOCALAPPDATA%\Programs\CommitMaster\CommitMaster.exe")
+exePath = currentDir & "\dist\CommitMaster-User.exe"
+If Not fso.FileExists(exePath) Then
+    exePath = currentDir & "\dist\CommitMaster.exe"
+End If
+installedExe = WshShell.ExpandEnvironmentStrings("%LOCALAPPDATA%\Programs\CommitMaster\CommitMaster-User.exe")
+If Not fso.FileExists(installedExe) Then
+    installedExe = WshShell.ExpandEnvironmentStrings("%LOCALAPPDATA%\Programs\CommitMaster\CommitMaster.exe")
+End If
 If fso.FileExists(exePath) Then
     WshShell.Run """" & exePath & """", 1, False
     WScript.Quit

@@ -88,6 +88,12 @@ def launch_admin_app():
     import sys
     from commitmaster import product
     product.activate("admin")
+    try:
+        from commitmaster import windows_integration
+        windows_integration.init_app_user_model_id("admin")
+        windows_integration.register_windows_app("admin")
+    except Exception:
+        pass
     local_tests = os.getenv("COMMITMASTER_LOCAL_ADMIN_DB") == "1" and not getattr(sys, "frozen", False)
     if local_tests:
         _open_admin_login()

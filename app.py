@@ -145,8 +145,9 @@ def run_session_loop(handoff: dict | None = None) -> None:
     try:
         from commitmaster import windows_integration
         windows_integration.set_dpi_awareness()
-        windows_integration.init_app_user_model_id("demo" if product.is_demo() else "unified")
-        windows_integration.register_windows_app("user")
+        edition_name = "demo" if product.is_demo() else "user"
+        windows_integration.init_app_user_model_id(edition_name)
+        windows_integration.register_windows_app(edition_name)
 
         db.init_db()
 
@@ -162,7 +163,7 @@ def run_session_loop(handoff: dict | None = None) -> None:
                 def on_login_success(u: dict):
                     auth_result["user"] = u
 
-                win = LoginWindow(on_success=on_login_success, app_type="user")
+                win = LoginWindow(on_success=on_login_success, app_type="demo" if product.is_demo() else "user")
                 win.run()
 
                 current_user = auth_result["user"] or getattr(win, "authenticated_user", None)
