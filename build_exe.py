@@ -182,7 +182,7 @@ def main():
         target_script="demo_app.py",
         exe_name="CommitMaster-Demo",
         description="3/3: Demo / Staging App",
-        icon_file="icon_user.ico",
+        icon_file="icon_demo.ico",
         version_file="version_info.txt",
         product="demo",
     )

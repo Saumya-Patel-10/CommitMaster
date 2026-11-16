@@ -151,7 +151,6 @@ class UserDashboard:
 
     def _setup_window(self):
         name = self.user.get("full_name") or self.user["username"]
-        self.root.title(f"CommitMaster — {name}")
         self.root.resizable(True, True)
         self.root.minsize(960, 620)
         self.root.configure(bg=COLORS["bg_darkest"])
@@ -166,8 +165,12 @@ class UserDashboard:
         w = min(1200, max(960, sw - 60))
         h = min(780, max(620, sh - 70))
         self.root.geometry(f"{w}x{h}+{(sw - w)//2}+{(sh - h)//2}")
+        from commitmaster import product
         from commitmaster import windows_integration
-        windows_integration.apply_windows_theme(self.root, f"CommitMaster — {name}", app_type="user")
+        shell = "demo" if product.is_demo() else "user"
+        title = f"CommitMaster Demo — {name}" if shell == "demo" else f"CommitMaster — {name}"
+        self.root.title(title)
+        windows_integration.apply_windows_theme(self.root, title, app_type=shell)
         self.root.protocol("WM_DELETE_WINDOW", self._on_close_window)
 
         # Handle window minimize to taskbar notification panel
@@ -2771,8 +2774,9 @@ class UserDashboard:
         self._add_hover(save_btn, COLORS["accent_hover"], COLORS["accent"])
 
     def _create_desktop_shortcuts(self):
+        from commitmaster import product
         from commitmaster import windows_integration
-        ok, msg = windows_integration.create_desktop_shortcut("user")
+        ok, msg = windows_integration.create_desktop_shortcut("demo" if product.is_demo() else "user")
         if ok:
             messagebox.showinfo(
                 "Shortcuts Created",

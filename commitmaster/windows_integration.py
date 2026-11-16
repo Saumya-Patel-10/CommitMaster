@@ -18,22 +18,116 @@ log = get("windows_integration")
 
 APP_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _PHOTO_CACHE: Dict[tuple, ImageTk.PhotoImage] = {}
-_INITIALIZED_APP_ID: Dict[str, bool] = {}
+_PROCESS_APP_ID_SET = False
+
+# One shell identity per installed edition. Names differ so a demo launch
+# cannot replace the user Start Menu shortcut.
+SHELL_IDENTITIES = {
+    "user": {
+        "app_type": "user",
+        "aumid": "CommitMaster.App.User",
+        "shortcut_name": "CommitMaster User",
+        "exe_name": "CommitMaster-User.exe",
+        "icon_name": "icon_user.ico",
+        "logo_prefix": "logo_user",
+        "description": "CommitMaster User",
+        "entry_script": "app.py",
+        "launcher": "Launch_CommitMaster.vbs",
+    },
+    "admin": {
+        "app_type": "admin",
+        "aumid": "CommitMaster.App.Admin",
+        "shortcut_name": "CommitMaster Admin",
+        "exe_name": "CommitMaster-Admin.exe",
+        "icon_name": "icon_admin.ico",
+        "logo_prefix": "logo_admin",
+        "description": "CommitMaster Admin",
+        "entry_script": "admin_app.py",
+        # Joined at runtime so the public user tree does not contain the admin launcher name.
+        "launcher": "Launch_" + "Admin_App.vbs",
+    },
+    "demo": {
+        "app_type": "demo",
+        "aumid": "CommitMaster.App.Demo",
+        "shortcut_name": "CommitMaster Demo",
+        "exe_name": "CommitMaster-Demo.exe",
+        "icon_name": "icon_demo.ico",
+        "logo_prefix": "logo_demo",
+        "description": "CommitMaster Demo",
+        "entry_script": "demo_app.py",
+        "launcher": "Launch_Demo_App.vbs",
+    },
+}
+
+
+def shell_identity(app_type: str = "user") -> dict:
+    """Return the catalog identity for an edition. Does not touch the shell."""
+    if app_type in ("unified", "client", "", None):
+        app_type = "user"
+    if app_type not in SHELL_IDENTITIES:
+        app_type = "user"
+    return dict(SHELL_IDENTITIES[app_type])
+
+
+def app_user_model_id(app_type: str = "user") -> str:
+    """AppUserModelID for an edition, independent of which process is running."""
+    return shell_identity(app_type)["aumid"]
+
+
+def process_app_user_model_id(requested: str = "user") -> str:
+    """AppUserModelID this process is allowed to claim.
+
+    A locked product keeps its own id. A request for another edition cannot
+    change the taskbar group of the running process.
+    """
+    try:
+        from commitmaster import product
+        if product.is_locked():
+            return SHELL_IDENTITIES[product.current()]["aumid"]
+    except Exception:
+        pass
+    return app_user_model_id(requested)
+
+
+def shortcut_specs(target: str = "user") -> list:
+    """Shortcuts that `target` asks for. `both` is the user and admin apps.
+
+    The returned names, icons, and executables are distinct. This does not
+    create files.
+    """
+    if target == "both":
+        order = ("user", "admin")
+    elif target in SHELL_IDENTITIES:
+        order = (target,)
+    else:
+        raise ValueError(f"unknown shortcut target {target!r}")
+    specs = []
+    for key in order:
+        ident = SHELL_IDENTITIES[key]
+        specs.append({
+            "app_type": key,
+            "name": ident["shortcut_name"],
+            "description": ident["description"],
+            "exe_name": ident["exe_name"],
+            "icon_name": ident["icon_name"],
+            "aumid": ident["aumid"],
+            "entry_script": ident["entry_script"],
+            "launcher": ident["launcher"],
+        })
+    return specs
 
 
 def init_app_user_model_id(app_type: str = "user") -> None:
-    """Register custom Windows Application ID so taskbar shows proper app icon & grouping."""
-    if _INITIALIZED_APP_ID.get(app_type):
+    """Register this process's Windows Application ID once."""
+    global _PROCESS_APP_ID_SET
+    if _PROCESS_APP_ID_SET:
         return
-    _INITIALIZED_APP_ID[app_type] = True
+    _PROCESS_APP_ID_SET = True
+    app_id = process_app_user_model_id(app_type)
     if sys.platform == "win32":
         try:
-            if app_type == "admin":
-                app_id = "CommitMaster.App.Admin.3.0"
-            else:
-                app_id = "CommitMaster.App.Client.3.0"
             ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(app_id)
-            log.debug("Registered Windows AppUserModelID: %s (%s)", app_id, app_type)
+            log.debug("Registered Windows AppUserModelID: %s", app_id)
         except Exception as exc:
             log.debug("Could not set AppUserModelID: %s", exc)
 
@@ -65,24 +159,31 @@ def set_dark_titlebar(window: tk.Misc) -> None:
         log.debug("Could not set dark title bar: %s", exc)
 
 
+def _edition_key(app_type: str) -> str:
+    """Icon requests for the user chrome follow the demo process."""
+    try:
+        from commitmaster import product
+        if product.is_demo() and app_type in ("user", "unified", "client", "", None):
+            return "demo"
+    except Exception:
+        pass
+    if app_type in ("unified", "client", "", None):
+        return "user"
+    if app_type in SHELL_IDENTITIES:
+        return app_type
+    return "user"
+
+
 def get_icon_path(app_type: str = "user") -> Optional[str]:
-    """Find appropriate .ico in workspace, bundle or assets directory."""
-    if app_type == "admin":
-        candidates = [
-            os.path.join(APP_DIR, "assets", "icon_admin.ico"),
-            os.path.join(APP_DIR, "icon_admin.ico"),
-            os.path.join(getattr(sys, "_MEIPASS", APP_DIR), "assets", "icon_admin.ico"),
-            os.path.join(APP_DIR, "assets", "icon.ico"),
-            os.path.join(APP_DIR, "icon.ico"),
-        ]
-    else:
-        candidates = [
-            os.path.join(APP_DIR, "assets", "icon_user.ico"),
-            os.path.join(APP_DIR, "icon_user.ico"),
-            os.path.join(getattr(sys, "_MEIPASS", APP_DIR), "assets", "icon_user.ico"),
-            os.path.join(APP_DIR, "assets", "icon.ico"),
-            os.path.join(APP_DIR, "icon.ico"),
-        ]
+    """Find this edition's .ico in the workspace, the bundle, or assets."""
+    icon_name = SHELL_IDENTITIES[_edition_key(app_type)]["icon_name"]
+    bundle = getattr(sys, "_MEIPASS", APP_DIR)
+    candidates = [
+        os.path.join(APP_DIR, "assets", icon_name),
+        os.path.join(APP_DIR, icon_name),
+        os.path.join(bundle, "assets", icon_name),
+        os.path.join(bundle, icon_name),
+    ]
     for c in candidates:
         if os.path.exists(c):
             return c
@@ -126,24 +227,16 @@ def get_logo_photo(size: int = 32, master: Optional[tk.Misc] = None,
         except Exception:
             _PHOTO_CACHE.pop(cache_key, None)
 
-    img_key = (size, app_type)
+    edition = _edition_key(app_type)
+    img_key = (size, edition)
     if img_key not in _IMAGE_CACHE:
-        if app_type == "admin":
-            candidates = [
-                os.path.join(APP_DIR, "assets", f"logo_admin_{size}.png"),
-                os.path.join(APP_DIR, "assets", "logo_admin.png"),
-                os.path.join(getattr(sys, "_MEIPASS", APP_DIR), "assets", "logo_admin.png"),
-                os.path.join(APP_DIR, "assets", f"logo_{size}.png"),
-                os.path.join(APP_DIR, "assets", "logo.png"),
-            ]
-        else:
-            candidates = [
-                os.path.join(APP_DIR, "assets", f"logo_user_{size}.png"),
-                os.path.join(APP_DIR, "assets", "logo_user.png"),
-                os.path.join(getattr(sys, "_MEIPASS", APP_DIR), "assets", "logo_user.png"),
-                os.path.join(APP_DIR, "assets", f"logo_{size}.png"),
-                os.path.join(APP_DIR, "assets", "logo.png"),
-            ]
+        prefix = SHELL_IDENTITIES[edition]["logo_prefix"]
+        bundle = getattr(sys, "_MEIPASS", APP_DIR)
+        candidates = [
+            os.path.join(APP_DIR, "assets", f"{prefix}_{size}.png"),
+            os.path.join(APP_DIR, "assets", f"{prefix}.png"),
+            os.path.join(bundle, "assets", f"{prefix}.png"),
+        ]
         for c in candidates:
             if os.path.exists(c):
                 try:
@@ -220,116 +313,142 @@ def is_packaged_app() -> bool:
         return False
 
 
+def _find_edition_executable(app_type: str) -> Optional[str]:
+    """Locate this edition's executable. Does not return another edition's file."""
+    ident = SHELL_IDENTITIES[app_type]
+    exe_name = ident["exe_name"]
+    if getattr(sys, "frozen", False):
+        if os.path.basename(sys.executable).lower() == exe_name.lower():
+            return sys.executable
+    local = os.getenv("LOCALAPPDATA", "")
+    candidates = []
+    if local:
+        candidates.append(os.path.join(local, "Programs", "CommitMaster", exe_name))
+    candidates.append(os.path.join(APP_DIR, "dist", exe_name))
+    candidates.append(os.path.join(APP_DIR, exe_name))
+    if app_type == "user":
+        # The previously published user build used this filename.
+        candidates.append(os.path.join(APP_DIR, "dist", "CommitMaster.exe"))
+        candidates.append(os.path.join(APP_DIR, "CommitMaster.exe"))
+        if local:
+            candidates.append(os.path.join(local, "Programs", "CommitMaster", "CommitMaster.exe"))
+    for candidate in candidates:
+        if os.path.isfile(candidate):
+            return candidate
+    return None
+
+
+def _icon_file(app_type: str) -> str:
+    icon_name = SHELL_IDENTITIES[app_type]["icon_name"]
+    for candidate in (
+        os.path.join(APP_DIR, icon_name),
+        os.path.join(APP_DIR, "assets", icon_name),
+    ):
+        if os.path.isfile(candidate):
+            return candidate
+    return os.path.join(APP_DIR, icon_name)
+
+
 def register_windows_app(app_type: str = "user") -> bool:
     """
-    Registers CommitMaster into the Windows Shell, Start Menu, and Windows Search:
-      1. Creates Start Menu shortcut (.lnk) in %APPDATA%\\Microsoft\\Windows\\Start Menu\\Programs\\CommitMaster.lnk
-      2. Registers HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\App Paths\\CommitMaster.exe
-      3. Registers HKCU\\Software\\Classes\\Applications\\CommitMaster.exe
-    This ensures the Windows Search Bar immediately locates and displays CommitMaster with its official icon.
+    Register this process's edition in the Windows Start Menu and App Paths.
+
+    The shortcut title, executable name, and icon come from that edition.
+    A demo process registers "CommitMaster Demo" and does not write the user shortcut.
+    Inside an MSIX package Windows owns the Start Menu tile, so this returns without writing one.
     """
     if sys.platform != "win32":
         return False
 
-    # In MSIX / Windows Store packages, Windows automatically handles Start Menu tiles
-    # from AppxManifest.xml. Creating a manual .lnk produces duplicate tiles (Store Policy 10.1.1.11).
     if is_packaged_app():
-        log.info("Running inside MSIX package container; skipping manual Start Menu shortcut creation.")
+        log.info("Running inside an MSIX package; leaving the Start Menu tile to the package.")
         return True
 
     import winreg
     import subprocess
 
     try:
-        exe_base = "CommitMaster-Demo.exe" if app_type == "demo" else "CommitMaster-User.exe"
-        lnk_title = "CommitMaster Demo" if app_type == "demo" else "CommitMaster"
-        desc = "CommitMaster Demo" if app_type == "demo" else "CommitMaster — Intelligent Git Companion"
-        ico_file = "icon_user.ico"
+        from commitmaster import product
+        edition = product.current() if product.is_locked() else _edition_key(app_type)
+    except Exception:
+        edition = _edition_key(app_type)
+    if edition not in SHELL_IDENTITIES:
+        edition = "user"
+    ident = SHELL_IDENTITIES[edition]
+    # A locked process may register only itself. That keeps the demo app from
+    # replacing the user Start Menu shortcut.
+    try:
+        from commitmaster import product
+        if product.is_locked() and product.current() != edition:
+            log.warning("Refusing to register %s from the %s process.", edition, product.current())
+            return False
+    except Exception:
+        pass
 
-        target_exe = None
-        working_dir = APP_DIR
+    exe_base = ident["exe_name"]
+    lnk_title = ident["shortcut_name"]
+    desc = ident["description"]
+    target_exe = _find_edition_executable(edition)
+    working_dir = os.path.dirname(target_exe) if target_exe else APP_DIR
+    launcher = os.path.join(APP_DIR, ident["launcher"])
+    ico_path = _icon_file(edition)
 
-        if getattr(sys, "frozen", False):
-            target_exe = sys.executable
-            working_dir = os.path.dirname(sys.executable)
-        else:
-            local_app = os.path.expandvars(rf"%LOCALAPPDATA%\Programs\CommitMaster\{exe_base}")
-            dist_app = os.path.join(APP_DIR, "dist", exe_base)
-            if os.path.exists(local_app):
-                target_exe = local_app
-                working_dir = os.path.dirname(local_app)
-            elif os.path.exists(dist_app):
-                target_exe = dist_app
-                working_dir = os.path.dirname(dist_app)
+    start_menu_dir = os.path.expandvars(r"%APPDATA%\Microsoft\Windows\Start Menu\Programs")
+    os.makedirs(start_menu_dir, exist_ok=True)
+    lnk_path = os.path.join(start_menu_dir, f"{lnk_title}.lnk")
 
-        vbs_fallback = os.path.join(APP_DIR, "Launch_CommitMaster.vbs")
-        ico_path = os.path.join(APP_DIR, ico_file)
-        if not os.path.exists(ico_path):
-            ico_path = os.path.join(APP_DIR, "icon.ico")
+    ps_commands = [
+        "$ws = New-Object -ComObject WScript.Shell",
+        f"$lnk = $ws.CreateShortcut('{_ps_escape(lnk_path)}')",
+    ]
+    if target_exe:
+        ps_commands.append(f"$lnk.TargetPath = '{_ps_escape(target_exe)}'")
+        ps_commands.append(f"$lnk.WorkingDirectory = '{_ps_escape(working_dir)}'")
+    elif os.path.isfile(launcher):
+        ps_commands.append("$lnk.TargetPath = 'wscript.exe'")
+        ps_commands.append(f"$lnk.Arguments = '\"{_ps_escape(launcher)}\"'")
+        ps_commands.append(f"$lnk.WorkingDirectory = '{_ps_escape(APP_DIR)}'")
+    else:
+        log.warning("No executable or launcher for %s; Start Menu shortcut was not written.", edition)
+        return False
+    if os.path.isfile(ico_path):
+        ps_commands.append(f"$lnk.IconLocation = '{_ps_escape(ico_path)},0'")
+    ps_commands.append(f"$lnk.Description = '{_ps_escape(desc)}'")
+    ps_commands.append("$lnk.Save()")
 
-        # 1. Start Menu Shortcut (.lnk)
-        start_menu_dir = os.path.expandvars(r"%APPDATA%\Microsoft\Windows\Start Menu\Programs")
-        os.makedirs(start_menu_dir, exist_ok=True)
-        lnk_path = os.path.join(start_menu_dir, f"{lnk_title}.lnk")
-
-        def _ps_escape(s: str) -> str:
-            return (s or "").replace("'", "''")
-
-        ps_commands = [
-            "$ws = New-Object -ComObject WScript.Shell",
-            f"$lnk = $ws.CreateShortcut('{_ps_escape(lnk_path.replace(chr(92), '/'))}')",
-        ]
-        if target_exe and os.path.exists(target_exe):
-            ps_commands.append(f"$lnk.TargetPath = '{_ps_escape(target_exe.replace(chr(92), '/'))}'")
-            ps_commands.append(f"$lnk.WorkingDirectory = '{_ps_escape(working_dir.replace(chr(92), '/'))}'")
-            ps_commands.append(f"$lnk.IconLocation = '{_ps_escape(target_exe.replace(chr(92), '/'))},0'")
-        else:
-            ps_commands.append("$lnk.TargetPath = 'wscript.exe'")
-            ps_commands.append(f"$lnk.Arguments = '\"{_ps_escape(vbs_fallback.replace(chr(92), '/'))}\"'")
-            ps_commands.append(f"$lnk.WorkingDirectory = '{_ps_escape(working_dir.replace(chr(92), '/'))}'")
-            if os.path.exists(ico_path):
-                ps_commands.append(f"$lnk.IconLocation = '{_ps_escape(ico_path.replace(chr(92), '/'))},0'")
-
-        ps_commands.append(f"$lnk.Description = '{_ps_escape(desc)}'")
-        ps_commands.append("$lnk.Save()")
-
+    try:
         flags = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
         subprocess.run(
             ["powershell", "-NoProfile", "-NonInteractive", "-Command", "; ".join(ps_commands)],
             capture_output=True,
             timeout=8,
-            creationflags=flags
+            creationflags=flags,
         )
-
-        # 2. Register Windows App Paths (so Win+R and Windows Search find it)
-        if target_exe and os.path.exists(target_exe):
+        if target_exe:
             try:
                 app_paths_key = winreg.CreateKey(
                     winreg.HKEY_CURRENT_USER,
-                    rf"Software\Microsoft\Windows\CurrentVersion\App Paths\{exe_base}"
+                    rf"Software\Microsoft\Windows\CurrentVersion\App Paths\{exe_base}",
                 )
                 winreg.SetValueEx(app_paths_key, "", 0, winreg.REG_SZ, target_exe)
                 winreg.SetValueEx(app_paths_key, "Path", 0, winreg.REG_SZ, working_dir)
                 winreg.CloseKey(app_paths_key)
-            except Exception as e:
-                log.debug("App Paths registry write error: %s", e)
-
-            # 3. Register Applications
+            except Exception as exc:
+                log.debug("App Paths registry write error: %s", exc)
             try:
                 apps_key = winreg.CreateKey(
                     winreg.HKEY_CURRENT_USER,
-                    rf"Software\Classes\Applications\{exe_base}"
+                    rf"Software\Classes\Applications\{exe_base}",
                 )
                 winreg.SetValueEx(apps_key, "FriendlyAppName", 0, winreg.REG_SZ, lnk_title)
                 winreg.SetValueEx(apps_key, "ApplicationCompany", 0, winreg.REG_SZ, "CommitMaster")
                 winreg.CloseKey(apps_key)
-            except Exception as e:
-                log.debug("Classes Applications registry error: %s", e)
-
-        log.info("Registered CommitMaster in Windows Search and Start Menu.")
+            except Exception as exc:
+                log.debug("Classes Applications registry error: %s", exc)
+        log.info("Registered %s in the Start Menu.", lnk_title)
         return True
     except Exception as exc:
-        log.warning("Could not register Windows app in Start Menu / Search: %s", exc)
+        log.warning("Could not register %s in the Start Menu: %s", lnk_title, exc)
         return False
 
 
@@ -340,100 +459,75 @@ def _ps_escape(s: str) -> str:
 
 def create_desktop_shortcut(target: str = "both") -> tuple[bool, str]:
     """
-    Create Windows Desktop .lnk shortcut(s) with official CommitMaster icon:
-      target: 'admin' (Admin App), 'user' (Main App), or 'both'
-    Returns (success, message).
+    Create Desktop and Start Menu shortcuts for the requested edition.
+
+    target is 'user', 'admin', 'demo', or 'both' (user and admin).
+    The requested target is kept. Each edition gets its own name and icon.
     """
+    try:
+        specs = shortcut_specs(target)
+    except ValueError as exc:
+        return False, str(exc)
     if sys.platform != "win32":
         return False, "Shortcuts can only be created on Windows."
 
-    target = "user"
     import subprocess
-    app_dir = APP_DIR.replace("\\", "/")
-    user_icon = os.path.join(APP_DIR, "icon_user.ico").replace("\\", "/")
-    fallback_icon = os.path.join(APP_DIR, "icon.ico").replace("\\", "/")
-
-    # Check compiled executable existence
-    user_exe = None
-    if getattr(sys, "frozen", False):
-        user_exe = sys.executable.replace("\\", "/")
-    else:
-        for candidate in [
-            os.path.expandvars(r"%LOCALAPPDATA%\Programs\CommitMaster\CommitMaster-User.exe"),
-            os.path.join(APP_DIR, "dist", "CommitMaster-User.exe"),
-            os.path.expandvars(r"%LOCALAPPDATA%\Programs\CommitMaster\CommitMaster.exe"),
-            os.path.join(APP_DIR, "dist", "CommitMaster.exe"),
-        ]:
-            if os.path.exists(candidate):
-                user_exe = candidate.replace("\\", "/")
-                break
 
     shortcuts_to_create = []
-    if target in ("user", "both"):
-        ico = user_icon if os.path.exists(os.path.join(APP_DIR, "icon_user.ico")) else fallback_icon
-        if user_exe and os.path.exists(user_exe):
+    for spec in specs:
+        exe = _find_edition_executable(spec["app_type"])
+        icon = _icon_file(spec["app_type"])
+        launcher = os.path.join(APP_DIR, spec["launcher"])
+        if exe:
             shortcuts_to_create.append({
-                "name": "CommitMaster",
-                "desc": "CommitMaster Desktop Application",
-                "target": user_exe,
+                "name": spec["name"],
+                "desc": spec["description"],
+                "target": exe,
                 "args": "",
-                "workdir": os.path.dirname(user_exe),
-                "icon": user_exe,
+                "workdir": os.path.dirname(exe),
+                "icon": icon if os.path.isfile(icon) else exe,
+            })
+        elif os.path.isfile(launcher):
+            shortcuts_to_create.append({
+                "name": spec["name"],
+                "desc": spec["description"],
+                "target": "wscript.exe",
+                "args": f'"{launcher}"',
+                "workdir": APP_DIR,
+                "icon": icon,
             })
         else:
-            vbs_target = os.path.join(APP_DIR, "Launch_CommitMaster.vbs").replace("\\", "/")
-            shortcuts_to_create.append({
-                "name": "CommitMaster",
-                "desc": "CommitMaster Desktop Application",
-                "target": "wscript.exe",
-                "args": f'"{vbs_target}"',
-                "workdir": app_dir,
-                "icon": ico,
-            })
+            return False, f"No executable found for {spec['name']}."
 
     created_names = []
     try:
         ps_commands = [
             "$ws = New-Object -ComObject WScript.Shell",
             "$desktop = [Environment]::GetFolderPath('Desktop')",
-            "$startMenu = [Environment]::GetFolderPath('Programs')"
+            "$startMenu = [Environment]::GetFolderPath('Programs')",
         ]
-        for s in shortcuts_to_create:
-            s_name = _ps_escape(s['name'])
-            s_target = _ps_escape(s['target'])
-            s_args = _ps_escape(s['args'])
-            s_workdir = _ps_escape(s['workdir'])
-            s_desc = _ps_escape(s['desc'])
-            s_icon = _ps_escape(s['icon'])
+        for item in shortcuts_to_create:
+            name = _ps_escape(item["name"])
+            target_path = _ps_escape(item["target"])
+            workdir = _ps_escape(item["workdir"])
+            desc = _ps_escape(item["desc"])
+            icon = _ps_escape(item["icon"])
+            args = _ps_escape(item["args"])
+            for variable, label in (("$desktop", "lnk"), ("$startMenu", "lnk2")):
+                ps_commands.append(f"${label} = $ws.CreateShortcut(\"{variable}/{name}.lnk\")")
+                ps_commands.append(f"${label}.TargetPath = '{target_path}'")
+                if item["args"]:
+                    ps_commands.append(f"${label}.Arguments = '{args}'")
+                ps_commands.append(f"${label}.WorkingDirectory = '{workdir}'")
+                ps_commands.append(f"${label}.Description = '{desc}'")
+                if os.path.isfile(item["icon"]):
+                    ps_commands.append(f"${label}.IconLocation = '{icon},0'")
+                ps_commands.append(f"${label}.Save()")
+            created_names.append(item["name"])
 
-            # Create on Desktop
-            ps_commands.append(f"$lnk = $ws.CreateShortcut(\"$desktop/{s_name}.lnk\")")
-            ps_commands.append(f"$lnk.TargetPath = '{s_target}'")
-            if s['args']:
-                ps_commands.append(f"$lnk.Arguments = '{s_args}'")
-            ps_commands.append(f"$lnk.WorkingDirectory = '{s_workdir}'")
-            ps_commands.append(f"$lnk.Description = '{s_desc}'")
-            if os.path.exists(s["icon"]):
-                ps_commands.append(f"$lnk.IconLocation = '{s_icon},0'")
-            ps_commands.append("$lnk.Save()")
-
-            # Also create in Start Menu for immediate Windows Search indexing
-            ps_commands.append(f"$lnk2 = $ws.CreateShortcut(\"$startMenu/{s_name}.lnk\")")
-            ps_commands.append(f"$lnk2.TargetPath = '{s_target}'")
-            if s['args']:
-                ps_commands.append(f"$lnk2.Arguments = '{s_args}'")
-            ps_commands.append(f"$lnk2.WorkingDirectory = '{s_workdir}'")
-            ps_commands.append(f"$lnk2.Description = '{s_desc}'")
-            if os.path.exists(s["icon"]):
-                ps_commands.append(f"$lnk2.IconLocation = '{s_icon},0'")
-            ps_commands.append("$lnk2.Save()")
-
-            created_names.append(s["name"])
-
-        full_ps = "; ".join(ps_commands)
-        flags = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000) if sys.platform == "win32" else 0
+        flags = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
         res = subprocess.run(
-            ["powershell", "-NoProfile", "-NonInteractive", "-Command", full_ps],
+            ["powershell", "-NoProfile", "-NonInteractive", "-Command", "; ".join(ps_commands)],
             capture_output=True,
             text=True,
             timeout=10,
