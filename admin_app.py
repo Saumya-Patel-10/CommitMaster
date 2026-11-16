@@ -94,15 +94,27 @@ def launch_admin_app():
         windows_integration.register_windows_app("admin")
     except Exception:
         pass
-    local_tests = os.getenv("COMMITMASTER_LOCAL_ADMIN_DB") == "1" and not getattr(sys, "frozen", False)
-    if local_tests:
-        _open_admin_login()
+    db.init_db()
+    server_url = (db.get_server_url() or "").strip()
+    if server_url and os.getenv("COMMITMASTER_LOCAL_ADMIN_DB") != "1":
+        from commitmaster.admin_client import prompt_server_login
+        session = prompt_server_login()
+        if not session:
+            return
+        _open_admin_window(session.get("user") or {}, admin_token=session.get("token") or "")
         return
-    from commitmaster.admin_client import prompt_server_login
-    session = prompt_server_login()
-    if not session:
-        return
-    _open_admin_window(session.get("user") or {}, admin_token=session.get("token") or "")
+
+    # Local admin mode (standalone or when no remote server is configured)
+    token = _load_token()
+    if token:
+        try:
+            user = db.validate_session_token(token)
+            if user and user.get("role") == "admin":
+                _open_admin_window(dict(user))
+                return
+        except Exception:
+            pass
+    _open_admin_login()
 
 
 
