@@ -235,7 +235,7 @@ CODE_RULES: List[Dict[str, Any]] = [
     {
         "id": "path_traversal", "exts": _PY,
         "category": CATEGORY_EXPLOIT, "threat_class": "exploit_vector",
-        "regex": r"""(?i)(?:open|send_file|FileResponse)\s*\(\s*(?:os\.path\.join\([^)]*(?:filename|file_name|path|user_path)[^)]*\)|f["'][^"']*(?:\{filename\}|\{path\}|\{file\}))""",
+        "regex": r"""(?i)(?:open|send_file|FileResponse)\s*\(\s*(?:os\.path\.join\([^)]*(?<!os\.)(?<!sys\.)\b(?:filename|file_name|user_path|path)(?!\.)\b[^)]*\)|f["'][^"']*(?:\{filename\}|\{path\}|\{file\}))""",
         "title": "Path Traversal / Arbitrary File Access Risk",
         "explanation": "Constructing file system paths directly from variable names like 'filename' or 'path' without validation "
                        "allows attackers to submit traversal sequences (such as '../../etc/passwd' or '..\\..\\Windows\\System32') to "
