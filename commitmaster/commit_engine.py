@@ -19,6 +19,7 @@ log = get("commit_engine")
 
 from commitmaster.git_safety import GitError
 from commitmaster.git_runner import OperationCancelled
+from commitmaster import git_fast
 
 
 def _subprocess_kwargs() -> dict:
@@ -336,6 +337,9 @@ def repo_name(repo_path: str) -> str:
 
 
 def current_branch(repo_path: str) -> str:
+    fast = git_fast.head_branch(repo_path)          # file read, ~0 ms instead of a ~40 ms process
+    if fast is not None:
+        return fast
     try:
         return git(repo_path, "rev-parse", "--abbrev-ref", "HEAD").strip()
     except GitError:
@@ -994,6 +998,9 @@ def get_unpushed_commits(
     branch = branch or current_branch(repo_path)
     commits = []
     try:
+        if git_fast.ref_exists(repo_path, f"refs/remotes/{remote}/{branch}") is False:
+            # Known to fail ("unknown revision"): skip the doomed process and its warning.
+            raise GitError("remote branch not fetched")
         out = git(repo_path, "log", f"{remote}/{branch}..{branch}", "--oneline", timeout=10)
         for line in out.splitlines():
             line = line.strip()
