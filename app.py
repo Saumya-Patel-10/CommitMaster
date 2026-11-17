@@ -151,6 +151,19 @@ def run_session_loop(handoff: dict | None = None) -> None:
 
         db.init_db()
 
+        try:
+            # A previous run may have died mid-commit/push. Record it; an interrupted push is
+            # marked "uncertain" so it is never retried blindly.
+            from commitmaster import git_ops
+            from commitmaster.logger import get as _get_logger
+            for item in git_ops.recover_interrupted_operations():
+                _get_logger("app").warning(
+                    "Recovered interrupted %s in %s at stage '%s' (commit created: %s, push marked uncertain: %s)",
+                    item.get("kind"), item.get("repo"), item.get("stage"),
+                    item.get("commit_created"), item.get("push_marked_uncertain", False))
+        except Exception:
+            pass
+
         if handoff is None and not product.is_demo():
             _run_first_run_setup()
 

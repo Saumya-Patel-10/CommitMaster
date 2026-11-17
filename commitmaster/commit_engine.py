@@ -18,6 +18,7 @@ log = get("commit_engine")
 
 
 from commitmaster.git_safety import GitError
+from commitmaster.git_runner import OperationCancelled
 
 
 def _subprocess_kwargs() -> dict:
@@ -42,15 +43,12 @@ def git(repo_path: str, *args, timeout: int = 30) -> str:
         raise GitError("refusing force push")
     cmd = ["git", "-C", repo_path, *args]
     log.debug("git %s", " ".join(args))
+    from commitmaster.git_runner import run_process
     try:
-        result = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=timeout,
-            encoding="utf-8", errors="replace",
-            **_subprocess_kwargs(),
-        )
+        result = run_process(cmd, timeout=timeout)   # stdin closed, prompts off, process tree killed on timeout
     except FileNotFoundError:
         raise GitError("git was not found on PATH.  Install Git for Windows first.")
-    except subprocess.TimeoutExpired:
+    if result.timed_out:
         raise GitError(f"git command timed out: {' '.join(args)}")
     if result.returncode != 0:
         msg = result.stderr.strip() or f"git {' '.join(args)} failed"
@@ -385,11 +383,13 @@ def sanitize_commit_message(message: str) -> str:
         return headline
 
 
-def stage_and_commit(repo_path: str, files: List[str], message: str, *, confirmed: bool = False) -> str:
+def stage_and_commit(repo_path: str, files: List[str], message: str, *, confirmed: bool = False,
+                     cancel=None, on_stage=None, on_line=None) -> str:
     """Commit exactly the named files after the caller has confirmed that preview."""
     from commitmaster import git_safety
     clean_message = sanitize_commit_message(message) or (message or "").strip()
-    summary = git_safety.commit_authorized(repo_path, files, clean_message, confirmed=confirmed)
+    summary = git_safety.commit_authorized(repo_path, files, clean_message, confirmed=confirmed,
+                                           cancel=cancel, on_stage=on_stage, on_line=on_line)
     invalidate_changes_cache(repo_path)
     log.info("Committed in %s: %s", repo_name(repo_path), summary)
     return summary
@@ -400,6 +400,9 @@ def stage_and_commit_individual(
     file_comments: List[Tuple[str, str]],
     *,
     confirmed: bool = False,
+    cancel=None,
+    on_stage=None,
+    on_line=None,
 ) -> List[Dict[str, str]]:
     """
     Commit each named file with its own message.
@@ -413,10 +416,20 @@ def stage_and_commit_individual(
     from commitmaster import git_safety
     results: List[Dict[str, str]] = []
     failures: List[str] = []
-    for file_path, msg in file_comments:
+    total = len(file_comments)
+    for index, (file_path, msg) in enumerate(file_comments, start=1):
+        if cancel is not None and cancel.is_set():
+            failures.append("cancelled before " + file_path)
+            break
+        if on_stage:
+            on_stage("committing", f"Commit {index} of {total}: {file_path}")
         clean_msg = sanitize_commit_message(msg) or (msg or "").strip() or f"chore: update {os.path.basename(file_path)}"
         try:
-            git_safety.commit_authorized(repo_path, [file_path], clean_msg, confirmed=True)
+            git_safety.commit_authorized(repo_path, [file_path], clean_msg, confirmed=True,
+                                         cancel=cancel, on_stage=None, on_line=on_line)
+        except OperationCancelled:
+            failures.append(f"{file_path}: cancelled")
+            break
         except GitError as exc:
             failures.append(f"{file_path}: {exc}")
             continue
@@ -523,6 +536,9 @@ def push_repo_with_account(
     *,
     confirmed: bool = False,
     acknowledge_uncertain: bool = False,
+    cancel=None,
+    on_stage=None,
+    on_line=None,
 ) -> "git_safety.PushResult":
     """
     Push the named branch. The token is passed to git through a short-lived
@@ -556,14 +572,20 @@ def push_repo_with_account(
         remote_url=safe_url or remote_url,
         acknowledge_uncertain=acknowledge_uncertain,
         timeout=timeout,
+        remote_name=remote,
+        cancel=cancel,
+        on_stage=on_stage,
+        on_line=on_line,
     )
     if token and token in result.message:
-        result = git_safety.PushResult(result.outcome, result.message.replace(token, "[REDACTED]"))
+        result = git_safety.PushResult(result.outcome, result.message.replace(token, "[REDACTED]"),
+                                       getattr(result, "reason", ""))
     log.info("Push %s for %s: %s", result.outcome, repo_name(repo_path), result.message)
     return result
 
 
-def push(repo_path: str, remote: str = "origin", branch: Optional[str] = None, *, confirmed: bool = False, acknowledge_uncertain: bool = False) -> "git_safety.PushResult":
+def push(repo_path: str, remote: str = "origin", branch: Optional[str] = None, *, confirmed: bool = False,
+         acknowledge_uncertain: bool = False, cancel=None, on_stage=None, on_line=None) -> "git_safety.PushResult":
     """Push branch to remote. Force push is refused. Outcome is never a silent success."""
     from commitmaster import git_safety
     branch_name = branch or current_branch(repo_path)
@@ -575,6 +597,10 @@ def push(repo_path: str, remote: str = "origin", branch: Optional[str] = None, *
         confirmed=confirmed,
         remote_url=remote_url,
         acknowledge_uncertain=acknowledge_uncertain,
+        remote_name=remote,
+        cancel=cancel,
+        on_stage=on_stage,
+        on_line=on_line,
     )
 
 

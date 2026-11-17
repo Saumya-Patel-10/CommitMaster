@@ -10,7 +10,7 @@ from tkinter import messagebox, simpledialog, ttk
 from datetime import datetime
 from typing import Dict, Callable, Any, List, Optional, Tuple
 
-from commitmaster import commit_engine, charts, navigation, pattern_utils
+from commitmaster import commit_engine, charts, navigation, pattern_utils, git_ops
 from commitmaster.app_styles import (
     COLORS, FONTS, SIZES, AVATAR_COLORS, THEMES, ACCENTS, FONT_FAMILIES, FONT_SCALES,
     apply_customization, get_active_customization
@@ -1753,14 +1753,18 @@ class AdminPortal:
         if not confirm:
             return
 
-        def run_push():
-            success, msg = commit_engine.push_repo_with_account(repo_path, account, confirmed=True)
+        def show_result(op):
+            success, msg = git_ops.push_result_text(op)
             if success:
                 messagebox.showinfo("Push Succeeded", msg, parent=self.root)
             else:
                 messagebox.showerror("Push Failed", f"Could not push {name}:\n\n{msg}", parent=self.root)
 
-        threading.Thread(target=run_push, daemon=True).start()
+        git_ops.push_in_background(
+            self.root, repo_path,
+            lambda cancel=None, on_stage=None, on_line=None: commit_engine.push_repo_with_account(
+                repo_path, account, confirmed=True, cancel=cancel, on_stage=on_stage, on_line=on_line),
+            show_result, secrets=[account.get("github_token") or ""])
 
     # ── Customize Interface Page ──────────────────────────────────────────────
 

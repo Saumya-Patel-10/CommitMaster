@@ -28,7 +28,7 @@ from commitmaster import database as db
 from commitmaster import avatar_utils
 from commitmaster import pattern_utils
 from commitmaster import commit_engine, ai_messages, ui, github_service, file_inspector, repo_analyzer
-from commitmaster import commit_composer, charts, navigation, issue_view
+from commitmaster import commit_composer, charts, navigation, issue_view, git_ops
 from commitmaster.config import load_config, save_config
 from commitmaster.app_styles import (
     COLORS, FONTS, SIZES, AVATAR_COLORS, THEMES, ACCENTS, FONT_FAMILIES, FONT_SCALES,
@@ -1816,14 +1816,18 @@ class AdminApp:
         if not confirm:
             return
 
-        def run_push():
-            success, msg = commit_engine.push_repo_with_account(repo_path, account, confirmed=True)
+        def show_result(op):
+            success, msg = git_ops.push_result_text(op)
             if success:
                 messagebox.showinfo("Push Succeeded", msg, parent=self.root)
             else:
                 messagebox.showerror("Push Failed", f"Could not push {name}:\n\n{msg}", parent=self.root)
 
-        threading.Thread(target=run_push, daemon=True).start()
+        git_ops.push_in_background(
+            self.root, repo_path,
+            lambda cancel=None, on_stage=None, on_line=None: commit_engine.push_repo_with_account(
+                repo_path, account, confirmed=True, cancel=cancel, on_stage=on_stage, on_line=on_line),
+            show_result, secrets=[account.get("github_token") or ""])
 
     # ── Git Desktop (GitHub Desktop-like with Native Local AI) ─────────
 
@@ -2214,17 +2218,21 @@ class AdminApp:
                 messagebox.showinfo("Push Cancelled", "Push cancelled. Commits remain saved locally.", parent=self.root)
                 return
 
-        def do_push():
-            ok, msg = commit_engine.push_repo_with_account(self._gd_selected_repo, account, confirmed=True)
-            def done():
-                if ok:
-                    messagebox.showinfo("Push Succeeded", msg, parent=self.root)
-                    self._nav_to("git_desktop")
-                else:
-                    messagebox.showerror("Push Failed", f"Could not push to GitHub:\n\n{msg}", parent=self.root)
-            self.root.after(0, done)
+        repo_to_push = self._gd_selected_repo
 
-        threading.Thread(target=do_push, daemon=True).start()
+        def done(op):
+            ok, msg = git_ops.push_result_text(op)
+            if ok:
+                messagebox.showinfo("Push Succeeded", msg, parent=self.root)
+                self._nav_to("git_desktop")
+            else:
+                messagebox.showerror("Push Failed", f"Could not push to GitHub:\n\n{msg}", parent=self.root)
+
+        git_ops.push_in_background(
+            self.root, repo_to_push,
+            lambda cancel=None, on_stage=None, on_line=None: commit_engine.push_repo_with_account(
+                repo_to_push, account, confirmed=True, cancel=cancel, on_stage=on_stage, on_line=on_line),
+            done, secrets=[account.get("github_token") or ""])
 
     # ── Watched Repositories (Active Project Tracker) ──────────────────
 

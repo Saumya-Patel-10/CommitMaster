@@ -13,10 +13,11 @@ import tkinter as tk
 from tkinter import messagebox, simpledialog
 from typing import Dict, List, Optional, Tuple
 
-from commitmaster import ai_messages, commit_engine, file_inspector, ui
+from commitmaster import ai_messages, commit_engine, file_inspector, git_ops, ui
 from commitmaster import database as db
 from commitmaster.app_styles import COLORS, FONTS
 from commitmaster.config import load_config
+from commitmaster.operation_panel import OperationPanel
 
 COMMIT_BTN = "#3a56b0"
 COMMIT_BTN_HOVER = "#4a69cc"
@@ -197,6 +198,7 @@ class CommitComposer(tk.Frame):
         self._fields: Dict[str, Tuple[PlaceholderEntry, PlaceholderText]] = {}
         self._refresh_job = None
         self._busy = False
+        self.panel = None
 
         # toolbar -----------------------------------------------------------
         bar = tk.Frame(self, bg=COLORS["bg_card"])
@@ -232,6 +234,7 @@ class CommitComposer(tk.Frame):
 
         host._gd_composer = self
         self.render_body(harvest=False)
+        self._attach_existing_operation()      # page was rebuilt while a run was active / just finished
 
     # ── helpers ───────────────────────────────────────────────────────────────
     @property
@@ -561,10 +564,54 @@ class CommitComposer(tk.Frame):
                 pass
 
     # ── commit / push ─────────────────────────────────────────────────────────
+    #
+    # Every commit/push runs as a git_ops.GitOperation on a worker thread. The UI only
+    # starts it and shows an OperationPanel that polls the live snapshot, so the window
+    # stays responsive and can never be left on a stale "Committing..." label: the
+    # operation always reaches a terminal state, even if the worker raises.
+
+    def _resolve_push_account(self, repo: str, acc: Optional[dict], user_id: int) -> Optional[dict]:
+        """Account whose token is used for the push, or None for the system credential helper.
+
+        The repo's assigned account wins. Without one, a token account is only chosen
+        automatically when the user has exactly one; otherwise the identity would be a guess.
+        """
+        if acc and (acc.get("github_token") or "").strip():
+            return acc
+        candidates = [a for a in db.get_github_accounts(user_id) if (a.get("github_token") or "").strip()]
+        return candidates[0] if len(candidates) == 1 else None
+
+    def _make_push_fn(self, repo: str, account: Optional[dict], user_id: int):
+        def push_fn(cancel=None, on_stage=None, on_line=None):
+            if account:
+                who = account.get("github_username") or account.get("account_name") or "selected account"
+                if on_line:
+                    on_line("stdout", f"Pushing as GitHub account @{who}")
+                result = commit_engine.push_repo_with_account(
+                    repo, account, confirmed=True, cancel=cancel, on_stage=on_stage, on_line=on_line)
+            else:
+                if on_line:
+                    on_line("stdout", "No GitHub account assigned: using the system git credentials")
+                result = commit_engine.push(repo, confirmed=True, cancel=cancel, on_stage=on_stage, on_line=on_line)
+            # No automatic second push: a failed or uncertain push is never retried blindly.
+            ok = result.outcome in ("success", "no_remote_update")
+            try:
+                db.log_event(user_id, "push_ok" if ok else "push_failed", repo_name=commit_engine.repo_name(repo),
+                             detail="" if ok else result.message[:200])
+            except Exception:
+                pass
+            return result
+        return push_fn
+
     def commit(self, push: bool) -> None:
         if self._busy:
             return
         host, root = self.host, self.winfo_toplevel()
+        repo = self.repo
+        if git_ops.active_operation(repo):
+            messagebox.showinfo("Already running", "A commit or push is already running for this repository.",
+                                parent=root)
+            return
         sel = selected_paths(host)
         if not sel:
             messagebox.showwarning("No files selected", "Check at least one file to commit.", parent=root)
@@ -587,24 +634,7 @@ class CommitComposer(tk.Frame):
                 entry.focus_set()
             return
 
-        repo = self.repo
-        repo_name = commit_engine.repo_name(repo)
-
-        # Pre-commit inspection (only the selected files) --------------------
-        issues = file_inspector.inspect_files(repo, sel)
-        db.log_scan(host.user["id"], repo, len(sel), file_inspector.summarize_issues(issues))
-        if issues and not ui.ask_pre_commit_issues_warning(issues, repo_name=repo_name, parent=root, repo_path=repo):
-            self._say("ℹ Commit cancelled so you can fix the reported issues.", COLORS["warning"])
-            return
-
-        acc = db.get_repo_account(host.user["id"], repo)
-        if push and host._gd_ask_push_var.get():
-            unpushed = commit_engine.get_unpushed_commits(repo)
-            if not ui.ask_push_confirmation(repo_name, commit_engine.current_branch(repo), acc, unpushed, parent=root):
-                self._say("ℹ Push cancelled - nothing was committed.", COLORS["warning"])
-                return
-
-        # Build the messages on the UI thread, then commit in the background ---
+        # Build the messages on the UI thread (cheap, reads widget state) ------
         if mode == "individual":
             pairs = [(p, ai_messages.compose_commit_message(host._gd_drafts[p]["summary"],
                                                             host._gd_drafts[p].get("description", "")))
@@ -615,124 +645,175 @@ class CommitComposer(tk.Frame):
             u = host._gd_unified
             single_msg = ai_messages.compose_commit_message(u["summary"], u.get("description", ""))
 
+        # Lock the buttons immediately so a second click cannot start a second run.
         self._busy = True
         self._update_commit_button()
-        self._say("⏳ Committing...", COLORS["info"])
-        user_id = host.user["id"]
+        self._say("⏳ Checking the selected files...", COLORS["info"])
 
-        def worker():
-            committed: List[str] = []
+        # The pre-commit inspection reads every selected file: keep it off the UI thread.
+        box: Dict[str, object] = {}
+
+        def inspect_worker():
+            try:
+                box["issues"] = file_inspector.inspect_files(repo, sel)
+            except Exception as exc:                          # noqa: BLE001
+                box["issues"], box["error"] = {}, exc
+            box["done"] = True
+
+        threading.Thread(target=inspect_worker, name="pre-commit-inspect", daemon=True).start()
+
+        def poll():
+            try:
+                if not self.winfo_exists():
+                    return
+            except tk.TclError:
+                return
+            if not box.get("done"):
+                self.after(80, poll)
+                return
+            self._after_inspection(push, sel, pairs, single_msg, box.get("issues") or {}, box.get("error"))
+
+        self.after(80, poll)
+
+    def _after_inspection(self, push: bool, sel: List[str], pairs, single_msg, issues, inspect_error) -> None:
+        host, root, repo = self.host, self.winfo_toplevel(), self.repo
+        user_id = host.user["id"]
+        repo_name = commit_engine.repo_name(repo)
+        if inspect_error:
+            log_msg = f"File inspection failed ({inspect_error}); continuing without it."
+            self._say("⚠ " + log_msg, COLORS["warning"])
+        try:
+            db.log_scan(user_id, repo, len(sel), file_inspector.summarize_issues(issues))
+        except Exception:
+            pass
+        if issues and not ui.ask_pre_commit_issues_warning(issues, repo_name=repo_name, parent=root, repo_path=repo):
+            self._busy = False
+            self._update_commit_button()
+            self._say("ℹ Commit cancelled so you can fix the reported issues.", COLORS["warning"])
+            return
+
+        acc = db.get_repo_account(user_id, repo)
+        account = self._resolve_push_account(repo, acc, user_id) if push else None
+        if push and host._gd_ask_push_var.get():
+            unpushed = commit_engine.get_unpushed_commits(repo)
+            if not ui.ask_push_confirmation(repo_name, commit_engine.current_branch(repo), account or acc, unpushed,
+                                            parent=root):
+                self._busy = False
+                self._update_commit_button()
+                self._say("ℹ Push cancelled - nothing was committed.", COLORS["warning"])
+                return
+
+        secrets = [account["github_token"]] if account and account.get("github_token") else []
+        push_fn = self._make_push_fn(repo, account, user_id) if push else None
+        message_for = dict(pairs) if pairs is not None else {}
+
+        def runner(op):
+            git_ops.run_commit_and_push(op, repo, files=sel, message=single_msg, pairs=pairs, push=push,
+                                        push_fn=push_fn)
+
+        def log_results(op):                       # runs on the worker thread; DB only, no widgets
             try:
                 if pairs is not None:
-                    results = commit_engine.stage_and_commit_individual(repo, pairs, confirmed=True)
-                    for item in results:
-                        db.log_commit(user_id, repo, item["message"].splitlines()[0], 1, item["hash"])
-                    summary = f"{len(results)} commit{'s' if len(results) != 1 else ''} created"
-                else:
-                    line = commit_engine.stage_and_commit(repo, sel, single_msg, confirmed=True)
-                    db.log_commit(user_id, repo, single_msg.splitlines()[0], len(sel), line.split()[0] if line else "")
-                    summary = line
-                committed = list(sel)
-            except Exception as exc:
-                partial = getattr(exc, "results", [])
-                for item in partial:                      # commits that did go through
-                    db.log_commit(user_id, repo, item["message"].splitlines()[0], 1, item["hash"])
-                db.log_commit(user_id, repo, f"FAILED: {exc}", len(sel) - len(partial), status="failed")
-                done_files = [item["file"] for item in partial]
-                root.after(0, lambda e=exc, d=done_files: self._finish_error("Commit failed", e, d))
-                return
+                    for file_path, sha in zip(op.result_files, op.commit_shas):
+                        first = (message_for.get(file_path, "") or "").splitlines()[0:1]
+                        db.log_commit(user_id, repo, first[0] if first else file_path, 1, sha)
+                elif op.commit_state == "done":
+                    db.log_commit(user_id, repo, (single_msg or "").splitlines()[0], len(sel),
+                                  op.commit_shas[0] if op.commit_shas else "")
+                if op.commit_state != "done" or op.partial:
+                    db.log_commit(user_id, repo, f"FAILED: {op.error}"[:300],
+                                  max(0, len(sel) - len(op.result_files)), status="failed")
+            except Exception:
+                pass
 
-            push_ok, push_msg = None, ""
-            if push:
-                push_ok, push_msg = self._do_push(repo, acc, user_id)
-            root.after(0, lambda: self._finish_ok(summary, committed, push, push_ok, push_msg))
-
-        threading.Thread(target=worker, daemon=True).start()
-
-    def _do_push(self, repo: str, acc: Optional[dict], user_id: int) -> Tuple[bool, str]:
-        if acc and acc.get("github_token", "").strip():
-            ok, msg = commit_engine.push_repo_with_account(repo, acc, confirmed=True)
-        else:
-            accounts = [a for a in db.get_github_accounts(user_id) if a.get("github_token", "").strip()]
-            if accounts:
-                ok, msg = commit_engine.push_repo_with_account(repo, accounts[0], confirmed=True)
-            else:
-                ok, msg = commit_engine.push(repo, confirmed=True)
-        if not ok and "Personal Access Token" in msg:
-            ok, msg = commit_engine.push(repo, confirmed=True)
-        db.log_event(user_id, "push_ok" if ok else "push_failed", repo_name=commit_engine.repo_name(repo),
-                     detail="" if ok else msg[:200])
-        return ok, msg
-
-    def _finish_error(self, title: str, err, done_files: Optional[List[str]] = None) -> None:
-        self._busy = False
-        for p in done_files or []:
-            self.host._gd_drafts.pop(p, None)
-        if not self.winfo_exists():
-            return
-        self._say(f"❌ {title}: {err}", COLORS["error"])
-        messagebox.showerror(title, f"{err}", parent=self.winfo_toplevel())
-        if done_files:
-            self.on_done()          # some files were committed - rescan so the list is accurate
-        else:
-            self._update_commit_button()
-
-    def _finish_ok(self, summary: str, committed: List[str], pushed: bool, push_ok, push_msg: str) -> None:
-        self._busy = False
-        host = self.host
-        for p in committed:
-            host._gd_drafts.pop(p, None)
-            if p in host._gd_staged_vars:
-                host._gd_staged_vars[p].set(False)
-        host._gd_unified = {"summary": "", "description": ""}
         try:
-            if not self.winfo_exists():
-                return
-        except tk.TclError:
+            op = git_ops.start_operation("commit_push" if push else "commit", repo, runner,
+                                         secrets=secrets, on_finish=log_results)
+        except git_ops.OperationInProgress as exc:
+            self._busy = False
+            self._update_commit_button()
+            self._say(f"ℹ {exc}", COLORS["warning"])
             return
-        root = self.winfo_toplevel()
-        if pushed and push_ok is False:
-            self._say(f"⚠ Committed locally ({summary}) but push failed: {push_msg}", COLORS["warning"])
-            messagebox.showerror("Push failed", f"Commit succeeded locally, but git push failed:\n\n{push_msg}",
-                                 parent=root)
-        elif pushed:
-            messagebox.showinfo("Committed & pushed", f"✔ {summary}\n\n{push_msg}", parent=root)
-        else:
-            self._say(f"✔ Committed locally: {summary}", COLORS["success"])
-        self.on_done()
+        self._say("", None)
+        self._show_panel(op)
 
     def push_only(self) -> None:
         if self._busy:
             return
         host, root = self.host, self.winfo_toplevel()
         repo = self.repo
+        if git_ops.active_operation(repo):
+            messagebox.showinfo("Already running", "A commit or push is already running for this repository.",
+                                parent=root)
+            return
         repo_name = commit_engine.repo_name(repo)
-        acc = db.get_repo_account(host.user["id"], repo)
+        user_id = host.user["id"]
+        acc = db.get_repo_account(user_id, repo)
+        account = self._resolve_push_account(repo, acc, user_id)
         unpushed = commit_engine.get_unpushed_commits(repo)
         if host._gd_ask_push_var.get():
-            if not ui.ask_push_confirmation(repo_name, commit_engine.current_branch(repo), acc, unpushed, parent=root):
+            if not ui.ask_push_confirmation(repo_name, commit_engine.current_branch(repo), account or acc, unpushed,
+                                            parent=root):
                 self._say("ℹ Push cancelled. Commits remain saved locally.", COLORS["warning"])
                 return
+        secrets = [account["github_token"]] if account and account.get("github_token") else []
+        push_fn = self._make_push_fn(repo, account, user_id)
         self._busy = True
-        self._say("⏳ Pushing...", COLORS["info"])
         self._update_commit_button()
-        user_id = host.user["id"]
+        try:
+            op = git_ops.start_operation("push", repo, lambda o: git_ops.run_push_only(o, repo, push_fn=push_fn),
+                                         secrets=secrets)
+        except git_ops.OperationInProgress as exc:
+            self._busy = False
+            self._update_commit_button()
+            self._say(f"ℹ {exc}", COLORS["warning"])
+            return
+        self._say("", None)
+        self._show_panel(op)
 
-        def worker():
-            ok, msg = self._do_push(repo, acc, user_id)
+    # ── operation panel ───────────────────────────────────────────────────────
+    def _show_panel(self, op: "git_ops.GitOperation") -> None:
+        old = getattr(self, "panel", None)
+        if old is not None:
+            try:
+                old.destroy()
+            except tk.TclError:
+                pass
+        self._busy = not op.finished
+        self.host._gd_last_op = op
+        self.panel = OperationPanel(self.footer, op, on_finished=self._op_finished,
+                                    on_dismiss=lambda: setattr(self.host, "_gd_last_op", None))
+        self.panel.pack(fill="x", pady=(8, 0))
+        self._update_commit_button()
 
-            def done():
-                self._busy = False
-                if not self.winfo_exists():
-                    return
-                self._update_commit_button()
-                if ok:
-                    self._say(f"✔ {msg}", COLORS["success"])
-                    messagebox.showinfo("Push Succeeded", f"✔ {msg}", parent=root)
-                    self.on_done()
-                else:
-                    self._say(f"❌ Push failed: {msg}", COLORS["error"])
-                    messagebox.showerror("Push failed", msg, parent=root)
-            root.after(0, done)
+    def _attach_existing_operation(self) -> None:
+        """After the page is rebuilt, show a run that is still going (or just finished)."""
+        op = git_ops.active_operation(self.repo) if self.repo else None
+        if op is None:
+            last = getattr(self.host, "_gd_last_op", None)
+            op = last if last is not None and last.repo == self.repo else None
+        if op is not None:
+            self._show_panel(op)
 
-        threading.Thread(target=worker, daemon=True).start()
+    def _op_finished(self, op: "git_ops.GitOperation") -> None:
+        """UI-thread hook, called once when the panel sees the operation end."""
+        self._busy = False
+        if getattr(op, "_ui_handled", False):
+            self._update_commit_button()
+            return
+        op._ui_handled = True
+        host = self.host
+        for path in op.result_files:
+            host._gd_drafts.pop(path, None)
+            if path in host._gd_staged_vars:
+                host._gd_staged_vars[path].set(False)
+        if op.commit_state == "done" and self._mode() != "individual":
+            host._gd_unified = {"summary": "", "description": ""}
+        try:
+            if not self.winfo_exists():
+                return
+        except tk.TclError:
+            return
+        self._update_commit_button()
+        if op.commit_state == "done":
+            self.on_done()          # rescan so the file list reflects what was committed
