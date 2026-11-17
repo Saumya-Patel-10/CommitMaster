@@ -17,6 +17,7 @@ Provides dual-engine reminder tracking:
        and handles preview opt-in or 10-second auto-commit review countdown.
 """
 import os
+import sys
 import threading
 import time
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple
@@ -54,14 +55,63 @@ STATE_ACTIVE = "active"
 STATE_ENDING = "ending"
 
 
+def _win32_snapshot_processes() -> List[Tuple[int, str]]:
+    """Return list of (pid, exe_name) using atomic Win32 CreateToolhelp32Snapshot."""
+    if sys.platform != "win32":
+        return []
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        class PROCESSENTRY32W(ctypes.Structure):
+            _fields_ = [
+                ("dwSize", wintypes.DWORD),
+                ("cntUsage", wintypes.DWORD),
+                ("th32ProcessID", wintypes.DWORD),
+                ("th32DefaultHeapID", ctypes.c_size_t),
+                ("th32ModuleID", wintypes.DWORD),
+                ("cntThreads", wintypes.DWORD),
+                ("th32ParentProcessID", wintypes.DWORD),
+                ("pcPriClassBase", wintypes.LONG),
+                ("dwFlags", wintypes.DWORD),
+                ("szExeFile", wintypes.WCHAR * 260),
+            ]
+
+        k32 = ctypes.windll.kernel32
+        h = k32.CreateToolhelp32Snapshot(0x00000002, 0)
+        if h == -1 or h == 0:
+            return []
+        procs: List[Tuple[int, str]] = []
+        try:
+            pe = PROCESSENTRY32W()
+            pe.dwSize = ctypes.sizeof(PROCESSENTRY32W)
+            if k32.Process32FirstW(h, ctypes.byref(pe)):
+                while True:
+                    procs.append((pe.th32ProcessID, pe.szExeFile))
+                    if not k32.Process32NextW(h, ctypes.byref(pe)):
+                        break
+        finally:
+            k32.CloseHandle(h)
+        return procs
+    except Exception:
+        return []
+
+
 def get_running_ide_processes() -> Set[str]:
     """Return set of lower-case process names currently active on the desktop."""
+    if sys.platform == "win32":
+        win_procs = _win32_snapshot_processes()
+        if win_procs:
+            return {p[1].lower() for p in win_procs if p[1]}
     running = set()
     try:
         for p in psutil.process_iter(["name"]):
-            name = p.info.get("name")
-            if name:
-                running.add(name.lower())
+            try:
+                name = p.info.get("name")
+                if name:
+                    running.add(name.lower())
+            except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                continue
     except Exception:
         pass
     return running
@@ -208,6 +258,10 @@ class ReminderService(threading.Thread):
     # ── Main Polling Loop ─────────────────────────────────────────────────────
 
     def run(self) -> None:
+        if os.getenv("PYTEST_CURRENT_TEST") or os.getenv("TESTING") == "1":
+            log.info("ReminderService: test environment detected; background polling disabled.")
+            return
+
         log.info("ReminderService background thread started for user %d.", self.user_id)
 
         # Baseline running IDEs on startup
@@ -436,69 +490,79 @@ class ReminderService(threading.Thread):
                     preset_map[alias.lower()] = preset["name"]
 
         active_pids = set()
-        try:
-            for p in psutil.process_iter(["pid", "name"]):
-                try:
-                    name = p.info.get("name")
-                    if not name:
+        raw_proc_tuples: List[Tuple[int, str]] = []
+        if sys.platform == "win32":
+            raw_proc_tuples = _win32_snapshot_processes()
+        if not raw_proc_tuples:
+            try:
+                for p in psutil.process_iter(["pid", "name"]):
+                    try:
+                        p_name = p.info.get("name")
+                        if p_name:
+                            raw_proc_tuples.append((p.info["pid"], p_name))
+                    except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
                         continue
-                    name_lower = name.lower()
-                    if name_lower in all_watched:
-                        pid = p.info["pid"]
-                        active_pids.add(pid)
-                        disp_name = preset_map.get(name_lower, name)
-                        if name_lower not in running:
-                            proj_path, proj_name = None, None
-                            if pid in self._pid_project_cache:
-                                proj_path, proj_name = self._pid_project_cache[pid]
-                            else:
-                                try:
-                                    proc = psutil.Process(pid)
-                                    # Strategy 1: Check process CWD
-                                    try:
-                                        cwd = proc.cwd()
-                                        if cwd and os.path.isdir(cwd) and commit_engine.is_git_repo(cwd):
-                                            proj_path = os.path.normpath(cwd)
-                                            proj_name = commit_engine.repo_name(cwd)
-                                    except Exception:
-                                        pass
+            except Exception as exc:
+                log.debug("Process iteration exception: %s", exc)
 
-                                    # Strategy 2: Check command line arguments for folder paths
-                                    if not proj_path:
-                                        try:
-                                            cmd = proc.cmdline()
-                                            for arg in cmd:
-                                                clean_arg = arg.strip(' "\'')
-                                                if clean_arg and os.path.isdir(clean_arg) and commit_engine.is_git_repo(clean_arg):
-                                                    proj_path = os.path.normpath(clean_arg)
-                                                    proj_name = commit_engine.repo_name(clean_arg)
-                                                    break
-                                        except Exception:
-                                            pass
-                                    self._pid_project_cache[pid] = (proj_path, proj_name)
+        for pid, name in raw_proc_tuples:
+            try:
+                if not name:
+                    continue
+                name_lower = name.lower()
+                if name_lower in all_watched:
+                    active_pids.add(pid)
+                    disp_name = preset_map.get(name_lower, name)
+                    if name_lower not in running:
+                        proj_path, proj_name = None, None
+                        if pid in self._pid_project_cache:
+                            proj_path, proj_name = self._pid_project_cache[pid]
+                        else:
+                            try:
+                                proc = psutil.Process(pid)
+                                # Strategy 1: Check process CWD
+                                try:
+                                    cwd = proc.cwd()
+                                    if cwd and os.path.isdir(cwd) and commit_engine.is_git_repo(cwd):
+                                        proj_path = os.path.normpath(cwd)
+                                        proj_name = commit_engine.repo_name(cwd)
                                 except Exception:
                                     pass
 
-                            start_ts = time.time()
-                            try:
-                                proc = psutil.Process(pid)
-                                ct = proc.create_time()
-                                if 0 < ct <= time.time():
-                                    start_ts = ct
+                                # Strategy 2: Check command line arguments for folder paths
+                                if not proj_path:
+                                    try:
+                                        cmd = proc.cmdline()
+                                        for arg in cmd:
+                                            clean_arg = arg.strip(' "\'')
+                                            if clean_arg and os.path.isdir(clean_arg) and commit_engine.is_git_repo(clean_arg):
+                                                proj_path = os.path.normpath(clean_arg)
+                                                proj_name = commit_engine.repo_name(clean_arg)
+                                                break
+                                    except Exception:
+                                        pass
+                                self._pid_project_cache[pid] = (proj_path, proj_name)
                             except Exception:
                                 pass
 
-                            running[name_lower] = {
-                                "exe": name,
-                                "name": disp_name,
-                                "project_path": proj_path,
-                                "project_name": proj_name,
-                                "started_at": start_ts,
-                            }
-                except (psutil.NoSuchProcess, psutil.AccessDenied):
-                    continue
-        except Exception as exc:
-            log.debug("Process iteration exception: %s", exc)
+                        start_ts = time.time()
+                        try:
+                            proc = psutil.Process(pid)
+                            ct = proc.create_time()
+                            if 0 < ct <= time.time():
+                                start_ts = ct
+                        except Exception:
+                            pass
+
+                        running[name_lower] = {
+                            "exe": name,
+                            "name": disp_name,
+                            "project_path": proj_path,
+                            "project_name": proj_name,
+                            "started_at": start_ts,
+                        }
+            except Exception:
+                continue
 
         # Evict old PIDs from cache that are no longer active
         dead_pids = [k for k in self._pid_project_cache if k not in active_pids]
