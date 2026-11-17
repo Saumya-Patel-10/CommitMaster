@@ -36,7 +36,7 @@ class TestTailscaleNetwork(unittest.TestCase):
         self.assertNotEqual(sanitized["email"], "owner@example.com")
 
     def test_02_network_join_endpoint(self):
-        """Verify friend/node registration via /api/network/join."""
+        """A client cannot claim a Tailscale identity or address; a verified peer with an invite is approved."""
         payload = {
             "tailscale_login": "friend.developer@gmail.com",
             "display_name": "Friend Dev",
@@ -44,7 +44,31 @@ class TestTailscaleNetwork(unittest.TestCase):
             "node_ip": "100.99.88.77",
             "username": "friend_dev_test"
         }
+        # 1. Unverified claim: registered as a pending anonymous node, never approved.
         resp = self.app.post("/api/network/join", json=payload)
+        self.assertEqual(resp.status_code, 202)
+        data = resp.get_json()
+        self.assertFalse(data.get("ok"))
+        self.assertEqual(data.get("status"), "pending")
+        self.assertIn("member_id", data)
+        conn = server.get_db()
+        row = conn.execute("SELECT * FROM network_members WHERE id = ?", (data["member_id"],)).fetchone()
+        self.assertNotEqual(row["tailscale_login"].lower(), "friend.developer@gmail.com")
+        self.assertNotEqual(row["node_ip"], "100.99.88.77")
+        conn.close()
+
+        # 2. Verified peer redeeming a valid invite is approved, and the stored login comes from the proof.
+        identity = {"login_name": "friend.developer@gmail.com", "display_name": "Friend Dev",
+                    "hostname": "friend-thinkpad", "source": "whois"}
+        code = "TESTINV" + os.urandom(3).hex().upper()
+        conn = server.get_db()
+        conn.execute(
+            "INSERT INTO network_invites (invite_code, duration_hours, expires_at, max_uses) VALUES (?, 24, ?, 1)",
+            (code, (server._utcnow() + server.timedelta(hours=1)).strftime("%Y-%m-%d %H:%M:%S")))
+        conn.commit()
+        conn.close()
+        with patch.object(server, "trusted_tailscale_identity", return_value=identity):
+            resp = self.app.post("/api/network/join", json={**payload, "invite_code": code})
         self.assertEqual(resp.status_code, 200)
         data = resp.get_json()
         self.assertTrue(data.get("ok"))
@@ -52,14 +76,13 @@ class TestTailscaleNetwork(unittest.TestCase):
         self.assertIn("member_id", data)
         self.assertIn("user_id", data)
 
-        # Verify record in server_commitmaster.db
         conn = server.get_db()
-        cur = conn.cursor()
-        cur.execute("SELECT * FROM network_members WHERE id = ?", (data["member_id"],))
-        m_row = cur.fetchone()
+        m_row = conn.execute("SELECT * FROM network_members WHERE id = ?", (data["member_id"],)).fetchone()
         self.assertIsNotNone(m_row)
+        self.assertEqual(m_row["tailscale_login"].lower(), "friend.developer@gmail.com")
         self.assertEqual(m_row["node_hostname"], "friend-thinkpad")
-        self.assertEqual(m_row["node_ip"], "100.99.88.77")
+        # The address is the peer we observed, not the client-supplied one.
+        self.assertNotEqual(m_row["node_ip"], "100.99.88.77")
         conn.close()
 
     def test_03_network_members_endpoint(self):

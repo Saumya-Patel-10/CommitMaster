@@ -9,7 +9,7 @@ import hashlib
 import os
 import secrets
 import threading
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict, List, Any, Tuple, Iterator
 try:
     import requests
@@ -1706,25 +1706,60 @@ def update_user(user_id: int, **kwargs) -> bool:
     return True
 
 
-def change_password(user_id: int, new_password: str, current_password: str = "") -> bool:
-    """Change a user's password."""
+def change_password_ex(user_id: int, new_password: str, current_password: str = "",
+                       totp_code: str = "", admin_reset: bool = False) -> Tuple[bool, str]:
+    """Change a user's password. Returns (ok, message); nothing changes locally unless ok.
+
+    Self-service changes must supply the current password (admin accounts also a TOTP code, which
+    only the server can check). `admin_reset=True` is for an administrator resetting someone else's
+    password; the server decides whether the session is allowed to do that. A server rejection is
+    reported to the caller instead of being swallowed (SEC-03).
+    """
     url = get_server_url()
     if url:
+        response = None
         try:
             payload = {"new_password": new_password}
             if current_password:
                 payload["current_password"] = current_password
-            requests.post(f"{url}/api/users/{user_id}/password",
-                          json=payload, headers=_get_api_headers(), timeout=6)
+            if totp_code:
+                payload["totp_code"] = totp_code
+            response = requests.post(f"{url}/api/users/{user_id}/password",
+                                     json=payload, headers=_get_api_headers(), timeout=6)
         except Exception:
-            pass
+            response = None  # server unreachable: fall back to the local rules below
+        if response is not None:
+            if response.status_code >= 400:
+                try:
+                    message = (response.json() or {}).get("error") or ""
+                except Exception:
+                    message = ""
+                return False, message or f"The server refused the password change (HTTP {response.status_code})."
+            # The server verified it; mirror the change locally without re-checking.
+            _apply_local_password(user_id, new_password)
+            return True, ""
 
+    if not admin_reset:
+        if not current_password:
+            return False, "Current password is required."
+        row = get_conn().execute("SELECT password_hash FROM users WHERE id = ?", (user_id,)).fetchone()
+        if not row or not _verify_password(current_password, row["password_hash"]):
+            return False, "Current password is incorrect."
+    _apply_local_password(user_id, new_password)
+    return True, ""
+
+
+def _apply_local_password(user_id: int, new_password: str) -> None:
     conn = get_conn()
-    pw_hash = _hash_password(new_password)
-    conn.execute("UPDATE users SET password_hash = ? WHERE id = ?", (pw_hash, user_id))
+    conn.execute("UPDATE users SET password_hash = ? WHERE id = ?", (_hash_password(new_password), user_id))
     conn.execute("DELETE FROM sessions WHERE user_id = ?", (user_id,))
     conn.commit()
-    return True
+
+
+def change_password(user_id: int, new_password: str, current_password: str = "",
+                    totp_code: str = "", admin_reset: bool = False) -> bool:
+    """Boolean wrapper around change_password_ex."""
+    return change_password_ex(user_id, new_password, current_password, totp_code, admin_reset)[0]
 
 
 def soft_delete_user(user_id: int) -> Tuple[bool, str]:
@@ -2344,7 +2379,8 @@ def get_dashboard_stats() -> Dict[str, Any]:
 
 def _save_local_session(token: str, user_id: int):
     try:
-        expires = (datetime.now() + timedelta(days=30)).strftime("%Y-%m-%d %H:%M:%S")
+        # sessions.expires_at is compared against SQLite's UTC datetime('now'), so store UTC.
+        expires = (datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(days=30)).strftime("%Y-%m-%d %H:%M:%S")
         conn = get_conn()
         conn.execute("DELETE FROM sessions WHERE user_id = ?", (user_id,))
         conn.execute(

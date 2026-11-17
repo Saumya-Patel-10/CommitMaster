@@ -27,9 +27,16 @@ import logging
 import time
 import threading
 import fnmatch
+import ipaddress
 from functools import wraps
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict, List, Any, Tuple
+
+
+def _utcnow() -> datetime:
+    """Naive UTC "now". SQLite's datetime('now') is UTC, so every timestamp this server writes or
+    compares must be UTC too; local time made short-lived tokens expire on creation west of UTC (SEC-04)."""
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 from flask import Flask, request, jsonify, render_template_string, g
 
@@ -204,13 +211,13 @@ def verify_password(password: str, password_hash: str) -> bool:
         if password_hash.startswith("sha256$"):
             parts = password_hash.split("$")
             salt, stored = parts[1], parts[2]
-            return hashlib.sha256(f"{salt}{password}".encode()).hexdigest() == stored
+            return hmac.compare_digest(hashlib.sha256(f"{salt}{password}".encode()).hexdigest(), stored)
         return bcrypt.checkpw(password.encode(), password_hash.encode())
     except Exception:
         if password_hash.startswith("sha256$"):
             parts = password_hash.split("$")
             salt, stored = parts[1], parts[2]
-            return hashlib.sha256(f"{salt}{password}".encode()).hexdigest() == stored
+            return hmac.compare_digest(hashlib.sha256(f"{salt}{password}".encode()).hexdigest(), stored)
         return False
 
 # Database connection
@@ -280,7 +287,7 @@ def get_current_user_from_token(token: Optional[str]) -> Optional[Dict[str, Any]
 def insert_session(cur, user_id: int, *, scope: str = "user", read_only: int = 0,
                    impersonator_id: Optional[int] = None, justification: str = "", hours: float = 24 * 30) -> Tuple[str, str]:
     token = secrets.token_urlsafe(32)
-    expires = (datetime.now() + timedelta(hours=hours)).strftime("%Y-%m-%d %H:%M:%S")
+    expires = (_utcnow() + timedelta(hours=hours)).strftime("%Y-%m-%d %H:%M:%S")
     cur.execute("""
         INSERT INTO sessions
             (token, user_id, expires_at, scope, read_only, impersonator_id, audience, justification)
@@ -328,25 +335,72 @@ def _totp_secret() -> str:
     logger.info("Created an admin authenticator secret on the server host. It is not sent to desktop clients.")
     return generated
 
+_TAILNET_NETWORKS = (ipaddress.ip_network("100.64.0.0/10"), ipaddress.ip_network("fd7a:115c:a1e0::/48"))
+
+
+def _env_flag(name: str) -> bool:
+    return os.getenv(name, "").strip().lower() in ("1", "true", "yes")
+
+
+def _is_tailnet_addr(addr: str) -> bool:
+    try:
+        ip = ipaddress.ip_address((addr or "").strip())
+    except ValueError:
+        return False
+    return any(ip in net for net in _TAILNET_NETWORKS)
+
+
+def _is_loopback_addr(addr: str) -> bool:
+    try:
+        return ipaddress.ip_address((addr or "").strip()).is_loopback
+    except ValueError:
+        return False
+
+
+def trusted_tailscale_identity(remote_addr: str, headers: Any) -> Optional[Dict[str, str]]:
+    """Return a Tailscale identity only when it is proven, never from a client's say-so.
+
+    Accepted proofs:
+      1. The TCP peer is a tailnet address and the local Tailscale daemon says who owns it
+         (`tailscale whois`). The peer address cannot be forged by an HTTP client.
+      2. The peer is loopback AND the operator enabled COMMITMASTER_TRUST_TAILSCALE_SERVE
+         (set automatically by --serve). `tailscale serve` strips client-supplied Tailscale-*
+         headers and sets its own, so they are trusted only on that hop. Any local process
+         can reach loopback, so this stays opt-in.
+      3. Loopback AND COMMITMASTER_TRUST_LOOPBACK_OWNER: the machine's own tailnet user.
+    Anything else (including an `X-Tailscale-Auth` or `Tailscale-User-Login` header on a
+    non-loopback connection) is ignored (SEC-01).
+    """
+    addr = (remote_addr or "").strip()
+    if not addr:
+        return None
+    if _is_tailnet_addr(addr):
+        info = tailscale_service.whois(addr) if tailscale_service else None
+        login = ((info or {}).get("login_name") or "").strip()
+        if not login:
+            return None
+        return {"login_name": login, "display_name": (info or {}).get("display_name") or "",
+                "hostname": (info or {}).get("hostname") or "", "source": "whois"}
+    if _is_loopback_addr(addr):
+        if _env_flag("COMMITMASTER_TRUST_TAILSCALE_SERVE"):
+            login = (headers.get("Tailscale-User-Login") or "").strip()
+            if login:
+                return {"login_name": login, "display_name": headers.get("Tailscale-User-Name", ""),
+                        "hostname": headers.get("Tailscale-User-Host", ""), "source": "serve-header"}
+        if _env_flag("COMMITMASTER_TRUST_LOOPBACK_OWNER") and tailscale_service:
+            owner = tailscale_service.get_tailnet_user()
+            if owner and owner.get("LoginName"):
+                return {"login_name": owner["LoginName"], "display_name": owner.get("DisplayName", ""),
+                        "hostname": tailscale_service.get_device_hostname() or "", "source": "loopback-owner"}
+    return None
+
+
 def get_user_from_tailscale_whois(remote_addr: str, headers: Any) -> Optional[Dict[str, Any]]:
-    """Look up active user mapped from Tailscale Whois or Tailscale-User-Login header."""
-    if not remote_addr:
+    """Active user mapped from a *proven* Tailscale identity. Never returns administrator rights."""
+    identity = trusted_tailscale_identity(remote_addr, headers)
+    if not identity:
         return None
-
-    ts_user_login = headers.get("Tailscale-User-Login")
-    if not ts_user_login and tailscale_service:
-        whois_data = tailscale_service.whois(remote_addr)
-        if whois_data:
-            ts_user_login = whois_data.get("login_name")
-
-    if not ts_user_login and remote_addr in ("127.0.0.1", "::1", "localhost") and tailscale_service:
-        self_u = tailscale_service.get_tailnet_user()
-        if self_u:
-            ts_user_login = self_u.get("LoginName")
-
-    if not ts_user_login:
-        return None
-
+    ts_user_login = identity["login_name"]
     try:
         conn = get_db()
         cur = conn.cursor()
@@ -360,6 +414,12 @@ def get_user_from_tailscale_whois(remote_addr: str, headers: Any) -> Optional[Di
         if row:
             u_dict = dict(row)
             u_dict.pop("password_hash", None)
+            # Network identity alone is never administrator authority (SEC-05): same downgrade
+            # get_current_user_from_token applies to non-admin sessions, and no stored secrets.
+            u_dict["role"] = "user"
+            u_dict["session_scope"] = "tailscale"
+            for secret_key in ("github_token", "openai_api_key", "claude_api_key", "gemini_api_key", "api_key"):
+                u_dict.pop(secret_key, None)
             return u_dict
     except Exception as exc:
         logger.error(f"Error checking Tailscale user: {exc}")
@@ -377,7 +437,8 @@ def require_auth(admin_only: bool = False, allow_self_user_id: bool = True):
         def wrapper(*args, **kwargs):
             tok = extract_auth_token()
             user = get_current_user_from_token(tok)
-            if not user and (request.remote_addr.startswith("100.") or request.headers.get("X-Tailscale-Auth") == "1"):
+            if not user:
+                # Only a proven Tailscale identity may stand in for a missing/stale token (SEC-01).
                 user = get_user_from_tailscale_whois(request.remote_addr, request.headers)
             if not user:
                 return jsonify({"error": "Unauthorized: valid session token required."}), 401
@@ -947,7 +1008,7 @@ def health():
             "service": "CommitMaster-Server",
             "environment": environment_name(),
             "tailscale": ts_info,
-            "timestamp": datetime.now().isoformat()
+            "timestamp": _utcnow().isoformat()
         })
     except Exception:
         return jsonify({"status": "error", "message": "Service unavailable."}), 500
@@ -960,24 +1021,13 @@ def auth_tailscale():
     Enables passwordless zero-friction sign-in over the private WireGuard mesh.
     """
     client_ip = request.remote_addr or ""
-    
-    ts_user_login = request.headers.get("Tailscale-User-Login")
-    ts_user_name = request.headers.get("Tailscale-User-Name", "")
-    ts_node_name = request.headers.get("Tailscale-User-Host", "")
 
-    if not ts_user_login and tailscale_service:
-        whois_info = tailscale_service.whois(client_ip)
-        if whois_info:
-            ts_user_login = whois_info.get("login_name")
-            ts_user_name = whois_info.get("display_name")
-            ts_node_name = whois_info.get("hostname")
-
-    if not ts_user_login and client_ip in ("127.0.0.1", "::1", "localhost") and tailscale_service:
-        self_user = tailscale_service.get_tailnet_user()
-        if self_user:
-            ts_user_login = self_user.get("LoginName")
-            ts_user_name = self_user.get("DisplayName", "")
-            ts_node_name = tailscale_service.get_device_hostname()
+    # Identity comes only from a proven source (see trusted_tailscale_identity); a
+    # Tailscale-User-Login header sent by an arbitrary client proves nothing (SEC-01).
+    identity = trusted_tailscale_identity(client_ip, request.headers)
+    ts_user_login = identity["login_name"] if identity else None
+    ts_user_name = (identity or {}).get("display_name", "")
+    ts_node_name = (identity or {}).get("hostname", "")
 
     if not ts_user_login:
         return jsonify({
@@ -1031,7 +1081,7 @@ def auth_tailscale():
         if nm.get("access_type") == "temporary" and nm.get("expires_at"):
             try:
                 exp_dt = datetime.strptime(nm["expires_at"], "%Y-%m-%d %H:%M:%S")
-                if datetime.now() > exp_dt:
+                if _utcnow() > exp_dt:
                     cur.execute("UPDATE network_members SET status = 'expired' WHERE id = ?", (nm["id"],))
                     conn.commit()
                     conn.close()
@@ -1125,30 +1175,29 @@ def network_join():
     data = request.get_json(force=True, silent=True) or {}
     client_ip = request.remote_addr or ""
     
-    ts_login = data.get("tailscale_login", "").strip()
-    node_hostname = data.get("node_hostname", "").strip()
-    node_ip = data.get("node_ip", "").strip() or client_ip
-    display_name = data.get("display_name", "").strip()
-    requested_username = data.get("username", "").strip()
-    invite_code = (data.get("invite_code") or "").strip().upper()
-    
-    # Auto-detect via Whois if available and missing
-    if not ts_login and tailscale_service:
-        whois_info = tailscale_service.whois(client_ip)
-        if whois_info:
-            ts_login = whois_info.get("login_name", "")
-            if not display_name:
-                display_name = whois_info.get("display_name", "")
-            if not node_hostname:
-                node_hostname = whois_info.get("hostname", "")
+    node_hostname = str(data.get("node_hostname", "")).strip()[:200]
+    display_name = str(data.get("display_name", "")).strip()[:200]
+    requested_username = str(data.get("username", "")).strip()[:64]
+    invite_code = str(data.get("invite_code") or "").strip().upper()
 
-    if not ts_login:
+    # The caller's identity is whatever we can prove about the connection, not what the body
+    # claims. A claimed `tailscale_login` of the administrator's email used to be auto-approved
+    # as a permanent admin member (SEC-02). The claim is now only a display hint.
+    identity = trusted_tailscale_identity(client_ip, request.headers)
+    verified = bool(identity)
+    if identity:
+        ts_login = identity["login_name"]
+        display_name = display_name or identity.get("display_name", "")
+        node_hostname = node_hostname or identity.get("hostname", "")
+    else:
         ts_login = f"node-{secrets.token_hex(4)}@tailnet.local"
+    # The node address is the peer address we observed, never a client-supplied value.
+    node_ip = client_ip
 
     conn = get_db()
     cur = conn.cursor()
 
-    is_admin_user = (ts_login.lower() == DEFAULT_ADMIN_EMAIL.lower())
+    is_admin_user = verified and (ts_login.lower() == DEFAULT_ADMIN_EMAIL.lower())
     initial_status = "pending"
     access_type = "temporary"
     expires_at = None
@@ -1165,10 +1214,10 @@ def network_join():
         if inv:
             try:
                 exp_dt = datetime.strptime(inv["expires_at"], "%Y-%m-%d %H:%M:%S")
-                if datetime.now() <= exp_dt:
+                if _utcnow() <= exp_dt:
                     initial_status = "approved"
                     access_type = "temporary"
-                    expires_at = (datetime.now() + timedelta(hours=inv["duration_hours"])).strftime("%Y-%m-%d %H:%M:%S")
+                    expires_at = (_utcnow() + timedelta(hours=inv["duration_hours"])).strftime("%Y-%m-%d %H:%M:%S")
                     new_uses = inv["uses_count"] + 1
                     new_st = "used" if new_uses >= inv["max_uses"] else "active"
                     cur.execute("UPDATE network_invites SET uses_count = ?, status = ? WHERE id = ?", (new_uses, new_st, inv["id"]))
@@ -1180,8 +1229,13 @@ def network_join():
     user_row = cur.fetchone()
     
     user_id = None
+    if user_row and not verified:
+        # An unverified caller must not be linked to a real account (it could be anyone's).
+        user_row = None
     if user_row:
         user_id = user_row["id"]
+    elif not verified:
+        user_id = None  # anonymous request stays a pending node; no account is created for it
     else:
         # Create standard user profile for friend
         uname = requested_username or ts_login.split("@")[0].replace(".", "_")
@@ -1199,9 +1253,9 @@ def network_join():
         cur.execute("INSERT OR IGNORE INTO user_preferences (user_id) VALUES (?)", (user_id,))
 
     # Upsert network_members entry
-    cur.execute("""
-        SELECT * FROM network_members WHERE LOWER(tailscale_login) = LOWER(?) OR (node_ip = ? AND node_ip != '')
-    """, (ts_login, node_ip))
+    # Rows are matched by the proven login only. Matching on IP let a request from a shared or
+    # loopback address update (and approve) somebody else's row.
+    cur.execute("SELECT * FROM network_members WHERE LOWER(tailscale_login) = LOWER(?)", (ts_login,))
     member_row = cur.fetchone()
 
     if member_row:
@@ -1278,7 +1332,7 @@ def get_network_members():
     """
     tok = extract_auth_token()
     current_user = get_current_user_from_token(tok)
-    if not current_user and request.remote_addr.startswith("100."):
+    if not current_user:
         current_user = get_user_from_tailscale_whois(request.remote_addr, request.headers)
     
     is_admin = bool(current_user and current_user.get("role") == "admin")
@@ -1338,7 +1392,7 @@ def update_network_member_access(member_id):
     expires_at = None
     if status == "approved":
         if access_type == "temporary":
-            expires_at = (datetime.now() + timedelta(hours=duration_hours)).strftime("%Y-%m-%d %H:%M:%S")
+            expires_at = (_utcnow() + timedelta(hours=duration_hours)).strftime("%Y-%m-%d %H:%M:%S")
         else:
             access_type = "permanent"
             expires_at = None
@@ -1379,7 +1433,7 @@ def manage_network_invites():
 
         invite_code = f"CM-PASS-{secrets.token_hex(4).upper()}"
         invite_validity_days = int(data.get("validity_days") or 7)
-        invite_expiration = (datetime.now() + timedelta(days=invite_validity_days)).strftime("%Y-%m-%d %H:%M:%S")
+        invite_expiration = (_utcnow() + timedelta(days=invite_validity_days)).strftime("%Y-%m-%d %H:%M:%S")
 
         cur.execute("""
             INSERT INTO network_invites (invite_code, duration_hours, expires_at, max_uses, uses_count, status, created_by, notes)
@@ -1690,7 +1744,7 @@ def auth_login():
     cur.execute("UPDATE users SET last_login = datetime('now') WHERE id = ?", (user_id,))
 
     # Record daily usage session
-    today = datetime.now().strftime("%Y-%m-%d")
+    today = _utcnow().strftime("%Y-%m-%d")
     cur.execute("""
         INSERT INTO app_usage (user_id, date, sessions)
         VALUES (?, ?, 1)
@@ -1840,22 +1894,45 @@ def user_change_password(user_id):
     conn = get_db()
     cur = conn.cursor()
 
-    # Require current password verification for standard self-service users
-    if g.current_user.get("role") != "admin":
+    cur.execute("SELECT password_hash, role FROM users WHERE id = ?", (user_id,))
+    u_row = cur.fetchone()
+    if not u_row:
+        conn.close()
+        return jsonify({"error": "User not found"}), 404
+
+    actor = g.current_user
+    is_self = actor.get("id") == user_id
+    privileged_reset = (actor.get("session_scope") == "admin"
+                        and not actor.get("session_impersonator_id") and not is_self)
+
+    if not privileged_reset:
+        # Changing your own password always proves knowledge of the current one. A stolen or
+        # unattended session (or a Tailscale network identity) must not be able to take over the
+        # account, and omitting the field is a failure, not a bypass (SEC-03).
         cur_pw = data.get("current_password") or ""
-        cur.execute("SELECT password_hash FROM users WHERE id = ?", (user_id,))
-        u_row = cur.fetchone()
-        if not u_row:
+        if not cur_pw:
             conn.close()
-            return jsonify({"error": "User not found"}), 404
-        if cur_pw and not verify_password(cur_pw, u_row["password_hash"]):
+            return jsonify({"error": "Current password is required."}), 400
+        if not verify_password(cur_pw, u_row["password_hash"]):
+            write_audit(cur, actor.get("id"), "password_change_denied", user_id, "wrong current password")
+            conn.commit()
             conn.close()
             return jsonify({"error": "Current password is incorrect."}), 401
+        if (u_row["role"] or "") == "admin":
+            # The administrator account is also protected by the authenticator code.
+            from commitmaster.totp import verify_totp
+            if not verify_totp(_totp_secret(), (data.get("totp_code") or "").strip()):
+                write_audit(cur, actor.get("id"), "password_change_denied", user_id, "authenticator code rejected")
+                conn.commit()
+                conn.close()
+                return jsonify({"error": "Authenticator code is required for the administrator account."}), 401
 
     pw_hash = hash_password(new_pw)
     cur.execute("UPDATE users SET password_hash = ? WHERE id = ?", (pw_hash, user_id))
     # Security: Invalidate all active sessions for this account
     cur.execute("DELETE FROM sessions WHERE user_id = ?", (user_id,))
+    write_audit(cur, actor.get("id"), "password_reset_by_admin" if privileged_reset else "password_changed",
+                user_id, "")
     conn.commit()
     conn.close()
     return jsonify({"ok": True})
@@ -1993,7 +2070,7 @@ def activity_commits():
         """, (user_id, repo_path, repo_name, commit_hash, commit_msg, files_count, status))
 
         if status == "committed":
-            today = datetime.now().strftime("%Y-%m-%d")
+            today = _utcnow().strftime("%Y-%m-%d")
             cur.execute("""
                 INSERT INTO app_usage (user_id, date, sessions, commits_made)
                 VALUES (?, ?, 0, 1)
@@ -2064,7 +2141,7 @@ def metrics_timeseries():
     else:
         user_id = request.args.get("user_id", type=int)
 
-    today = datetime.now().date()
+    today = _utcnow().date()
     dates = [(today - timedelta(days=d)).strftime("%Y-%m-%d") for d in range(days - 1, -1, -1)]
     idx = {d: i for i, d in enumerate(dates)}
     names = ["sessions", "active_users", "commits", "files_committed", "pushes", "scans",
@@ -2117,7 +2194,7 @@ def metrics_user_commits():
     days = request.args.get("days", default=30, type=int)
     limit = request.args.get("limit", default=5, type=int)
 
-    today = datetime.now().date()
+    today = _utcnow().date()
     dates = [(today - timedelta(days=d)).strftime("%Y-%m-%d") for d in range(days - 1, -1, -1)]
     idx = {d: i for i, d in enumerate(dates)}
 
@@ -2161,7 +2238,7 @@ def usage_stats():
         user_id = g.current_user["id"]
     else:
         user_id = request.args.get("user_id", type=int)
-    since = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+    since = (_utcnow() - timedelta(days=days)).strftime("%Y-%m-%d")
 
     conn = get_db()
     if user_id:
@@ -2327,7 +2404,7 @@ def admin_stats():
     cur.execute("SELECT COUNT(*) FROM commit_activity")
     stats["total_commits"] = cur.fetchone()[0]
 
-    today = datetime.now().strftime("%Y-%m-%d")
+    today = _utcnow().strftime("%Y-%m-%d")
     cur.execute("SELECT COUNT(DISTINCT user_id) FROM app_usage WHERE date = ?", (today,))
     stats["active_today"] = cur.fetchone()[0]
 
@@ -2379,7 +2456,7 @@ def system_settings_route():
         data = request.get_json(force=True, silent=True) or {}
         key = data.get("key")
         value = data.get("value")
-        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        now = _utcnow().strftime("%Y-%m-%d %H:%M:%S")
 
         if key:
             cur.execute("""
@@ -2582,6 +2659,11 @@ if __name__ == "__main__":
         if ts_ip:
             host = ts_ip
             print(f"[Tailscale] Binding exclusively to Tailnet IP: {host}")
+
+    if args.serve:
+        # Operator explicitly fronts this server with `tailscale serve`: its loopback hop is the one
+        # place Tailscale-User-* headers are trustworthy (it overwrites client-sent values).
+        os.environ.setdefault("COMMITMASTER_TRUST_TAILSCALE_SERVE", "1")
 
     if args.serve and tailscale_service:
         ts_bin = tailscale_service.get_tailscale_binary()

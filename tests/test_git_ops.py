@@ -249,14 +249,14 @@ class TestCommitAndPush(Base):
         repo, remote = self.repo_with_remote()
         for i in range(4000):
             write(repo, f"src/pkg{i // 100}/mod{i}.py", f"VALUE = {i}\n")
-        for attempt in range(3):           # fixture only: Windows real-time scanners can lock fresh files
+        for attempt in range(6):           # fixture only: Windows real-time scanners can lock fresh files
             try:
                 git(repo, "add", "-A")
                 break
             except AssertionError:
-                if attempt == 2:
+                if attempt == 5:
                     raise
-                time.sleep(2)
+                time.sleep(2 + attempt * 2)
         git(repo, "commit", "-m", "bulk")
         git(repo, "push", "origin", "main")
         write(repo, "src/pkg0/mod0.py", "VALUE = 'changed'\n")

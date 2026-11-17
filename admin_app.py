@@ -4244,7 +4244,9 @@ class AdminApp:
             db.update_user(user["id"], full_name=d["full_name"],
                            email=d["email"], role=d["role"])
             if d.get("password"):
-                db.change_password(user["id"], d["password"])
+                ok, message = db.change_password_ex(user["id"], d["password"], admin_reset=True)
+                if not ok:
+                    messagebox.showerror("Password Not Changed", message, parent=self.root)
             messagebox.showinfo("Saved", "User updated.", parent=self.root)
             self._refresh_users_list()
 
@@ -5133,10 +5135,14 @@ class AdminApp:
         tk.Label(pc, text="Change Password", font=FONTS["heading_sm"],
                  fg=COLORS["text_primary"], bg=COLORS["bg_card"]).pack(
             anchor="w", pady=(0, 10))
+        self._pw0_var = tk.StringVar()
         self._pw1_var = tk.StringVar()
         self._pw2_var = tk.StringVar()
+        self._pwtotp_var = tk.StringVar()
+        self._entry_row(pc, "Current Password:", self._pw0_var, width=18, show="•")
         self._entry_row(pc, "New Password:",     self._pw1_var, width=18, show="•")
         self._entry_row(pc, "Confirm Password:", self._pw2_var, width=18, show="•")
+        self._entry_row(pc, "Authenticator Code:", self._pwtotp_var, width=18)
         self._primary_btn(pc, "  🔒  Change Password",
                           self._change_password,
                           color=COLORS["warning"]).pack(anchor="w", pady=(4, 0))
@@ -5229,9 +5235,19 @@ class AdminApp:
                                    "Password must be at least 6 characters.",
                                    parent=self.root)
             return
-        db.change_password(self.user["id"], pw1)
-        self._pw1_var.set("")
-        self._pw2_var.set("")
+        current = self._pw0_var.get()
+        if not current:
+            messagebox.showwarning("Error", "Enter your current password.", parent=self.root)
+            return
+        ok, message = db.change_password_ex(
+            self.user["id"], pw1, current_password=current,
+            totp_code=self._pwtotp_var.get().strip())
+        if not ok:
+            messagebox.showerror("Password Not Changed", message or "The password was not changed.",
+                                 parent=self.root)
+            return
+        for var in (self._pw0_var, self._pw1_var, self._pw2_var, self._pwtotp_var):
+            var.set("")
         messagebox.showinfo("Done", "Password changed successfully!", parent=self.root)
 
     def _save_acct_profile(self):

@@ -3116,6 +3116,7 @@ class UserDashboard:
 
         self._pw_vars = {}
         for label, key, show in [
+            ("Current Password", "current_pw", "•"),
             ("New Password", "new_pw", "•"),
             ("Confirm New", "confirm_pw", "•"),
         ]:
@@ -3236,7 +3237,17 @@ class UserDashboard:
                                    "Password must be at least 6 characters.",
                                    parent=self.root)
             return
-        db.change_password(self.user["id"], new_pw)
+        current = self._pw_vars["current_pw"].get()
+        if not current:
+            messagebox.showwarning("Error", "Enter your current password.", parent=self.root)
+            return
+        ok, message = db.change_password_ex(self.user["id"], new_pw, current_password=current)
+        if not ok:
+            messagebox.showerror("Password Not Changed", message or "The password was not changed.",
+                                 parent=self.root)
+            return
+        for var in self._pw_vars.values():
+            var.set("")
         messagebox.showinfo("Success", "Password changed successfully!", parent=self.root)
     # ── GitHub Accounts Page ──────────────────────────────────────────────────
 

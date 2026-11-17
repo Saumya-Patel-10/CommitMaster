@@ -548,8 +548,10 @@ class AdminPortal:
 
         self._my_pw_vars = {}
         pw_fields = [
+            ("Current Password", "current", "•"),
             ("New Password",     "new_pw",  "•"),
             ("Confirm Password", "confirm", "•"),
+            ("Authenticator Code", "totp",  ""),
         ]
         for label, key, show in pw_fields:
             pf = tk.Frame(pw_card, bg=COLORS["bg_card"])
@@ -669,7 +671,17 @@ class AdminPortal:
                                    "Password must be at least 6 characters.",
                                    parent=self.root)
             return
-        db.change_password(self.admin_user["id"], new_pw)
+        current = self._my_pw_vars["current"].get()
+        if not current:
+            messagebox.showwarning("Error", "Enter your current password.", parent=self.root)
+            return
+        ok, message = db.change_password_ex(
+            self.admin_user["id"], new_pw, current_password=current,
+            totp_code=self._my_pw_vars["totp"].get().strip())
+        if not ok:
+            messagebox.showerror("Password Not Changed", message or "The password was not changed.",
+                                 parent=self.root)
+            return
         for v in self._my_pw_vars.values():
             v.set("")
         messagebox.showinfo("Password Changed",
@@ -1295,7 +1307,9 @@ class AdminPortal:
                            email=d["email"],
                            role=d["role"])
             if d.get("password"):
-                db.change_password(user["id"], d["password"])
+                ok, message = db.change_password_ex(user["id"], d["password"], admin_reset=True)
+                if not ok:
+                    messagebox.showerror("Password Not Changed", message, parent=self.root)
             messagebox.showinfo("Saved", "User updated.", parent=self.root)
             self._refresh_users()
 
