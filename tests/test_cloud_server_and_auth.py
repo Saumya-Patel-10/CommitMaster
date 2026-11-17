@@ -11,6 +11,7 @@ import sys
 import json
 import threading
 import time
+from werkzeug.serving import make_server
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -32,15 +33,20 @@ class TestCloudServerAndAuth(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         db.init_db()
-        # Start server in background thread on a test port
+        # Start server in background thread on a test port using make_server for clean teardown
         cls.test_port = 8765
         cls.server_url = f"http://127.0.0.1:{cls.test_port}"
-        cls.thread = threading.Thread(
-            target=lambda: server.app.run(host="127.0.0.1", port=cls.test_port, debug=False, use_reloader=False),
-            daemon=True
-        )
+        cls.srv = make_server("127.0.0.1", cls.test_port, server.app)
+        cls.thread = threading.Thread(target=cls.srv.serve_forever, daemon=True)
         cls.thread.start()
-        time.sleep(1)  # wait for server to start
+        time.sleep(0.5)  # wait for server to start
+
+    @classmethod
+    def tearDownClass(cls):
+        if hasattr(cls, "srv"):
+            cls.srv.shutdown()
+        if hasattr(cls, "thread"):
+            cls.thread.join(timeout=2)
 
     def test_01_local_check_user_exists(self):
         """Verify check_user_exists works locally and doesn't crash."""
