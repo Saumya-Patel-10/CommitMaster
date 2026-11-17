@@ -23,8 +23,8 @@ def make_repo(path, branch="main", commit=True):
     git(path, "config", "user.name", "T")
     git(path, "config", "commit.gpgsign", "false")
     if commit:
-        with open(os.path.join(path, "a.txt"), "w") as handle:
-            handle.write("a\n")
+        from pathlib import Path
+        (Path(path) / "a.txt").write_text("a\n", encoding="utf-8")
         git(path, "add", "a.txt")
         git(path, "commit", "-m", "one")
     return path

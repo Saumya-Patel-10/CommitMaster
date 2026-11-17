@@ -39,7 +39,7 @@ class FakeTailscale:
         return "hub.tailnet.test"
 server.tailscale_service = FakeTailscale()
 
-def register(name, email, password="victim-password-1"):
+def register(name, email, password="victim-password-1"):  # nosec - test credential fixture
     r = client.post("/api/auth/register", json={"username": name, "email": email,
                     "full_name": name, "password": password})
     assert r.status_code == 201, r.get_json()

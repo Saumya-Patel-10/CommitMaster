@@ -25,8 +25,8 @@ def make_repo(path):
     subprocess.run(["git", "init", "-b", "main", path], check=True, capture_output=True)
     git(path, "config", "user.email", "t@example.com")
     git(path, "config", "user.name", "T")
-    with open(os.path.join(path, "README.md"), "w") as f:
-        f.write("hi\n")
+    from pathlib import Path
+    (Path(path) / "README.md").write_text("hi\n", encoding="utf-8")
     git(path, "add", "README.md")
     git(path, "commit", "-m", "init")
 

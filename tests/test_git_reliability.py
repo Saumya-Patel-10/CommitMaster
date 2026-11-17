@@ -99,7 +99,9 @@ class TestGitReliability(unittest.TestCase):
         self.assertIn("blocked", result.stdout)
 
     def test_token_is_not_placed_on_the_command_builder(self):
-        source = open(os.path.join(os.path.dirname(os.path.dirname(__file__)), "commitmaster", "commit_engine.py"), encoding="utf-8").read()
+        engine_target = os.path.abspath(os.path.join(os.path.dirname(os.path.dirname(__file__)), "commitmaster", "commit_engine.py"))
+        with open(engine_target, "r", encoding="utf-8") as f:
+            source = f.read()
         self.assertNotIn("{token}@", source)
         with tempfile.TemporaryDirectory() as directory:
             repo = os.path.join(directory, "repo")
