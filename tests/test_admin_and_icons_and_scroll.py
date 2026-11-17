@@ -124,7 +124,7 @@ class TestAdminScrollAndLogos(unittest.TestCase):
         app._canvas.yview_scroll(10, "units")
         after_scroll = app._canvas.yview()
         self.assertGreater(after_scroll[0], before_scroll[0])
-        app.root.destroy()
+        app._on_close_window()
 
     def test_05_admin_portal_window_resizability_and_protocol(self):
         """Verify AdminPortal window is resizable, has minsize, and binds WM_DELETE_WINDOW."""
