@@ -28,7 +28,7 @@ from commitmaster import database as db
 from commitmaster import avatar_utils
 from commitmaster import pattern_utils
 from commitmaster import commit_engine, ai_messages, ui, github_service, file_inspector, repo_analyzer
-from commitmaster import commit_composer, charts, navigation, issue_view, git_ops
+from commitmaster import commit_composer, charts, navigation, issue_view, git_ops, view_3d_pages
 from commitmaster.config import load_config, save_config
 from commitmaster.app_styles import (
     COLORS, FONTS, SIZES, AVATAR_COLORS, THEMES, ACCENTS, FONT_FAMILIES, FONT_SCALES,
@@ -554,7 +554,13 @@ class AdminApp:
         self._section_label(target, "MY WORKSPACE")
         workspace_nav = [
             ("📊", "Overview",            "overview"),
+            ("✨", "3D Specialist Hub",   "3d_hub"),
             ("💻", "Git Desktop",         "git_desktop"),
+            ("🌌", "3D Git Galaxy",       "3d_galaxy"),
+            ("🏛️", "3D Architecture",     "3d_architecture"),
+            ("🛡️", "3D Security Map",     "3d_security"),
+            ("🤖", "3D AI Agents",        "3d_agents"),
+            ("🔀", "3D Merge Sim",        "3d_merge"),
             ("📁", "Watched Repos",       "watched_repos"),
             ("📝", "My Commits",          "commits"),
             ("🐙", "GitHub Accounts",     "github_accounts"),
@@ -565,13 +571,16 @@ class AdminApp:
 
         # ── ADMIN CONTROL section ──────────────────────────────────────────────
         admin_nav = [
-            ("🛡", "Admin Dashboard", "admin_dashboard"),
-            ("👥", "Users",           "users"),
-            ("📡", "Tailnet Fleet",   "fleet"),
-            ("📋", "Activity Log",    "activity"),
-            ("📈", "Usage Charts",    "charts"),
-            ("🌐", "Global Settings", "global_settings"),
-            ("🔑", "My Account",      "my_settings"),
+            ("🛡", "Admin Dashboard",    "admin_dashboard"),
+            ("👥", "Users",              "users"),
+            ("📡", "Tailnet Fleet",      "fleet"),
+            ("🌐", "3D Device Topology", "3d_topology"),
+            ("🌍", "3D Health Globe",    "3d_health"),
+            ("🚀", "3D Pipeline",        "3d_pipeline"),
+            ("📋", "Activity Log",       "activity"),
+            ("📈", "Usage Charts",       "charts"),
+            ("🌐", "Global Settings",    "global_settings"),
+            ("🔑", "My Account",         "my_settings"),
         ]
 
         all_nav = [("workspace", workspace_nav), ("admin", admin_nav)]
@@ -676,13 +685,20 @@ class AdminApp:
 
     # ── Navigation ────────────────────────────────────────────────────────────
 
-    _WORKSPACE_KEYS = {"overview", "git_desktop", "watched_repos", "commits", "github_accounts", "customize", "settings", "profile"}
-    _ADMIN_KEYS = {"admin_dashboard", "users", "fleet", "activity",
+    _WORKSPACE_KEYS = {"overview", "3d_hub", "git_desktop", "3d_galaxy", "3d_architecture", "3d_security", "3d_agents", "3d_merge",
+                       "watched_repos", "commits", "github_accounts", "customize", "settings", "profile"}
+    _ADMIN_KEYS = {"admin_dashboard", "users", "fleet", "3d_topology", "3d_health", "3d_pipeline", "activity",
                    "charts", "global_settings", "my_settings", "account"}
 
     _TITLES = {
         "overview":        "Overview",
+        "3d_hub":          "3D Specialist Hub",
         "git_desktop":     "Git Desktop",
+        "3d_galaxy":       "3D Git Commit Galaxy",
+        "3d_architecture": "3D Codebase Architecture Explorer",
+        "3d_security":     "3D Security Risk Map",
+        "3d_agents":       "AI Multi-Agent Workflow Pipeline",
+        "3d_merge":        "3D Branch Merge Simulator",
         "watched_repos":   "Watched Repositories",
         "commits":         "My Commits",
         "github_accounts": "GitHub Accounts & Repositories",
@@ -692,6 +708,9 @@ class AdminApp:
         "admin_dashboard": "Admin Dashboard",
         "users":           "User Management",
         "fleet":           "Tailnet Mesh Fleet & Nodes",
+        "3d_topology":     "3D Device & Network Topology",
+        "3d_health":       "AI Code Health Globe",
+        "3d_pipeline":     "3D Deployment Pipeline",
         "activity":        "Activity Log",
         "charts":          "Usage Charts",
         "global_settings": "Global Settings",
@@ -742,7 +761,13 @@ class AdminApp:
 
         pages = {
             "overview":        self._page_overview,
+            "3d_hub":          lambda: view_3d_pages.render_3d_hub_page(self),
             "git_desktop":     self._page_git_desktop,
+            "3d_galaxy":       lambda: view_3d_pages.render_3d_galaxy_page(self),
+            "3d_architecture": lambda: view_3d_pages.render_3d_architecture_page(self),
+            "3d_security":     lambda: view_3d_pages.render_3d_security_page(self),
+            "3d_agents":       lambda: view_3d_pages.render_3d_agents_page(self),
+            "3d_merge":        lambda: view_3d_pages.render_3d_merge_page(self),
             "watched_repos":   self._page_watched_repos,
             "commits":         self._page_commits,
             "github_accounts": self._page_github_accounts,
@@ -752,6 +777,9 @@ class AdminApp:
             "admin_dashboard": self._page_admin_dashboard,
             "users":           self._page_users,
             "fleet":           self._page_fleet,
+            "3d_topology":     lambda: view_3d_pages.render_3d_topology_page(self),
+            "3d_health":       lambda: view_3d_pages.render_3d_health_page(self),
+            "3d_pipeline":     lambda: view_3d_pages.render_3d_pipeline_page(self),
             "activity":        self._page_activity,
             "charts":          self._page_charts,
             "global_settings": self._page_global_settings,
@@ -955,6 +983,27 @@ class AdminApp:
                          command=lambda: self._go("git_desktop"))
         btn1.pack(side="left", padx=(0, 8))
 
+        btn_galaxy = tk.Button(actions_bar, text="🌌 3D Commit Galaxy", font=FONTS["caption"],
+                               bg=COLORS["bg_medium"], fg=COLORS["accent"],
+                               activebackground=COLORS["bg_card_hover"],
+                               relief="flat", bd=0, cursor="hand2", padx=12, pady=5,
+                               command=lambda: self._go("3d_galaxy"))
+        btn_galaxy.pack(side="left", padx=(0, 8))
+
+        btn_arch = tk.Button(actions_bar, text="🏛️ 3D Architecture", font=FONTS["caption"],
+                             bg=COLORS["bg_medium"], fg=COLORS["accent"],
+                             activebackground=COLORS["bg_card_hover"],
+                             relief="flat", bd=0, cursor="hand2", padx=12, pady=5,
+                             command=lambda: self._go("3d_architecture"))
+        btn_arch.pack(side="left", padx=(0, 8))
+
+        btn_sec = tk.Button(actions_bar, text="🛡️ 3D Security", font=FONTS["caption"],
+                            bg=COLORS["bg_medium"], fg=COLORS["danger"],
+                            activebackground=COLORS["bg_card_hover"],
+                            relief="flat", bd=0, cursor="hand2", padx=12, pady=5,
+                            command=lambda: self._go("3d_security"))
+        btn_sec.pack(side="left", padx=(0, 8))
+
         btn2 = tk.Button(actions_bar, text="👥 Admin Users", font=FONTS["caption"],
                          bg=COLORS["bg_medium"], fg=COLORS["text_primary"],
                          activebackground=COLORS["bg_card_hover"],
@@ -962,12 +1011,42 @@ class AdminApp:
                          command=lambda: self._go("users"))
         btn2.pack(side="left", padx=(0, 8))
 
-        btn3 = tk.Button(actions_bar, text="🎨 Surface Patterns", font=FONTS["caption"],
+        btn3 = tk.Button(actions_bar, text="🎨 Patterns", font=FONTS["caption"],
                          bg=COLORS["bg_medium"], fg=COLORS["text_secondary"],
                          activebackground=COLORS["bg_card_hover"],
                          relief="flat", bd=0, cursor="hand2", padx=12, pady=5,
                          command=lambda: self._go("customize"))
         btn3.pack(side="left")
+
+        # 3D Interactive Features Hub Card
+        self._section_hdr(p, "3D INTERACTIVE VISUALIZATIONS", (14, 8))
+        hub3d_card = self._card(p)
+        hub3d_card.pack(fill="x", pady=(0, 16))
+        tk.Frame(hub3d_card, height=3, bg=COLORS["accent"]).pack(fill="x")
+        hub_inner = tk.Frame(hub3d_card, bg=COLORS["bg_card"], padx=18, pady=14)
+        hub_inner.pack(fill="both")
+
+        tk.Label(hub_inner, text="🌌 CommitMaster 3D Interactive Hub", font=FONTS["heading_sm"],
+                 fg=COLORS["text_primary"], bg=COLORS["bg_card"]).pack(anchor="w")
+        tk.Label(hub_inner, text="Hardware-accelerated 3D WebGL visualizations of Git history, codebase architecture, security risk heatmaps, and mesh network topologies.",
+                 font=FONTS["caption"], fg=COLORS["text_secondary"], bg=COLORS["bg_card"]).pack(anchor="w", pady=(2, 10))
+
+        hub_btn_row = tk.Frame(hub_inner, bg=COLORS["bg_card"])
+        hub_btn_row.pack(fill="x")
+
+        def _make_hub_btn(parent, icon, text, key, color):
+            b = tk.Button(parent, text=f"{icon} {text}", font=FONTS["caption"],
+                          bg=COLORS["bg_medium"], fg=color, activebackground=COLORS["bg_card_hover"],
+                          relief="flat", bd=0, cursor="hand2", padx=12, pady=6,
+                          command=lambda: self._go(key))
+            b.pack(side="left", padx=(0, 8), pady=2)
+
+        _make_hub_btn(hub_btn_row, "🌌", "Commit Galaxy", "3d_galaxy", COLORS["accent"])
+        _make_hub_btn(hub_btn_row, "🏛️", "Architecture", "3d_architecture", COLORS["accent"])
+        _make_hub_btn(hub_btn_row, "🛡️", "Security Risk Map", "3d_security", COLORS["danger"])
+        _make_hub_btn(hub_btn_row, "🤖", "AI Multi-Agent", "3d_agents", COLORS["info"])
+        _make_hub_btn(hub_btn_row, "🔀", "Merge Simulator", "3d_merge", COLORS["warning"])
+        _make_hub_btn(hub_btn_row, "🌐", "Device Topology", "3d_topology", COLORS["admin"])
 
         # My personal stats
         self._section_hdr(p, "MY ACTIVITY", (0, 8))
