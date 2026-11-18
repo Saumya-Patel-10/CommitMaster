@@ -1,0 +1,357 @@
+/* ==========================================================================
+   CommitMaster 3D — Panel Styles
+   All panels use the --cm-* custom property system from globals.css
+   ========================================================================== */
+
+/* --------------------------------------------------------------------------
+   InfoPanel — Glassmorphism side panel for node/commit details
+   -------------------------------------------------------------------------- */
+.info-panel {
+  position: absolute;
+  right: 20px;
+  top: 20px;
+  width: 340px;
+  max-height: calc(100vh - 40px);
+  overflow-y: auto;
+  padding: 20px;
+  z-index: 100;
+
+  /* Glassmorphism */
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  background: rgba(13, 19, 34, 0.82);
+  border: 1px solid var(--cm-border);
+  border-radius: var(--cm-radius);
+  box-shadow: var(--cm-shadow-lg);
+
+  /* Entry animation */
+  animation: slide-in-right 300ms ease-out;
+}
+
+.info-panel__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--cm-border);
+}
+
+.info-panel__title {
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--cm-text-primary);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.info-panel__title-icon {
+  width: 18px;
+  height: 18px;
+  color: var(--cm-accent);
+}
+
+.info-panel__close {
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  color: var(--cm-text-muted);
+  border-radius: var(--cm-radius-xs);
+  cursor: pointer;
+  transition: color var(--cm-transition-fast),
+              background var(--cm-transition-fast);
+}
+
+.info-panel__close:hover {
+  color: var(--cm-text-primary);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.info-panel__body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.info-panel__field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.info-panel__label {
+  font-size: 0.7rem;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--cm-text-muted);
+}
+
+.info-panel__value {
+  font-size: 0.875rem;
+  color: var(--cm-text-secondary);
+  word-break: break-word;
+}
+
+.info-panel__value--accent {
+  color: var(--cm-accent);
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 0.8rem;
+}
+
+.info-panel__tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.info-panel__tag {
+  display: inline-block;
+  padding: 2px 8px;
+  font-size: 0.7rem;
+  font-weight: 500;
+  border-radius: 999px;
+  background: rgba(0, 229, 255, 0.1);
+  color: var(--cm-accent);
+  border: 1px solid rgba(0, 229, 255, 0.15);
+}
+
+.info-panel__tag--violet {
+  background: rgba(168, 85, 247, 0.1);
+  color: var(--cm-accent-violet);
+  border-color: rgba(168, 85, 247, 0.15);
+}
+
+/* --------------------------------------------------------------------------
+   Search Overlay — Centered command-palette-style search
+   -------------------------------------------------------------------------- */
+.search-overlay {
+  position: absolute;
+  top: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(480px, calc(100% - 40px));
+  z-index: 200;
+
+  /* Glassmorphism */
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  background: rgba(13, 19, 34, 0.88);
+  border: 1px solid var(--cm-border);
+  border-radius: var(--cm-radius);
+  box-shadow:
+    var(--cm-shadow-lg),
+    0 0 60px rgba(0, 0, 0, 0.3);
+
+  /* Entry animation */
+  animation: fade-in 200ms ease-out, scale-in 200ms ease-out;
+}
+
+.search-overlay__input-wrapper {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--cm-border);
+}
+
+.search-overlay__icon {
+  width: 18px;
+  height: 18px;
+  color: var(--cm-text-muted);
+  flex-shrink: 0;
+}
+
+.search-overlay__input {
+  flex: 1;
+  border: none;
+  background: transparent;
+  color: var(--cm-text-primary);
+  font-size: 0.95rem;
+  outline: none;
+}
+
+.search-overlay__input::placeholder {
+  color: var(--cm-text-muted);
+}
+
+.search-overlay__results {
+  max-height: 320px;
+  overflow-y: auto;
+  padding: 8px;
+}
+
+.search-overlay__result {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: var(--cm-radius-sm);
+  cursor: pointer;
+  transition: background var(--cm-transition-fast);
+}
+
+.search-overlay__result:hover,
+.search-overlay__result--active {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.search-overlay__result-icon {
+  width: 16px;
+  height: 16px;
+  color: var(--cm-accent);
+  flex-shrink: 0;
+}
+
+.search-overlay__result-text {
+  flex: 1;
+  font-size: 0.875rem;
+  color: var(--cm-text-secondary);
+}
+
+.search-overlay__result-text mark {
+  background: transparent;
+  color: var(--cm-accent);
+  font-weight: 600;
+}
+
+.search-overlay__result-hint {
+  font-size: 0.7rem;
+  color: var(--cm-text-muted);
+}
+
+.search-overlay__empty {
+  padding: 24px 16px;
+  text-align: center;
+  color: var(--cm-text-muted);
+  font-size: 0.85rem;
+}
+
+/* --------------------------------------------------------------------------
+   Tooltip
+   -------------------------------------------------------------------------- */
+.tooltip {
+  position: absolute;
+  z-index: 300;
+  max-width: 260px;
+  padding: 8px 12px;
+  pointer-events: none;
+
+  /* Glassmorphism */
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  background: rgba(13, 19, 34, 0.9);
+  border: 1px solid var(--cm-border);
+  border-radius: var(--cm-radius-sm);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+
+  /* Entry animation */
+  animation: fade-in 120ms ease-out;
+}
+
+.tooltip__title {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--cm-text-primary);
+  margin-bottom: 2px;
+}
+
+.tooltip__body {
+  font-size: 0.75rem;
+  color: var(--cm-text-secondary);
+  line-height: 1.4;
+}
+
+.tooltip__accent {
+  color: var(--cm-accent);
+  font-weight: 500;
+}
+
+/* Tooltip arrow (bottom-pointing, panel appears above cursor) */
+.tooltip--above::after {
+  content: '';
+  position: absolute;
+  bottom: -5px;
+  left: 50%;
+  transform: translateX(-50%) rotate(45deg);
+  width: 10px;
+  height: 10px;
+  background: rgba(13, 19, 34, 0.9);
+  border-right: 1px solid var(--cm-border);
+  border-bottom: 1px solid var(--cm-border);
+}
+
+/* --------------------------------------------------------------------------
+   Panel State Modifiers
+   -------------------------------------------------------------------------- */
+.panel--hidden {
+  display: none;
+}
+
+.panel--entering {
+  animation: slide-in-right 300ms ease-out;
+}
+
+.panel--exiting {
+  animation: fade-in 200ms ease-out reverse;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.panel--fading-in {
+  animation: fade-in 250ms ease-out;
+}
+
+/* --------------------------------------------------------------------------
+   Responsive Sizing
+   -------------------------------------------------------------------------- */
+@media (max-width: 768px) {
+  .info-panel {
+    right: 10px;
+    top: 10px;
+    width: calc(100% - 20px);
+    max-height: 50vh;
+  }
+
+  .search-overlay {
+    top: 10px;
+    width: calc(100% - 20px);
+  }
+}
+
+@media (max-width: 480px) {
+  .info-panel {
+    right: 0;
+    top: auto;
+    bottom: 0;
+    width: 100%;
+    max-height: 60vh;
+    border-radius: var(--cm-radius) var(--cm-radius) 0 0;
+    animation: slide-in-bottom 300ms ease-out;
+  }
+
+  .search-overlay {
+    top: 0;
+    left: 0;
+    transform: none;
+    width: 100%;
+    border-radius: 0 0 var(--cm-radius) var(--cm-radius);
+  }
+}
+
+/* Mobile slide-in-bottom for bottom-sheet style panels */
+@keyframes slide-in-bottom {
+  from {
+    transform: translateY(100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
