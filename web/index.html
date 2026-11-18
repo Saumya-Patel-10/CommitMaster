@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en" data-reduced-motion="false" data-perf-tier="high">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>CommitMaster 3D</title>
+  <link rel="stylesheet" href="./src/styles/globals.css" />
+  <link rel="stylesheet" href="./src/styles/panels.css" />
+  <link rel="stylesheet" href="./src/styles/animations.css" />
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
+      background: #0a0e17;
+      color: #e2e8f0;
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    }
+  </style>
+</head>
+<body>
+  <!-- Main Three.js rendering target -->
+  <div id="scene-container" style="position: fixed; inset: 0; z-index: 0;"></div>
+
+  <!-- HTML UI overlay layer -->
+  <div id="ui-overlay" style="position: fixed; inset: 0; z-index: 10; pointer-events: none;">
+    <!-- Child elements opt-in to pointer events -->
+  </div>
+
+  <!-- 2D fallback when WebGL is unavailable -->
+  <div id="fallback-container" style="display: none; position: fixed; inset: 0; z-index: 20; background: #0a0e17; overflow: auto;"></div>
+
+  <script type="module" src="./src/main.js"></script>
+</body>
+</html>
