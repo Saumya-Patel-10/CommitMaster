@@ -1,0 +1,271 @@
+/* ==========================================================================
+   CommitMaster 3D — Global Styles
+   ========================================================================== */
+
+/* --------------------------------------------------------------------------
+   CSS Reset
+   -------------------------------------------------------------------------- */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+  -moz-tab-size: 4;
+  tab-size: 4;
+  line-height: 1.5;
+}
+
+body {
+  min-height: 100vh;
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+img,
+picture,
+video,
+canvas,
+svg {
+  display: block;
+  max-width: 100%;
+}
+
+input,
+button,
+textarea,
+select {
+  font: inherit;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+ul,
+ol {
+  list-style: none;
+}
+
+/* --------------------------------------------------------------------------
+   CSS Custom Properties (Dark Theme Defaults)
+   -------------------------------------------------------------------------- */
+:root {
+  /* Backgrounds */
+  --cm-bg-darkest: #0a0e17;
+  --cm-bg-dark: #0d1322;
+  --cm-bg-medium: #131a2e;
+  --cm-bg-card: #161d30;
+  --cm-bg-card-hover: #1a2338;
+
+  /* Accent colors */
+  --cm-accent: #00e5ff;
+  --cm-accent-violet: #a855f7;
+  --cm-accent-blue: #3b82f6;
+
+  /* Text */
+  --cm-text-primary: #e2e8f0;
+  --cm-text-secondary: #94a3b8;
+  --cm-text-muted: #64748b;
+
+  /* Borders */
+  --cm-border: rgba(255, 255, 255, 0.08);
+
+  /* Derived / Utility */
+  --cm-accent-glow: rgba(0, 229, 255, 0.25);
+  --cm-accent-violet-glow: rgba(168, 85, 247, 0.25);
+  --cm-shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.4);
+  --cm-radius: 12px;
+  --cm-radius-sm: 8px;
+  --cm-radius-xs: 4px;
+  --cm-transition-fast: 150ms ease;
+  --cm-transition-normal: 250ms ease;
+  --cm-transition-slow: 400ms ease;
+}
+
+/* --------------------------------------------------------------------------
+   Base Typography
+   -------------------------------------------------------------------------- */
+body {
+  font-family:
+    'Inter',
+    -apple-system,
+    BlinkMacSystemFont,
+    'Segoe UI',
+    Roboto,
+    Oxygen,
+    Ubuntu,
+    Cantarell,
+    'Helvetica Neue',
+    sans-serif;
+  font-size: 14px;
+  color: var(--cm-text-primary);
+  background-color: var(--cm-bg-darkest);
+}
+
+h1, h2, h3, h4, h5, h6 {
+  font-weight: 600;
+  line-height: 1.25;
+  color: var(--cm-text-primary);
+}
+
+h1 { font-size: 1.75rem; }
+h2 { font-size: 1.5rem; }
+h3 { font-size: 1.25rem; }
+h4 { font-size: 1.1rem; }
+
+p {
+  color: var(--cm-text-secondary);
+  line-height: 1.6;
+}
+
+code,
+pre {
+  font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace;
+}
+
+/* --------------------------------------------------------------------------
+   Glassmorphism Utilities
+   -------------------------------------------------------------------------- */
+.glass-panel {
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  background: rgba(10, 14, 23, 0.75);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+}
+
+.glass-panel-accent {
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  background: rgba(10, 14, 23, 0.8);
+  border: 1px solid rgba(0, 229, 255, 0.2);
+  border-radius: 12px;
+  box-shadow:
+    0 0 15px rgba(0, 229, 255, 0.08),
+    inset 0 0 15px rgba(0, 229, 255, 0.03);
+}
+
+.glass-panel-violet {
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  background: rgba(10, 14, 23, 0.8);
+  border: 1px solid rgba(168, 85, 247, 0.2);
+  border-radius: 12px;
+  box-shadow:
+    0 0 15px rgba(168, 85, 247, 0.08),
+    inset 0 0 15px rgba(168, 85, 247, 0.03);
+}
+
+/* --------------------------------------------------------------------------
+   Scrollbar Styling
+   -------------------------------------------------------------------------- */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.18);
+}
+
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* Firefox scrollbar */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.1) transparent;
+}
+
+/* --------------------------------------------------------------------------
+   Selection Color
+   -------------------------------------------------------------------------- */
+::selection {
+  background: rgba(0, 229, 255, 0.3);
+  color: var(--cm-text-primary);
+}
+
+::-moz-selection {
+  background: rgba(0, 229, 255, 0.3);
+  color: var(--cm-text-primary);
+}
+
+/* --------------------------------------------------------------------------
+   Layout Containers
+   -------------------------------------------------------------------------- */
+#scene-container {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+}
+
+#ui-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  pointer-events: none;
+}
+
+#ui-overlay > * {
+  pointer-events: auto;
+}
+
+#fallback-container {
+  position: fixed;
+  inset: 0;
+  z-index: 5;
+  background: var(--cm-bg-darkest);
+  overflow: auto;
+  padding: 24px;
+}
+
+/* --------------------------------------------------------------------------
+   Reduced Motion
+   -------------------------------------------------------------------------- */
+[data-reduced-motion="true"] * {
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
+  scroll-behavior: auto !important;
+}
+
+/* --------------------------------------------------------------------------
+   Performance Tier Adjustments
+   -------------------------------------------------------------------------- */
+[data-perf-tier="low"] .particles {
+  display: none;
+}
+
+[data-perf-tier="low"] .glass-panel,
+[data-perf-tier="low"] .glass-panel-accent,
+[data-perf-tier="low"] .glass-panel-violet {
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  background: rgba(10, 14, 23, 0.95);
+}
+
+[data-perf-tier="low"] .glow-effect {
+  box-shadow: none;
+}
+
+[data-perf-tier="medium"] .particles {
+  opacity: 0.5;
+}
