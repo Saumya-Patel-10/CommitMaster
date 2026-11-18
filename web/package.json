@@ -1,0 +1,20 @@
+{
+  "name": "commitmaster-3d",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "three": "^0.170.0",
+    "graphology": "^0.25.4",
+    "graphology-layout-forceatlas2": "^0.10.1",
+    "gsap": "^3.12.5"
+  },
+  "devDependencies": {
+    "vite": "^6.0.0"
+  }
+}
