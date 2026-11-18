@@ -5,6 +5,7 @@ requests>=2.31
 plyer>=2.1
 # GUI & database
 customtkinter>=6.0
+pywebview>=5.0
 bcrypt>=4.0
 matplotlib>=3.7
 # Backend & Cloud Server
