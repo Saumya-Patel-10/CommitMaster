@@ -18,7 +18,7 @@ from commitmaster import pattern_utils
 from commitmaster import database as db
 from commitmaster import avatar_utils
 from commitmaster import commit_engine, ai_messages, ui, github_service, file_inspector, repo_analyzer
-from commitmaster import commit_composer, charts, navigation, issue_view, git_ops
+from commitmaster import commit_composer, charts, navigation, issue_view, git_ops, view_3d_pages
 from commitmaster.config import load_config, save_config
 from commitmaster.logger import get
 from commitmaster.github_service import mask_token, verify_github_token
@@ -645,8 +645,14 @@ class UserDashboard:
         # Nav items
         nav_items = [
             ("📊", "Overview",        "overview"),
+            ("✨", "3D Specialist Hub", "3d_hub"),
             ("📈", "Analytics & Graphs", "analytics"),
             ("💻", "Git Desktop",     "git_desktop"),
+            ("🌌", "3D Git Galaxy",   "3d_galaxy"),
+            ("🏛️", "3D Architecture", "3d_architecture"),
+            ("🛡️", "3D Security Map", "3d_security"),
+            ("🤖", "3D AI Agents",    "3d_agents"),
+            ("🔀", "3D Merge Sim",    "3d_merge"),
             ("📁", "Watched Repos",   "watched_repos"),
             ("📝", "My Commits",      "commits"),
             ("🐙", "GitHub Accounts", "github_accounts"),
@@ -726,8 +732,14 @@ class UserDashboard:
         self._gd_composer = None
         pages = {
             "overview":        self._page_overview,
+            "3d_hub":          lambda: view_3d_pages.render_3d_hub_page(self),
             "analytics":       self._page_analytics,
             "git_desktop":     self._page_git_desktop,
+            "3d_galaxy":       lambda: view_3d_pages.render_3d_galaxy_page(self),
+            "3d_architecture": lambda: view_3d_pages.render_3d_architecture_page(self),
+            "3d_security":     lambda: view_3d_pages.render_3d_security_page(self),
+            "3d_agents":       lambda: view_3d_pages.render_3d_agents_page(self),
+            "3d_merge":        lambda: view_3d_pages.render_3d_merge_page(self),
             "watched_repos":   self._page_watched_repos,
             "commits":         self._page_commits,
             "github_accounts": self._page_github_accounts,
@@ -999,12 +1011,62 @@ class UserDashboard:
                          command=lambda: self._go("watched_repos"))
         btn2.pack(side="left", padx=(0, 8))
 
-        btn3 = tk.Button(actions_bar, text="🎨 Surface Patterns", font=FONTS["caption"],
+        btn_galaxy = tk.Button(actions_bar, text="🌌 3D Commit Galaxy", font=FONTS["caption"],
+                               bg=COLORS["bg_medium"], fg=COLORS["accent"],
+                               activebackground=COLORS["bg_card_hover"],
+                               relief="flat", bd=0, cursor="hand2", padx=12, pady=5,
+                               command=lambda: self._go("3d_galaxy"))
+        btn_galaxy.pack(side="left", padx=(0, 8))
+
+        btn_arch = tk.Button(actions_bar, text="🏛️ 3D Architecture", font=FONTS["caption"],
+                             bg=COLORS["bg_medium"], fg=COLORS["accent"],
+                             activebackground=COLORS["bg_card_hover"],
+                             relief="flat", bd=0, cursor="hand2", padx=12, pady=5,
+                             command=lambda: self._go("3d_architecture"))
+        btn_arch.pack(side="left", padx=(0, 8))
+
+        btn_sec = tk.Button(actions_bar, text="🛡️ 3D Security", font=FONTS["caption"],
+                            bg=COLORS["bg_medium"], fg=COLORS["danger"],
+                            activebackground=COLORS["bg_card_hover"],
+                            relief="flat", bd=0, cursor="hand2", padx=12, pady=5,
+                            command=lambda: self._go("3d_security"))
+        btn_sec.pack(side="left", padx=(0, 8))
+
+        btn3 = tk.Button(actions_bar, text="🎨 Patterns", font=FONTS["caption"],
                          bg=COLORS["bg_medium"], fg=COLORS["text_secondary"],
                          activebackground=COLORS["bg_card_hover"],
                          relief="flat", bd=0, cursor="hand2", padx=12, pady=5,
                          command=lambda: self._go("customize"))
         btn3.pack(side="left")
+
+        # 3D Interactive Features Hub Card
+        self._section_title(p, "3D INTERACTIVE VISUALIZATIONS", (14, 8))
+        hub3d_card = self._card(p)
+        hub3d_card.pack(fill="x", pady=(0, 16))
+        tk.Frame(hub3d_card, height=3, bg=COLORS["accent"]).pack(fill="x")
+        hub_inner = tk.Frame(hub3d_card, bg=COLORS["bg_card"], padx=18, pady=14)
+        hub_inner.pack(fill="both")
+
+        tk.Label(hub_inner, text="🌌 CommitMaster 3D Interactive Hub", font=FONTS["heading_sm"],
+                 fg=COLORS["text_primary"], bg=COLORS["bg_card"]).pack(anchor="w")
+        tk.Label(hub_inner, text="Hardware-accelerated 3D WebGL visualizations of Git history, codebase architecture, security risk heatmaps, and AI agent workflows.",
+                 font=FONTS["caption"], fg=COLORS["text_secondary"], bg=COLORS["bg_card"]).pack(anchor="w", pady=(2, 10))
+
+        hub_btn_row = tk.Frame(hub_inner, bg=COLORS["bg_card"])
+        hub_btn_row.pack(fill="x")
+
+        def _make_hub_btn(parent, icon, text, key, color):
+            b = tk.Button(parent, text=f"{icon} {text}", font=FONTS["caption"],
+                          bg=COLORS["bg_medium"], fg=color, activebackground=COLORS["bg_card_hover"],
+                          relief="flat", bd=0, cursor="hand2", padx=12, pady=6,
+                          command=lambda: self._go(key))
+            b.pack(side="left", padx=(0, 8), pady=2)
+
+        _make_hub_btn(hub_btn_row, "🌌", "Commit Galaxy", "3d_galaxy", COLORS["accent"])
+        _make_hub_btn(hub_btn_row, "🏛️", "Architecture", "3d_architecture", COLORS["accent"])
+        _make_hub_btn(hub_btn_row, "🛡️", "Security Risk Map", "3d_security", COLORS["danger"])
+        _make_hub_btn(hub_btn_row, "🤖", "AI Multi-Agent", "3d_agents", COLORS["info"])
+        _make_hub_btn(hub_btn_row, "🔀", "Merge Simulator", "3d_merge", COLORS["warning"])
 
         # Stats row
         activity = db.get_activity_log(self.user["id"], limit=1000)
